@@ -2,7 +2,7 @@
 
 __version__ = "0.0.1"
 
-APP_ID = "io.github.crea.Vitrine"
+APP_ID = "io.github.crea.vitrine"
 APP_NAME = "Vitrine"
 APP_DESCRIPTION = "A unified game library launcher"
 

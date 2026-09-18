@@ -18,7 +18,7 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gio, GLib
 
-from . import APP_NAME, paths
+from . import APP_ID, APP_NAME, paths
 from .db import connect, initialize
 from .library import Library
 from .ui import VitrineWindow
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 class VitrineApplication(Adw.Application):
     def __init__(self) -> None:
-        super().__init__(application_id="io.github.crea.Vitrine", flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.connection: sqlite3.Connection | None = None
         self.library: Library | None = None
 

@@ -17,7 +17,10 @@
           ps.requests
           ps.pillow
         ]);
-        libs = [ pkgs.gtk4 pkgs.libadwaita pkgs.gobject-introspection pkgs.gdk-pixbuf pkgs.graphene pkgs.pango pkgs.harfbuzz ];
+        # glib is required: it ships the Gio/GObject/GLib typelibs that GTK's own
+        # typelibs depend on, and without them PyGObject cannot create a real
+        # GApplication.
+        libs = [ pkgs.gtk4 pkgs.libadwaita pkgs.glib pkgs.gobject-introspection pkgs.gdk-pixbuf pkgs.graphene pkgs.pango pkgs.harfbuzz ];
         themes = [ pkgs.adwaita-icon-theme pkgs.hicolor-icon-theme ];
       };
 
@@ -52,8 +55,10 @@
       devShells.${system}.default = pkgs.mkShell {
         buildInputs = [
           runtime.python
+          (pkgs.python3.withPackages (ps: [ ps.pytest ]))
           pkgs.gtk4
           pkgs.libadwaita
+          pkgs.glib
           pkgs.gobject-introspection
           pkgs.gdk-pixbuf
           pkgs.graphene
