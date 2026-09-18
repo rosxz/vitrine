@@ -53,10 +53,24 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 """
 
+def _noop(conn: sqlite3.Connection) -> None:
+    """No-op migration placeholder for untouched schema bumps."""
+    return None
+
+
+def _add_artwork_columns(conn: sqlite3.Connection) -> None:
+    """v1 -> v2: optional per-game artwork paths (cover portrait, wide banner)."""
+    conn.execute("ALTER TABLE games ADD COLUMN cover TEXT")
+    conn.execute("ALTER TABLE games ADD COLUMN banner TEXT")
+
+
 # Each future schema change gets a function here; ``initialize`` runs the ones
 # this database has not seen yet. Index ``n`` upgrades version ``n`` to
 # ``n + 1``.
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = []
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
+    _noop,  # v0 -> v1 (the initial walking skeleton created a fresh schema)
+    _add_artwork_columns,  # v1 -> v2
+]
 
 
 def connect(path: Path | str | None = None) -> sqlite3.Connection:

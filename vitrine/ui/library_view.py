@@ -2,14 +2,16 @@
 
 Every tile uses the same 2:3 portrait box and cover-fits whatever artwork the
 source provides, so a Steam capsule, a GOG tile and a local game's placeholder
-all occupy identical space. That is the whole point of the view.
+all occupy identical space. That is the whole point of the view. Selecting a
+tile raises the ``selection-changed`` signal so the window can update the
+detail bar.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
-from gi.repository import Adw, Gtk
+from gi.repository import Adw, GObject, Gtk
 
 from ..library import Game
 from ..util import human_playtime, initials
@@ -24,10 +26,16 @@ MAX_COLUMNS = 9
 class GameTile(Gtk.FlowBoxChild):
     """A single game: cover box, source badge, name."""
 
-    def __init__(self, game: Game, on_activate: Callable[[Game], None]) -> None:
+    def __init__(self, game: Game) -> None:
         super().__init__()
         self.game = game
-        self._on_activate = on_activate
+        self.add_css_class("vitrine-tile")
+        self._context_callback: Callable[[Game]] | None = None
+
+        gesture = Gtk.GestureClick()
+        gesture.set_button(3)  # GDK_BUTTON_SECONDARY (right mouse button)
+        gesture.connect("pressed", self._on_secondary_pressed)
+        self.add_controller(gesture)
 
         self.cover = Gtk.Picture()
         self.cover.set_content_fit(Gtk.ContentFit.COVER)
@@ -44,38 +52,36 @@ class GameTile(Gtk.FlowBoxChild):
         if game.source and game.source != "local":
             badge = Gtk.Label(label=game.source.capitalize())
             badge.add_css_class("caption")
-            badge.add_css_class("card")
+            badge.add_css_class("vitrine-badge")
             badge.set_halign(Gtk.Align.START)
             badge.set_valign(Gtk.Align.START)
             badge.set_margin_start(6)
             badge.set_margin_top(6)
             overlay.add_overlay(badge)
 
-        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        footer.set_halign(Gtk.Align.FILL)
-        footer.set_valign(Gtk.Align.END)
-        footer.add_css_class("card")
-        footer.set_margin_start(6)
-        footer.set_margin_end(6)
-        footer.set_margin_bottom(6)
-        footer.set_visible(False)
-
-        self.running_dot = Gtk.Image.new_from_icon_name("media-playback-start-symbolic")
-        footer.append(self.running_dot)
-        self.running_label = Gtk.Label(label="")
-        self.running_label.set_halign(Gtk.Align.START)
-        footer.append(self.running_label)
-        overlay.add_overlay(footer)
-        self.running_footer = footer
-
         frame = Gtk.AspectFrame(ratio=COVER_RATIO, xalign=0.5, yalign=0.5, obey_child=False)
         frame.set_obey_child(False)
         frame.set_child(overlay)
         frame.set_size_request(COVER_WIDTH, int(COVER_WIDTH / COVER_RATIO))
-        frame.add_css_class("card")
+
+        self.running_dot = Gtk.Image.new_from_icon_name("media-playback-start-symbolic")
+        self.running_label = Gtk.Label(label="")
+        running = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        running.append(self.running_dot)
+        running.append(self.running_label)
+        running.set_halign(Gtk.Align.START)
+        running.set_valign(Gtk.Align.END)
+        running.set_margin_start(6)
+        running.set_margin_bottom(6)
+        running.set_visible(False)
+        overlay.add_overlay(running)
+        self.running_footer = running
 
         name = Gtk.Label(label=game.name, wrap=True, justify=Gtk.Justification.CENTER, lines=2)
         name.set_ellipsize(3)  # Pango.EllipsizeMode.END
+        name.add_css_class("vitrine-tile-name")
+        if not (game.cover or game.banner):
+            name.add_css_class("dim")
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.append(frame)
@@ -98,13 +104,26 @@ class GameTile(Gtk.FlowBoxChild):
         self.running_label.set_text(human_playtime(elapsed_seconds / 3600.0))
         self.running_footer.set_visible(True)
 
+    def set_context_callback(self, callback: Callable[[Game], None]) -> None:
+        """Call ``callback(game)`` on a right-click over this tile."""
+        self._context_callback = callback
+
+    def _on_secondary_pressed(self, _gesture: Gtk.GestureClick, n_press: int, x: float, y: float) -> None:
+        if self._context_callback is not None:
+            self._context_callback(self.game)
+
 
 class LibraryView(Gtk.Stack):
-    """Scrolling grid of games, with an empty state."""
+    """Scrolling grid of games, with an empty state and a selection signal."""
 
-    def __init__(self, on_activate: Callable[[Game], None]) -> None:
+    def __init__(
+        self,
+        on_activate: Callable[[Game], None],
+        on_context: Callable[[Game], None] | None = None,
+    ) -> None:
         super().__init__()
         self._on_activate = on_activate
+        self._on_context = on_context or (lambda _game: None)
 
         self.flow = Gtk.FlowBox()
         self.flow.set_homogeneous(True)
@@ -119,6 +138,7 @@ class LibraryView(Gtk.Stack):
         self.flow.set_margin_start(18)
         self.flow.set_margin_end(18)
         self.flow.connect("child-activated", self._on_child_activated)
+        self.flow.connect("selected-children-changed", self._on_selection_changed)
 
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -134,6 +154,8 @@ class LibraryView(Gtk.Stack):
         self.add_named(self.empty, "empty")
         self.set_visible_child_name("empty")
 
+    # -- public API -----------------------------------------------------------
+
     def set_games(self, games: Iterable[Game]) -> None:
         """Replace the contents of the grid."""
         while child := self.flow.get_first_child():
@@ -141,11 +163,56 @@ class LibraryView(Gtk.Stack):
 
         count = 0
         for game in games:
-            self.flow.append(GameTile(game, self._on_activate))
+            tile = GameTile(game)
+            tile.set_context_callback(self._on_context)
+            self.flow.append(tile)
             count += 1
 
         self.set_visible_child_name("grid" if count else "empty")
+        if count:
+            self.flow.select_child(self.flow.get_first_child())
+
+    def selected_game(self) -> Game | None:
+        selected = self.flow.get_selected_children()
+        if not selected:
+            return None
+        child = selected[0]
+        return child.game if isinstance(child, GameTile) else None
+
+    # -- internals ------------------------------------------------------------
 
     def _on_child_activated(self, _flow: Gtk.FlowBox, child: Gtk.FlowBoxChild) -> None:
         if isinstance(child, GameTile):
             self._on_activate(child.game)
+
+    def _on_selection_changed(self, flow: Gtk.FlowBox) -> None:
+        selected = _selected(flow)
+        for child in _children(flow):
+            child.set_css_classes(
+                ["vitrine-tile", "selected"]
+                if child is selected
+                else ["vitrine-tile"]
+            )
+        self.emit("selection-changed")
+
+
+def _children(flow: Gtk.FlowBox):
+    child = flow.get_first_child()
+    while child is not None:
+        yield child
+        child = child.get_next_sibling()
+
+
+def _selected(flow: Gtk.FlowBox) -> Gtk.FlowBoxChild | None:
+    selected = flow.get_selected_children()
+    return selected[0] if selected else None
+
+
+GObject.type_register(LibraryView)
+GObject.signal_new(
+    "selection-changed",
+    LibraryView,
+    GObject.SignalFlags.RUN_FIRST,
+    GObject.TYPE_NONE,
+    (),
+)

@@ -18,6 +18,11 @@ Status: **early scaffolding**. Nothing here launches a game yet.
 | `vitrine/running.py` | Process supervisor: start/stop/watch one game, playtime |
 | `vitrine/sources/` | Source providers (`local` today; `steam` next) |
 | `vitrine/ui/` | GTK4 + libadwaita front end |
+| `vitrine/ui/theme.py` | Theme registry and manager (Galaxy / follow system) |
+| `vitrine/ui/style/` | Bundled CSS themes (`.css` per theme) |
+| `vitrine/ui/game_form.py` | Shared add/edit game form (fields + artwork pickers) |
+| `vitrine/ui/game_dialogs.py` | Add-game and per-game settings dialogs |
+| `vitrine/ui/game_detail_bar.py` | Collapsible hero detail bar (backdrop, play, playtime) |
 
 ## Development
 
@@ -54,6 +59,11 @@ nix develop -c sh -c 'Xvfb :99 -screen 0 1280x800x24 & sleep 1; DISPLAY=:99 pyth
   looks uniform regardless of origin (`~/.cache/vitrine/covers`).
 - **One game at a time.** Launching is mediated by a supervisor that refuses to start a
   second game while one is running, and records playtime when a game exits.
+- **Themes share one grammar.** Galaxy and follow-system themes keep the same window
+  structure, placements and detail bar; only accents, corners, shapes and spacing vary.
+- **Per-game artwork.** Games can opt into a portrait cover and a wide hero banner
+  (essential for local games, which have no store artwork); the detail bar falls back to
+  the cover behind a scrim, then initials.
 
 ## Roadmap
 
@@ -61,7 +71,11 @@ nix develop -c sh -c 'Xvfb :99 -screen 0 1280x800x24 & sleep 1; DISPLAY=:99 pyth
 1. Local game + Wine/Proton launch + gamescope
    - Launch pipeline (gamescope / GameMode / MangoHud / DXVK / Wayland) — done
    - Process supervision, running indicator, playtime recording — done
-2. Runner catalogue, download, per-game and global defaults
+2. Themed shell + settings
+   - Theme engine (Galaxy default / follow system) + bundled CSS — done
+   - Global settings (cog) and per-game settings (right-click / detail-bar cog) — done
+   - Hero detail bar with play / playtime / last-played — done
+3. Runner catalogue, download, per-game and global defaults
 3. Per-game configuration UI (prefix, DLLs, DXVK, env, arguments)
 4. Metadata and artwork (lutris.net, SteamGridDB, IGDB, manual override)
 5. Steam source: owned library and Steam Family, with durable auth

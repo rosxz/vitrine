@@ -1,0 +1,135 @@
+/* Galaxy theme: GOG-Galaxy-inspired dark palette, tight corners, dense spacing.
+   The widget classes here are shared with system.css; only the surface values
+   (colors, radii, spacing) differ. */
+
+/* Window + page chrome ---------------------------------------------------- */
+window.vitrine-window {
+    background-color: #0c0b0d;
+}
+
+.sidebar {
+    background-color: #121114;
+    border-right: 1px solid #1e1c23;
+}
+
+.sidebar-header {
+    color: #efeaf8;
+    font-weight: 600;
+}
+
+/* Source navigation -------------------------------------------------------- */
+.vitrine-nav {
+    background-color: transparent;
+}
+
+.vitrine-nav-row {
+    margin: 2px 6px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    color: #c8c2d6;
+}
+
+.vitrine-nav-row:hover {
+    background-color: #1c1a21;
+}
+
+.vitrine-nav-row.selected {
+    background-color: #2a1f3d;
+    color: #ffffff;
+}
+
+.vitrine-nav-icon {
+    color: #8a83a0;
+}
+
+.vitrine-nav-icon.selected {
+    color: #a269ff;
+}
+
+/* Library grid tiles ------------------------------------------------------- */
+.vitrine-tile {
+    border-radius: 6px;
+    transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.vitrine-tile:hover {
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.55);
+}
+
+.vitrine-tile.selected {
+    box-shadow: 0 0 0 2px #a269ff;
+}
+
+.vitrine-tile-name {
+    color: #fffbff;
+    font-weight: 600;
+}
+
+.vitrine-tile-name.dim {
+    color: #8a83a0;
+}
+
+.vitrine-badge {
+    background-color: rgba(18, 17, 20, 0.8);
+    color: #c8c2d6;
+    border-radius: 4px;
+}
+
+/* Detail bar --------------------------------------------------------------- */
+.vitrine-detail {
+    background-color: #121114;
+    border-top: 1px solid #201d27;
+}
+
+.vitrine-detail-backdrop {
+    background-color: #16141a;
+}
+
+.vitrine-detail-scrim {
+    background-image: linear-gradient(
+        to bottom,
+        rgba(12, 11, 13, 0.0) 0%,
+        rgba(12, 11, 13, 0.55) 55%,
+        rgba(12, 11, 13, 0.92) 100%
+    );
+}
+
+.vitrine-detail-title {
+    color: #fffbff;
+    font-weight: 700;
+    font-size: 22px;
+}
+
+.vitrine-detail-sub {
+    color: #a49dba;
+}
+
+.vitrine-detail-metaicon {
+    color: #a269ff;
+}
+
+.vitrine-detail-handle {
+    background-color: #201d27;
+    border-top: 1px solid #2a2634;
+}
+
+.vitrine-detail-handle:hover {
+    background-color: #2a2634;
+}
+
+/* Prominent play button ---------------------------------------------------- */
+.vitrine-play {
+    background-color: #a269ff;
+    color: #0c0b0d;
+    border-radius: 6px;
+    font-weight: 700;
+    padding: 10px 26px;
+}
+
+.vitrine-play:hover {
+    background-color: #b380ff;
+}
+
+.vitrine-play:active {
+    background-color: #8d55e8;
+}

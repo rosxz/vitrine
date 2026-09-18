@@ -22,6 +22,7 @@ from . import APP_ID, APP_NAME, paths
 from .db import connect, initialize
 from .library import Library
 from .ui import VitrineWindow
+from .ui.theme import ThemeManager
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class VitrineApplication(Adw.Application):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.connection: sqlite3.Connection | None = None
         self.library: Library | None = None
+        self.theme_manager = ThemeManager()
 
     def do_startup(self) -> None:
         Adw.Application.do_startup(self)
@@ -42,6 +44,7 @@ class VitrineApplication(Adw.Application):
         self.connection = connect()
         initialize(self.connection)
         self.library = Library(self.connection)
+        self.theme_manager.apply(self.library.setting("theme", "galaxy"))
         logger.info("%s started", APP_NAME)
 
     def do_activate(self) -> None:

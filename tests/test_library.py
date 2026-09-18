@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vitrine import db
+from vitrine import SCHEMA_VERSION, db
 from vitrine.library import DEFAULT_CONFIG, Game, Library
 
 
@@ -36,7 +36,7 @@ def test_initialize_is_idempotent() -> None:
     db.initialize(conn)
     db.initialize(conn)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
 
 def test_games_can_be_filtered_by_source(library: Library) -> None:

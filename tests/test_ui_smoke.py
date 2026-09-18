@@ -23,8 +23,10 @@ from gi.repository import Adw, Gtk
 
 def test_gui_modules_import() -> None:
     import vitrine.application  # noqa: F401
-    import vitrine.ui.add_game_dialog  # noqa: F401
+    import vitrine.ui.game_detail_bar  # noqa: F401
+    import vitrine.ui.game_dialogs  # noqa: F401
     import vitrine.ui.library_view  # noqa: F401
+    import vitrine.ui.settings_dialog  # noqa: F401
     import vitrine.ui.window  # noqa: F401
 
 

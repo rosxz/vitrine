@@ -50,7 +50,8 @@ from gi.repository import GLib
 from vitrine.application import VitrineApplication
 from vitrine.library import Game
 from vitrine.ui import VitrineWindow
-from vitrine.ui.add_game_dialog import AddGameDialog
+from vitrine.ui.game_dialogs import AddGameDialog, GameSettingsDialog
+from vitrine.ui.settings_dialog import SettingsDialog
 
 TRUE = shutil.which("true")
 
@@ -83,6 +84,31 @@ def check_shell(application: VitrineApplication) -> None:
     assert rendered == 2, f"expected 2 tiles in the grid, got {rendered}"
     print(f"window '{window.get_title()}' rendered {rendered} tiles")
 
+    # The first tile should be auto-selected, which drives the detail bar.
+    selected = window.library_view.selected_game()
+    assert selected is not None, "expected a game to be selected after set_games"
+    assert window.detail_bar.game() is selected, "detail bar did not reflect the selection"
+    assert window.detail_bar.get_visible(), "detail bar should be visible when a game is selected"
+    print(f"detail bar shows '{window.detail_bar.game().name}'")
+
+    # Selecting the second tile updates the detail bar.
+    window.library_view.flow.select_child(window.library_view.flow.get_child_at_index(1))
+    selected = window.library_view.selected_game()
+    assert window.detail_bar.game() is selected, "detail bar did not follow selection change"
+
+    # Right-click (secondary-click) opens per-game settings; build the dialog.
+    tile = window.library_view.flow.get_child_at_index(0)
+    game_settings = GameSettingsDialog(library, tile.game, on_save=lambda g: None, parent=window)
+    game_settings.present(window)
+    game_settings.force_close()
+    print("right-click context builds the per-game settings dialog")
+
+    # The global settings dialog also opens from the cog.
+    settings = SettingsDialog(library, window.theme_manager, parent=window)
+    settings.present(window)
+    settings.force_close()
+    print("global settings dialog opens from the cog")
+
     # Launching the window should take effect through the supervisor. The game
     # exits immediately, so afterwards nothing should be running and no error
     # toast may be raised.
@@ -92,7 +118,7 @@ def check_shell(application: VitrineApplication) -> None:
 
     # The add-game dialog is part of the shell too; build it to catch widget
     # misuse without needing to interact with it.
-    dialog = AddGameDialog(on_add=lambda game: None)
+    dialog = AddGameDialog(library, on_add=lambda game: None)
     dialog.present(window)
     dialog.force_close()
 

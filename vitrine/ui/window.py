@@ -1,4 +1,4 @@
-"""Main window: source sidebar on the left, library grid on the right."""
+"""Main window: source sidebar on the left, library grid + detail bar on the right."""
 
 from __future__ import annotations
 
@@ -9,8 +9,10 @@ from gi.repository import Adw, GLib, Gtk
 from ..library import Game, Library
 from ..running import GameAlreadyRunning, Runtime
 from ..sources import registry
-from .add_game_dialog import AddGameDialog
+from .game_detail_bar import GameDetailBar
+from .game_dialogs import AddGameDialog, GameSettingsDialog
 from .library_view import LibraryView
+from .settings_dialog import SettingsDialog
 
 logger = logging.getLogger(__name__)
 
@@ -21,26 +23,54 @@ class VitrineWindow(Adw.ApplicationWindow):
     def __init__(self, application: Adw.Application, library: Library) -> None:
         super().__init__(application=application, title="Vitrine")
         self.library = library
+        self.theme_manager = application.theme_manager
         self.current_source: str | None = None
 
-        self.set_default_size(1100, 720)
+        self.set_default_size(1100, 760)
+        self.add_css_class("vitrine-window")
 
         self.runtime = Runtime()
         self.runtime.on_start = self._on_game_started
         self.runtime.on_exit = self._on_game_exited
 
-        self.library_view = LibraryView(on_activate=self.on_game_activated)
+        self.library_view = LibraryView(on_activate=self.on_game_activated, on_context=self.on_tile_context)
+        self.library_view.connect("selection-changed", self._on_selection_changed)
+
+        self.detail_bar = GameDetailBar(
+            on_play=self._on_detail_play,
+            on_settings=self._on_detail_settings,
+        )
+
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        content_box.append(self.library_view)
+        content_box.append(self.detail_bar)
 
         self.toasts = Adw.ToastOverlay()
-        self.toasts.set_child(self.library_view)
+        self.toasts.set_child(content_box)
+        self.toasts.set_hexpand(True)
 
-        content = Adw.ToolbarView()
-        content.set_content(self.toasts)
-        content.add_top_bar(self._build_header_bar())
+        header = Adw.HeaderBar()
+        title = Adw.WindowTitle(title="Vitrine")
+        header.set_title_widget(title)
+        self.title_widget = title
+
+        add_button = Gtk.Button(icon_name="list-add-symbolic")
+        add_button.set_tooltip_text("Add a game")
+        add_button.connect("clicked", self.on_add_game_clicked)
+        header.pack_end(add_button)
+
+        cog = Gtk.Button(icon_name="emblem-system-symbolic")
+        cog.set_tooltip_text("Settings")
+        cog.connect("clicked", self.on_settings_clicked)
+        header.pack_end(cog)
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(self.toasts)
 
         split = Adw.OverlaySplitView()
         split.set_sidebar(self._build_sidebar())
-        split.set_content(content)
+        split.set_content(toolbar)
         split.set_min_sidebar_width(210)
         split.set_max_sidebar_width(320)
         self.set_content(split)
@@ -52,23 +82,19 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     # -- UI construction -------------------------------------------------------
 
-    def _build_header_bar(self) -> Adw.HeaderBar:
-        header = Adw.HeaderBar()
-
-        title = Adw.WindowTitle(title="Vitrine")
-        header.set_title_widget(title)
-        self.title_widget = title
-
-        add_button = Gtk.Button(icon_name="list-add-symbolic")
-        add_button.set_tooltip_text("Add a game")
-        add_button.connect("clicked", self.on_add_game_clicked)
-        header.pack_end(add_button)
-
-        return header
-
     def _build_sidebar(self) -> Gtk.Widget:
+        sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        sidebar.add_css_class("sidebar")
+
+        header = Gtk.Label(label="Sources", halign=Gtk.Align.START)
+        header.add_css_class("sidebar-header")
+        header.set_margin_start(12)
+        header.set_margin_top(12)
+        header.set_margin_bottom(6)
+        sidebar.append(header)
+
         self.source_list = Gtk.ListBox()
-        self.source_list.add_css_class("navigation-sidebar")
+        self.source_list.add_css_class("vitrine-nav")
         self.source_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self.source_list.connect("row-selected", self.on_source_selected)
 
@@ -81,25 +107,19 @@ class VitrineWindow(Adw.ApplicationWindow):
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroller.set_child(self.source_list)
         scroller.set_vexpand(True)
-        scroller.set_margin_top(6)
-        scroller.set_margin_bottom(6)
-        scroller.set_margin_start(6)
-        scroller.set_margin_end(6)
+        sidebar.append(scroller)
 
-        header = Adw.HeaderBar()
-        header.set_title_widget(Adw.WindowTitle(title="Sources"))
-
-        sidebar = Adw.ToolbarView()
-        sidebar.add_top_bar(header)
-        sidebar.set_content(scroller)
         return sidebar
 
     def _add_source_row(self, source_id: str, title: str, icon_name: str) -> None:
         row = Gtk.ListBoxRow()
         row.source_id = source_id  # type: ignore[attr-defined]
+        row.add_css_class("vitrine-nav-row")
 
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        box.append(Gtk.Image.new_from_icon_name(icon_name))
+        icon = Gtk.Image.new_from_icon_name(icon_name)
+        icon.add_css_class("vitrine-nav-icon")
+        box.append(icon)
         box.append(Gtk.Label(label=title, xalign=0))
         row.set_child(box)
 
@@ -124,14 +144,40 @@ class VitrineWindow(Adw.ApplicationWindow):
             "1 game" if len(games) == 1 else f"{len(games)} games"
         )
 
+    def on_settings_clicked(self, _button: Gtk.Button) -> None:
+        dialog = SettingsDialog(
+            self.library,
+            self.theme_manager,
+            parent=self,
+        )
+        dialog.present(self)
+
     def on_add_game_clicked(self, _button: Gtk.Button) -> None:
-        dialog = AddGameDialog(on_add=self.on_game_added, parent=self)
+        dialog = AddGameDialog(self.library, on_add=self.on_game_added, parent=self)
         dialog.present(self)
 
     def on_game_added(self, game: Game) -> None:
         self.library.add(game)
         self.reload()
+        self.detail_bar.set_game(game)
         self.toasts.add_toast(Adw.Toast(title=f"Added {game.name}"))
+
+    def _on_detail_play(self, game: Game | None) -> None:
+        if game is not None:
+            self.on_game_activated(game)
+
+    def _on_detail_settings(self, game: Game | None) -> None:
+        if game is not None:
+            self.on_edit_game(game)
+
+    def on_edit_game(self, game: Game) -> None:
+        dialog = GameSettingsDialog(self.library, game, on_save=self.on_game_edited, parent=self)
+        dialog.present(self)
+
+    def on_game_edited(self, game: Game) -> None:
+        self.reload()
+        self.detail_bar.set_game(game)
+        self.toasts.add_toast(Adw.Toast(title=f"Updated {game.name}"))
 
     def on_game_activated(self, game: Game) -> None:
         if game.id is None:
@@ -157,6 +203,15 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.runtime.stop()
         if game is not None:
             self.toasts.add_toast(Adw.Toast(title=f"Stopping {game.name}"))
+
+    # -- selection -------------------------------------------------------------
+
+    def _on_selection_changed(self, view: LibraryView) -> None:
+        self.detail_bar.set_game(view.selected_game())
+
+    def on_tile_context(self, game: Game) -> None:
+        """Right-click on a tile: open its per-game settings."""
+        self.on_edit_game(game)
 
     # -- runtime callbacks (come from a background thread) ----------------------
 
@@ -190,6 +245,8 @@ class VitrineWindow(Adw.ApplicationWindow):
                 elapsed = (GLib.get_monotonic_time() / 1e6) - self._running_started_monotonic
             for tile in self._all_tiles():
                 tile.set_running(elapsed if tile.game is game else None)
+            if self.detail_bar.game() is game:
+                self.detail_bar.set_running(elapsed)
             return GLib.SOURCE_CONTINUE
 
         self._running_started_monotonic = None

@@ -54,6 +54,8 @@ class Game:
     installed: bool = False
     playtime: float = 0.0
     lastplayed: int | None = None
+    cover: str | None = None
+    banner: str | None = None
     config: dict[str, Any] = field(default_factory=dict)
 
     def merged_config(self, global_config: dict[str, Any]) -> dict[str, Any]:

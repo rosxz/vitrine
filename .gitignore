@@ -9,3 +9,4 @@ build/
 dist/
 *.egg-info/
 .venv/
+session-ses_*.md

@@ -47,3 +47,17 @@ def human_playtime(seconds_or_hours: float) -> str:
     if hours < 1:
         return f"{round(hours * 60)} min"
     return f"{hours:.1f} h"
+
+
+def format_lastplayed(timestamp: int | None) -> str:
+    """Humanise a unix timestamp as a relative date, or ``Never`` if unset."""
+    if not timestamp:
+        return "Never played"
+    days = int((time.time() - timestamp) // 86400)
+    if days <= 0:
+        return "Today"
+    if days == 1:
+        return "Yesterday"
+    if days < 30:
+        return f"{days} days ago"
+    return time.strftime("%b %d, %Y", time.localtime(timestamp))
