@@ -21,7 +21,7 @@ Status: **early scaffolding**. Nothing here launches a game yet.
 | `vitrine/ui/theme.py` | Theme registry and manager (Galaxy / follow system) |
 | `vitrine/ui/style/` | Bundled CSS themes (`.css` per theme) |
 | `vitrine/ui/game_form.py` | Shared add/edit game form (fields + artwork pickers) |
-| `vitrine/ui/game_dialogs.py` | Add-game and per-game settings dialogs |
+| `vitrine/ui/game_dialogs.py` | Add-game and per-game settings windows (movable) |
 | `vitrine/ui/game_detail_bar.py` | Collapsible hero detail bar (backdrop, play, playtime) |
 
 ## Development
@@ -74,7 +74,8 @@ nix develop -c sh -c 'Xvfb :99 -screen 0 1280x800x24 & sleep 1; DISPLAY=:99 pyth
 2. Themed shell + settings
    - Theme engine (Galaxy default / follow system) + bundled CSS — done
    - Global settings (cog) and per-game settings (right-click / detail-bar cog) — done
-   - Hero detail bar with play / playtime / last-played — done
+   - Hero detail bar with play / playtime / last-played, drag-resizable — done
+   - Edition windows are movable; double-click launches, single click selects — done
 3. Runner catalogue, download, per-game and global defaults
 3. Per-game configuration UI (prefix, DLLs, DXVK, env, arguments)
 4. Metadata and artwork (lutris.net, SteamGridDB, IGDB, manual override)

@@ -130,6 +130,10 @@ class LibraryView(Gtk.Stack):
         self.flow.set_min_children_per_line(MIN_COLUMNS)
         self.flow.set_max_children_per_line(MAX_COLUMNS)
         self.flow.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        # Activation must be a deliberate double-click (or Enter/Space), not a
+        # single click: GTK's default is activate-on-single-click, which would
+        # launch a game the moment it is merely selected.
+        self.flow.set_activate_on_single_click(False)
         self.flow.set_row_spacing(12)
         self.flow.set_column_spacing(12)
         self.flow.set_valign(Gtk.Align.START)

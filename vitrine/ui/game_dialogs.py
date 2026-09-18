@@ -1,7 +1,9 @@
-"""Dialogs for adding and editing a game.
+"""Windows for adding and editing a game.
 
-Both the "add a game" dialog and the per-game settings use the shared
+Both the "add a game" window and the per-game settings use the shared
 :class:`GameForm`, wiring its browse buttons to GTK's native file chooser.
+They are top-level :class:`Gtk.Window` instances so they can be moved around
+independently of the main window.
 """
 
 from __future__ import annotations
@@ -21,6 +23,9 @@ _BROWSE_TITLES: dict[str, str] = {
 
 #: Browse kinds restricted to images (as opposed to any file for the executable).
 _IMAGE_KINDS = {"cover", "banner"}
+
+_FORM_WIDTH = 680
+_FORM_HEIGHT = 780
 
 
 def _parent_window(widget: Gtk.Widget | None) -> Gtk.Window | None:
@@ -57,8 +62,14 @@ def _open_picker(
     chooser.open(_parent_window(parent), None, on_selected)
 
 
-class _GameDialog(Adw.Dialog):
-    """Shared shell placing a :class:`GameForm` between a header and buttons."""
+class _GameWindow(Gtk.Window):
+    """Shared movable window placing a :class:`GameForm` under a header.
+
+    The save button signals ``_on_save`` (the method); the caller-provided
+    callback that fires once a game is saved is stored separately as
+    ``_save_callback`` -- never under ``_on_save``, which would shadow the
+    method and pass the button through to it.
+    """
 
     def __init__(
         self,
@@ -67,12 +78,14 @@ class _GameDialog(Adw.Dialog):
         form: GameForm,
         parent: Gtk.Widget | None,
     ) -> None:
-        super().__init__()
+        super().__init__(title=title)
         self.library = library
         self._form = form
-        self._parent = parent
-        self.set_title(title)
-        self.set_content_width(520)
+        self._save_callback: Callable[[Game], None] | None = None
+        self.set_default_size(_FORM_WIDTH, _FORM_HEIGHT)
+        parent_window = _parent_window(parent)
+        if parent_window is not None:
+            self.set_transient_for(parent_window)
 
         body = Gtk.ScrolledWindow()
         body.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -83,7 +96,8 @@ class _GameDialog(Adw.Dialog):
         body.set_margin_end(16)
 
         header = Adw.HeaderBar()
-        header.set_show_end_title_buttons(False)
+        header.set_title_widget(Adw.WindowTitle(title=title, subtitle=""))
+        header.set_show_end_title_buttons(True)
         cancel = Gtk.Button(label="Cancel")
         cancel.add_css_class("flat")
         cancel.connect("clicked", lambda _btn: self.close())
@@ -92,10 +106,8 @@ class _GameDialog(Adw.Dialog):
         save.connect("clicked", self._on_save)
         header.pack_end(save)
 
-        toolbar = Adw.ToolbarView()
-        toolbar.add_top_bar(header)
-        toolbar.set_content(body)
-        self.set_child(toolbar)
+        self.set_titlebar(header)
+        self.set_child(body)
 
         for kind in _BROWSE_TITLES:
             form.connect_browse(kind, self._make_browse(kind))
@@ -105,7 +117,7 @@ class _GameDialog(Adw.Dialog):
             self._form.set_browse_result(kind, path)
 
         def open_chooser(entry: _LabeledEntry) -> None:
-            _open_picker(self._parent, kind, accept)
+            _open_picker(self, kind, accept)
 
         return open_chooser
 
@@ -119,7 +131,7 @@ class _GameDialog(Adw.Dialog):
                 self.close()
 
 
-class AddGameDialog(_GameDialog):
+class AddGameWindow(_GameWindow):
     """Create a new local game and notify the caller when it is saved."""
 
     def __init__(
@@ -128,20 +140,21 @@ class AddGameDialog(_GameDialog):
         on_add: Callable[[Game], None],
         parent: Gtk.Widget | None = None,
     ) -> None:
-        self._on_add = on_add
         super().__init__(library, title="Add a game", form=GameForm(), parent=parent)
+        self._save_callback = on_add
 
     def _save_label(self) -> str:
         return "Add game"
 
     def save(self) -> Game:
         game = self._form.build_game()
-        self._on_add(game)
+        if self._save_callback is not None:
+            self._save_callback(game)
         return game
 
 
-class GameSettingsDialog(_GameDialog):
-    """Edit an existing game's metadata and artwork."""
+class GameSettingsWindow(_GameWindow):
+    """Edit an existing game's metadata and artwork in a movable window."""
 
     def __init__(
         self,
@@ -151,13 +164,20 @@ class GameSettingsDialog(_GameDialog):
         parent: Gtk.Widget | None = None,
     ) -> None:
         self._game = game
-        self._on_save = on_save
         form = GameForm()
         form.populate(game)
         super().__init__(library, title=f"Edit {game.name}", form=form, parent=parent)
+        self._save_callback = on_save
 
     def save(self) -> Game:
         game = self._form.apply_to(self._game)
         self.library.update(game)
-        self._on_save(game)
+        if self._save_callback is not None:
+            self._save_callback(game)
         return game
+
+
+# Backwards-compatible aliases (the names historically referred to these
+# windows even when they were dialogs).
+AddGameDialog = AddGameWindow
+GameSettingsDialog = GameSettingsWindow

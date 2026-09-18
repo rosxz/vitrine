@@ -45,3 +45,25 @@ def test_gtk_widgets_are_available(widget: str) -> None:
 
 def test_cover_tiles_are_portrait() -> None:
     assert library_view.COVER_RATIO < 1, "covers must be portrait (2:3)"
+
+
+def test_save_button_invokes_callback_with_game() -> None:
+    """Regression: the save button must fire the callback with the Game, not
+    with the clicked Button (a prior name shadowing bug passed the widget)."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct windows")
+    from vitrine import db
+    from vitrine.library import Game, Library
+    from vitrine.ui.game_dialogs import GameSettingsDialog
+
+    conn = db.connect(":memory:")
+    db.initialize(conn)
+    library = Library(conn)
+    game = library.add(Game(name="Edit Me", source="local"))
+
+    received: list = []
+    dialog = GameSettingsDialog(library, game, on_save=received.append)
+    dialog._on_save(Gtk.Button(label="fake"))
+    assert received, "expected the save callback to fire"
+    assert isinstance(received[0], Game), f"callback received {type(received[0]).__name__}, expected Game"
+    assert received[0].id == game.id

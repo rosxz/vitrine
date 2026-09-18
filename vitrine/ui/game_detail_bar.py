@@ -17,7 +17,15 @@ from ..library import Game
 from ..util import format_lastplayed, human_playtime, initials
 
 DETAIL_HEIGHT = 200
+MIN_DETAIL_HEIGHT = 120
+#: Hard ceiling for the hero panel. The banner is cover-cropped at whatever
+#: height the user drags to; the slider physically stops at this cap.
+MAX_DETAIL_HEIGHT = 360
 COLLAPSED_HEIGHT = 26
+
+
+def clamp(value: int, low: int, high: int) -> int:
+    return max(low, min(high, value))
 
 
 class GameDetailBar(Gtk.Box):
@@ -33,23 +41,40 @@ class GameDetailBar(Gtk.Box):
         self._on_settings = on_settings
         self._game: Game | None = None
         self._expanded = True
+        self._height = DETAIL_HEIGHT
+        self._dragging = False
 
         self.set_css_classes(["vitrine-detail"])
 
-        self._handle = Gtk.Button()
-        self._handle.add_css_class("vitrine-detail-handle")
+        handle_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        handle_box.add_css_class("vitrine-detail-handle")
+
+        self._handle = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self._handle.set_halign(Gtk.Align.FILL)
-        self._handle.set_valign(Gtk.Align.CENTER)
-        self._handle.set_vexpand(False)
-        self._handle.connect("clicked", self._on_handle_clicked)
+        self._handle.set_hexpand(True)
         self._chevron_icon = Gtk.Image.new_from_icon_name("pan-down-symbolic")
-        self._handle.set_child(self._chevron_icon)
-        self.append(self._handle)
+        self._chevron_icon.add_css_class("vitrine-detail-handle-chevron")
+        self._handle.append(self._chevron_icon)
+        handle_box.append(self._handle)
+
+        # Clicking the handle collapses/expands; dragging (a press that moves)
+        # resizes the body between MIN and MAX height.
+        click = Gtk.GestureClick()
+        click.connect("released", self._on_handle_released)
+        self._handle.add_controller(click)
+
+        self._drag = Gtk.GestureDrag()
+        self._drag.connect("drag-begin", self._on_drag_begin)
+        self._drag.connect("drag-update", self._on_drag_update)
+        self._drag.connect("drag-end", self._on_drag_end)
+        self._handle.add_controller(self._drag)
+
+        self.append(handle_box)
 
         self._body = self._build_body()
         self.append(self._body)
 
-        self._set_height(self._expanded)
+        self._set_height(self._height)
         self.set_visible(False)
 
     def _build_body(self) -> Gtk.Widget:
@@ -172,8 +197,23 @@ class GameDetailBar(Gtk.Box):
         self._playtime_label.set_text(human_playtime(self._game.playtime) or "Not played")
         self._lastplayed_label.set_text(format_lastplayed(self._game.lastplayed))
 
-    def _on_handle_clicked(self, _button: Gtk.Button) -> None:
-        self._set_expanded(not self._expanded)
+    def _on_handle_released(self, _gesture: Gtk.GestureClick, n_press: int, x: float, y: float) -> None:
+        if not self._dragging:
+            self._set_expanded(not self._expanded)
+
+    def _on_drag_begin(self, _drag: Gtk.GestureDrag, start_x: float, start_y: float) -> None:
+        self._dragging = True
+        self._drag_start_height = max(self._height, MIN_DETAIL_HEIGHT)
+
+    def _on_drag_update(self, _drag: Gtk.GestureDrag, offset_x: float, offset_y: float) -> None:
+        # Dragging downward grows the panel; upward shrinks it. Clamped so the
+        # slider never exceeds the hero's max height.
+        new_height = self._drag_start_height + int(offset_y)
+        self._set_expanded(True)
+        self._set_height(clamp(new_height, MIN_DETAIL_HEIGHT, MAX_DETAIL_HEIGHT))
+
+    def _on_drag_end(self, _drag: Gtk.GestureDrag, offset_x: float, offset_y: float) -> None:
+        self._dragging = False
 
     def _set_expanded(self, expanded: bool) -> None:
         self._expanded = expanded
@@ -181,7 +221,11 @@ class GameDetailBar(Gtk.Box):
         self._chevron_icon.set_from_icon_name(
             "pan-up-symbolic" if expanded else "pan-down-symbolic"
         )
-        self._set_height(DETAIL_HEIGHT if expanded else COLLAPSED_HEIGHT)
+        if not expanded:
+            self._body.set_size_request(-1, COLLAPSED_HEIGHT)
+        else:
+            self._body.set_size_request(-1, max(self._height, MIN_DETAIL_HEIGHT))
 
     def _set_height(self, height: int) -> None:
+        self._height = height
         self._body.set_size_request(-1, height)

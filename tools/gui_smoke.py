@@ -84,6 +84,11 @@ def check_shell(application: VitrineApplication) -> None:
     assert rendered == 2, f"expected 2 tiles in the grid, got {rendered}"
     print(f"window '{window.get_title()}' rendered {rendered} tiles")
 
+    # A single click must select without launching: activation is double-click
+    # only (or Enter), so the grid must not be activate-on-single-click.
+    assert not window.library_view.flow.get_activate_on_single_click(), \
+        "single click must not activate/launch a tile"
+
     # The first tile should be auto-selected, which drives the detail bar.
     selected = window.library_view.selected_game()
     assert selected is not None, "expected a game to be selected after set_games"
@@ -96,18 +101,19 @@ def check_shell(application: VitrineApplication) -> None:
     selected = window.library_view.selected_game()
     assert window.detail_bar.game() is selected, "detail bar did not follow selection change"
 
-    # Right-click (secondary-click) opens per-game settings; build the dialog.
+    # Right-click (secondary-click) opens per-game settings; build the window.
     tile = window.library_view.flow.get_child_at_index(0)
     game_settings = GameSettingsDialog(library, tile.game, on_save=lambda g: None, parent=window)
-    game_settings.present(window)
-    game_settings.force_close()
-    print("right-click context builds the per-game settings dialog")
+    game_settings.present()
+    assert not game_settings.get_modal(), "per-game settings should be a movable, non-modal window"
+    game_settings.close()
+    print("right-click context builds the per-game settings window")
 
-    # The global settings dialog also opens from the cog.
+    # The global settings window also opens from the cog.
     settings = SettingsDialog(library, window.theme_manager, parent=window)
-    settings.present(window)
-    settings.force_close()
-    print("global settings dialog opens from the cog")
+    settings.present()
+    settings.close()
+    print("global settings window opens from the cog")
 
     # Launching the window should take effect through the supervisor. The game
     # exits immediately, so afterwards nothing should be running and no error
@@ -116,11 +122,11 @@ def check_shell(application: VitrineApplication) -> None:
     window.on_game_activated(game)
     assert window.runtime.running, "expected a process to start after activation"
 
-    # The add-game dialog is part of the shell too; build it to catch widget
+    # The add-game window is part of the shell too; build it to catch widget
     # misuse without needing to interact with it.
-    dialog = AddGameDialog(library, on_add=lambda game: None)
-    dialog.present(window)
-    dialog.force_close()
+    add_window = AddGameDialog(library, on_add=lambda game: None)
+    add_window.present()
+    add_window.close()
 
 
 def main() -> int:
