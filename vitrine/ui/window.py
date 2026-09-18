@@ -125,7 +125,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         )
 
     def on_add_game_clicked(self, _button: Gtk.Button) -> None:
-        dialog = AddGameDialog(on_add=self.on_game_added)
+        dialog = AddGameDialog(on_add=self.on_game_added, parent=self)
         dialog.present(self)
 
     def on_game_added(self, game: Game) -> None:

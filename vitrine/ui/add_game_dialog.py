@@ -15,6 +15,7 @@ class AddGameDialog(Adw.Dialog):
     def __init__(self, on_add: Callable[[Game], None], parent: Gtk.Widget | None = None) -> None:
         super().__init__()
         self._on_add = on_add
+        self.parent = parent
         self.set_title("Add a game")
         self.set_content_width(480)
 
@@ -73,7 +74,8 @@ class AddGameDialog(Adw.Dialog):
                     self.name_row.set_text(file.get_basename() or "")
 
         chooser = Gtk.FileDialog(title="Choose the game executable")
-        chooser.open(self, None, on_selected)
+        parent = self.parent if isinstance(self.parent, Gtk.Window) else None
+        chooser.open(parent or None, None, on_selected)
 
     def _on_add_clicked(self, _button: Gtk.Button) -> None:
         game = Game(
