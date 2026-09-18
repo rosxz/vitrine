@@ -16,7 +16,8 @@ Status: **early scaffolding**. Nothing here launches a game yet.
 | `vitrine/paths.py` | XDG paths (`~/.local/share/vitrine`, `~/.cache/vitrine`) |
 | `vitrine/launch.py` | Wine/Proton + gamescope command construction |
 | `vitrine/running.py` | Process supervisor: start/stop/watch one game, playtime |
-| `vitrine/sources/` | Source providers (`local` today; `steam` next) |
+| `vitrine/sources/` | Source providers (`local`, `steam`) |
+| `vitrine/sources/steam/` | Steam: VDF parsing, install discovery, durable auth cache |
 | `vitrine/ui/` | GTK4 + libadwaita front end |
 | `vitrine/ui/theme.py` | Theme registry and manager (Galaxy / follow system) |
 | `vitrine/ui/style/` | Bundled CSS themes (`.css` per theme) |
@@ -78,9 +79,12 @@ nix develop -c sh -c 'Xvfb :99 -screen 0 1280x800x24 & sleep 1; DISPLAY=:99 pyth
    - Single titlebar for editors/settings; sources column fixed and slender — done
    - Edition windows are movable; double-click launches, single click selects — done
    - Fixed-height hero collapses via an on-image toggle (top overlay) — done
-3. Runner catalogue, download, per-game and global defaults
-3. Per-game configuration UI (prefix, DLLs, DXVK, env, arguments)
-4. Metadata and artwork (lutris.net, SteamGridDB, IGDB, manual override)
-5. Steam source: owned library and Steam Family, with durable auth
+3. Steam source
+   - Local installed-library discovery from `appmanifest_*.acf` + `libraryfolders.vdf` — done
+   - Durable auth cache (cookies + access/refresh tokens) that avoids frequent re-login — done
+   - Owned + Steam Family web lists via Web API when a token is cached — done
+4. Runner catalogue, download, per-game and global defaults
+4. Per-game configuration UI (prefix, DLLs, DXVK, env, arguments)
+5. Metadata and artwork (lutris.net, SteamGridDB, IGDB, manual override)
 6. Unified library view with deduplication and source ranking
 7. GOG, Epic (via `legendary`), installs from Lutris installer scripts

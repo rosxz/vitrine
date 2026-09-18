@@ -156,6 +156,22 @@ class Library:
     def source_games(self, source: str) -> list[sqlite3.Row]:
         return list(self.conn.execute("SELECT * FROM source_games WHERE source = ?", (source,)))
 
+    def upsert_source_game(self, source: str, appid: str, name: str, **details: Any) -> None:
+        """Insert or refresh a cached row from a store's catalogue."""
+        self.conn.execute(
+            "INSERT INTO source_games (source, appid, name, details, updated_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(source, appid) DO UPDATE SET name = excluded.name, "
+            "details = excluded.details, updated_at = excluded.updated_at",
+            (source, appid, name, json.dumps(details), now()),
+        )
+        self.conn.commit()
+
+    def clear_source_games(self, source: str) -> None:
+        """Drop all cached catalogue rows for a store."""
+        self.conn.execute("DELETE FROM source_games WHERE source = ?", (source,))
+        self.conn.commit()
+
     # -- settings --------------------------------------------------------------
 
     def setting(self, key: str, default: Any = None) -> Any:
