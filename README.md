@@ -15,6 +15,7 @@ Status: **early scaffolding**. Nothing here launches a game yet.
 | `vitrine/library.py` | `Game` model and library CRUD |
 | `vitrine/paths.py` | XDG paths (`~/.local/share/vitrine`, `~/.cache/vitrine`) |
 | `vitrine/launch.py` | Wine/Proton + gamescope command construction |
+| `vitrine/running.py` | Process supervisor: start/stop/watch one game, playtime |
 | `vitrine/sources/` | Source providers (`local` today; `steam` next) |
 | `vitrine/ui/` | GTK4 + libadwaita front end |
 
@@ -44,11 +45,15 @@ nix develop -c sh -c 'Xvfb :99 -screen 0 1280x800x24 & sleep 1; DISPLAY=:99 pyth
   must not import GTK.
 - **Normalised artwork.** Covers are cached at one fixed aspect ratio so the unified grid
   looks uniform regardless of origin (`~/.cache/vitrine/covers`).
+- **One game at a time.** Launching is mediated by a supervisor that refuses to start a
+  second game while one is running, and records playtime when a game exits.
 
 ## Roadmap
 
 0. Shell, schema, source API
 1. Local game + Wine/Proton launch + gamescope
+   - Launch pipeline (gamescope / GameMode / MangoHud / DXVK / Wayland) — done
+   - Process supervision, running indicator, playtime recording — done
 2. Runner catalogue, download, per-game and global defaults
 3. Per-game configuration UI (prefix, DLLs, DXVK, env, arguments)
 4. Metadata and artwork (lutris.net, SteamGridDB, IGDB, manual override)

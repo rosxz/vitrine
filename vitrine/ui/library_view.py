@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterable
 from gi.repository import Adw, Gtk
 
 from ..library import Game
-from ..util import initials
+from ..util import human_playtime, initials
 
 #: Portrait cover ratio (width / height), matching Steam's library capsules.
 COVER_RATIO = 2 / 3
@@ -51,6 +51,23 @@ class GameTile(Gtk.FlowBoxChild):
             badge.set_margin_top(6)
             overlay.add_overlay(badge)
 
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        footer.set_halign(Gtk.Align.FILL)
+        footer.set_valign(Gtk.Align.END)
+        footer.add_css_class("card")
+        footer.set_margin_start(6)
+        footer.set_margin_end(6)
+        footer.set_margin_bottom(6)
+        footer.set_visible(False)
+
+        self.running_dot = Gtk.Image.new_from_icon_name("media-playback-start-symbolic")
+        footer.append(self.running_dot)
+        self.running_label = Gtk.Label(label="")
+        self.running_label.set_halign(Gtk.Align.START)
+        footer.append(self.running_label)
+        overlay.add_overlay(footer)
+        self.running_footer = footer
+
         frame = Gtk.AspectFrame(ratio=COVER_RATIO, xalign=0.5, yalign=0.5, obey_child=False)
         frame.set_obey_child(False)
         frame.set_child(overlay)
@@ -71,6 +88,15 @@ class GameTile(Gtk.FlowBoxChild):
             self.cover.set_filename(path)
         else:
             self.cover.set_paintable(None)
+
+    def set_running(self, elapsed_seconds: float | None) -> None:
+        """Show or hide the running indicator on the cover."""
+        if elapsed_seconds is None:
+            self.running_footer.set_visible(False)
+            self.running_label.set_text("")
+            return
+        self.running_label.set_text(human_playtime(elapsed_seconds / 3600.0))
+        self.running_footer.set_visible(True)
 
 
 class LibraryView(Gtk.Stack):

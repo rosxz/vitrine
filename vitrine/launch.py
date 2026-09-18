@@ -79,14 +79,25 @@ def build_env(game: Game, config: dict) -> dict[str, str]:
 
 
 def wine_command(game: Game, config: dict) -> list[str]:
-    """The innermost command: the runner, the executable and its arguments."""
-    command = [str(config.get("wine_binary") or "wine")]
+    """The innermost command: a runner, the executable and its arguments.
+
+    Native Linux games are launched directly; everything else goes through the
+    configured Wine/Proton runner (``config["wine_binary"]`` or ``wine`` on
+    PATH).
+    """
+    command: list[str] = []
+    if not _is_native(game.runner):
+        command.append(str(config.get("wine_binary") or "wine"))
     executable = expand(game.executable)
     if executable:
         command.append(executable)
     if game.arguments:
         command += shlex.split(game.arguments)
     return command
+
+
+def _is_native(runner: str | None) -> bool:
+    return runner in (None, "", "linux", "native")
 
 
 def gamescope_wrap(config: dict, inner: list[str]) -> list[str]:

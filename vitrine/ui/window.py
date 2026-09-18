@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from gi.repository import Adw, Gtk
+from gi.repository import Adw, GLib, Gtk
 
 from ..library import Game, Library
+from ..running import GameAlreadyRunning, Runtime
 from ..sources import registry
 from .add_game_dialog import AddGameDialog
 from .library_view import LibraryView
@@ -24,6 +25,10 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         self.set_default_size(1100, 720)
 
+        self.runtime = Runtime()
+        self.runtime.on_start = self._on_game_started
+        self.runtime.on_exit = self._on_game_exited
+
         self.library_view = LibraryView(on_activate=self.on_game_activated)
 
         self.toasts = Adw.ToastOverlay()
@@ -39,6 +44,9 @@ class VitrineWindow(Adw.ApplicationWindow):
         split.set_min_sidebar_width(210)
         split.set_max_sidebar_width(320)
         self.set_content(split)
+
+        self._ticker: int | None = None
+        self.setup_running_ticker()
 
         self.reload()
 
@@ -126,6 +134,71 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.toasts.add_toast(Adw.Toast(title=f"Added {game.name}"))
 
     def on_game_activated(self, game: Game) -> None:
-        """Launch the game. The launch pipeline lands in the next slice."""
-        logger.info("Activated %s (%s)", game.name, game.executable or "no executable")
-        self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name} is not wired up yet"))
+        if game.id is None:
+            return
+        if self.runtime.running_game is game:
+            self._stop_game()
+            return
+        config = game.merged_config(self.library.global_config())
+        try:
+            self.runtime.start(game, config)
+            self._running_started_monotonic = GLib.get_monotonic_time() / 1e6
+        except GameAlreadyRunning as error:
+            self.toasts.add_toast(Adw.Toast(title=str(error)))
+        except OSError as error:
+            logger.error("Failed to launch %s: %s", game.name, error)
+            self.toasts.add_toast(Adw.Toast(title=f"Failed to launch {game.name}: {error.strerror or error}"))
+        except Exception:
+            logger.exception("Failed to launch %s", game.name)
+            self.toasts.add_toast(Adw.Toast(title=f"Failed to launch {game.name}"))
+
+    def _stop_game(self) -> None:
+        game = self.runtime.running_game
+        self.runtime.stop()
+        if game is not None:
+            self.toasts.add_toast(Adw.Toast(title=f"Stopping {game.name}"))
+
+    # -- runtime callbacks (come from a background thread) ----------------------
+
+    def _marshal(self, fn) -> None:
+        GLib.idle_add(fn)
+
+    def _on_game_started(self, game: Game) -> None:
+        def apply() -> bool:
+            self.toasts.add_toast(Adw.Toast(title=f"Launched {game.name}"))
+            return GLib.SOURCE_REMOVE
+
+        self._marshal(apply)
+
+    def _on_game_exited(self, game: Game, hours: float, returncode: int) -> None:
+        def apply() -> bool:
+            self.library.record_playtime(game, hours)
+            self.reload()
+            status = "exited" if returncode == 0 else f"exited with code {returncode}"
+            self.toasts.add_toast(Adw.Toast(title=f"{game.name} {status}"))
+            return GLib.SOURCE_REMOVE
+
+        self._marshal(apply)
+
+    # -- running indicator ------------------------------------------------------
+
+    def setup_running_ticker(self) -> None:
+        def tick() -> bool:
+            game = self.runtime.running_game
+            elapsed = None
+            if game is not None and self._running_started_monotonic:
+                elapsed = (GLib.get_monotonic_time() / 1e6) - self._running_started_monotonic
+            for tile in self._all_tiles():
+                tile.set_running(elapsed if tile.game is game else None)
+            return GLib.SOURCE_CONTINUE
+
+        self._running_started_monotonic = None
+        self._ticker = GLib.timeout_add_seconds(1, tick)
+
+    def _all_tiles(self):
+        tiles = []
+        child = self.library_view.flow.get_first_child()
+        while child is not None:
+            tiles.append(child)
+            child = child.get_next_sibling()
+        return tiles

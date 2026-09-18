@@ -15,6 +15,7 @@ Set VITRINE_SMOKE_ALLOW_DESKTOP=1 to watch it on your own session instead.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import tempfile
 import traceback
@@ -51,6 +52,8 @@ from vitrine.library import Game
 from vitrine.ui import VitrineWindow
 from vitrine.ui.add_game_dialog import AddGameDialog
 
+TRUE = shutil.which("true")
+
 
 def tile_count(view: Any) -> int:
     """How many tiles the library grid currently holds."""
@@ -72,13 +75,20 @@ def check_shell(application: VitrineApplication) -> None:
     window = windows[0]
     assert isinstance(window, VitrineWindow), f"unexpected window type {type(window).__name__}"
 
-    library.add(Game(name="Smoke Test Game", executable="/bin/true", source="local"))
+    library.add(Game(name="Smoke Test Game", runner="linux", executable=TRUE, source="local"))
     library.add(Game(name="Another One", executable="/bin/true", source="steam", source_id="1"))
 
     window.reload()
     rendered = tile_count(window.library_view)
     assert rendered == 2, f"expected 2 tiles in the grid, got {rendered}"
     print(f"window '{window.get_title()}' rendered {rendered} tiles")
+
+    # Launching the window should take effect through the supervisor. The game
+    # exits immediately, so afterwards nothing should be running and no error
+    # toast may be raised.
+    game = library.games(source="local")[0]
+    window.on_game_activated(game)
+    assert window.runtime.running, "expected a process to start after activation"
 
     # The add-game dialog is part of the shell too; build it to catch widget
     # misuse without needing to interact with it.

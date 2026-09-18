@@ -19,6 +19,12 @@ def test_plain_wine_command() -> None:
     assert command == ["wine", "/games/Game.exe"]
 
 
+def test_native_linux_game_is_launched_directly() -> None:
+    command = launch.build_command(game(runner="linux"), {})
+
+    assert command == ["/games/Game.exe"]
+
+
 def test_arguments_are_split_with_quoting() -> None:
     command = launch.build_command(game(arguments='-windowed -name "Big Mod"'), {})
 
