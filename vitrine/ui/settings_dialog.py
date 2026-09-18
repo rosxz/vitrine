@@ -16,7 +16,7 @@ from ..library import Library
 from .theme import THEMES, ThemeManager
 
 
-class SettingsWindow(Gtk.Window):
+class SettingsWindow(Adw.Window):
     def __init__(
         self,
         library: Library,
@@ -28,6 +28,7 @@ class SettingsWindow(Gtk.Window):
         self.library = library
         self.theme_manager = theme_manager
         self._on_theme = on_theme
+        self.add_css_class("vitrine-window")
         self.set_default_size(460, 420)
         if parent is not None:
             self.set_transient_for(parent)
@@ -58,7 +59,7 @@ class SettingsWindow(Gtk.Window):
         # buttons) rather than a second header inside the content, which would
         # duplicate the Close affordance.
         self.set_titlebar(header)
-        self.set_child(style)
+        self.set_content(style)
 
     def _on_theme_selected(self, row: Gtk.ComboRow, _pspec: object) -> None:
         index = row.get_selected()

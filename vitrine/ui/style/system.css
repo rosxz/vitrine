@@ -5,6 +5,7 @@
 
 window.vitrine-window {
     color-scheme: inherit;
+    background-color: @window_bg_color;
 }
 
 /* Source navigation -------------------------------------------------------- */

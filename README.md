@@ -75,9 +75,9 @@ nix develop -c sh -c 'Xvfb :99 -screen 0 1280x800x24 & sleep 1; DISPLAY=:99 pyth
    - Theme engine (Galaxy default / follow system) + bundled CSS — done
    - Global settings (cog) and per-game settings (right-click / detail-bar cog) — done
    - Hero detail bar with play / playtime / last-played — done
-   - Single titlebar for editors/settings; sources column fixed-width — done
+   - Single titlebar for editors/settings; sources column fixed and slender — done
    - Edition windows are movable; double-click launches, single click selects — done
-   - Hero collapses via an on-image toggle and shrinks below its locked size — done
+   - Fixed-height hero collapses via an on-image toggle (top overlay) — done
 3. Runner catalogue, download, per-game and global defaults
 3. Per-game configuration UI (prefix, DLLs, DXVK, env, arguments)
 4. Metadata and artwork (lutris.net, SteamGridDB, IGDB, manual override)

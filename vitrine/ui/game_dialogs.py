@@ -62,7 +62,7 @@ def _open_picker(
     chooser.open(_parent_window(parent), None, on_selected)
 
 
-class _GameWindow(Gtk.Window):
+class _GameWindow(Adw.Window):
     """Shared movable window placing a :class:`GameForm` under a header.
 
     The save button signals ``_on_save`` (the method); the caller-provided
@@ -82,6 +82,7 @@ class _GameWindow(Gtk.Window):
         self.library = library
         self._form = form
         self._save_callback: Callable[[Game], None] | None = None
+        self.add_css_class("vitrine-window")
         self.set_default_size(_FORM_WIDTH, _FORM_HEIGHT)
         parent_window = _parent_window(parent)
         if parent_window is not None:
@@ -107,7 +108,7 @@ class _GameWindow(Gtk.Window):
         header.pack_end(save)
 
         self.set_titlebar(header)
-        self.set_child(body)
+        self.set_content(body)
 
         for kind in _BROWSE_TITLES:
             form.connect_browse(kind, self._make_browse(kind))

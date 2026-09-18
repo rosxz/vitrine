@@ -71,8 +71,9 @@ class VitrineWindow(Adw.ApplicationWindow):
         split = Adw.OverlaySplitView()
         split.set_sidebar(self._build_sidebar())
         split.set_content(toolbar)
-        split.set_min_sidebar_width(210)
-        split.set_max_sidebar_width(320)
+        # Slender, roughly 2/3 of the original 210-320px column.
+        split.set_min_sidebar_width(140)
+        split.set_max_sidebar_width(220)
         self.set_content(split)
 
         self._ticker: int | None = None

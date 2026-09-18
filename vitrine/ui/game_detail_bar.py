@@ -5,10 +5,10 @@ game's banner (falling back to its cover behind a scrim, then initials) fills a
 panel with the title, a prominent rectangular play button, playtime and
 last-played.
 
-The collapse toggle is an overlay on the hero itself (transparent until
-hovered), so it occupies no layout space when idle. Dragging the toggle shrinks
-the panel down from its locked default height; clicking it collapses to a thin
-strip that keeps the chevron visible so it can be reopened.
+The collapse toggle is an overlay on top of the hero (transparent until
+hovered), so it occupies no layout space when idle. Clicking it collapses the
+panel down to a thin strip that keeps the chevron visible so it can be
+reopened.
 """
 
 from __future__ import annotations
@@ -20,16 +20,10 @@ from gi.repository import Gtk
 from ..library import Game
 from ..util import format_lastplayed, human_playtime, initials
 
-#: The locked default (and maximum) height: 66% of the previous 200px default so
-#: the panel takes less room from the game list. Dragging may only shrink below
-#: this.
-DEFAULT_HEIGHT = 132
-MIN_HEIGHT = 90
+#: Fixed hero height. Kept deliberately compact so the panel leaves room for the
+#: game list.
+DEFAULT_HEIGHT = 200
 COLLAPSED_HEIGHT = 26
-
-
-def clamp(value: int, low: int, high: int) -> int:
-    return max(low, min(high, value))
 
 
 class GameDetailBar(Gtk.Box):
@@ -45,16 +39,13 @@ class GameDetailBar(Gtk.Box):
         self._on_settings = on_settings
         self._game: Game | None = None
         self._expanded = True
-        self._height = DEFAULT_HEIGHT
-        self._dragging = False
-        self._drag_start_height = DEFAULT_HEIGHT
 
         self.set_css_classes(["vitrine-detail"])
 
         self._body = self._build_body()
         self.append(self._body)
 
-        self._set_height(self._height)
+        self._set_expanded(self._expanded)
         self.set_visible(False)
 
     def _build_body(self) -> Gtk.Widget:
@@ -116,28 +107,22 @@ class GameDetailBar(Gtk.Box):
         text.append(self._title)
         text.append(self._meta)
 
+        # The collapse chevron sits on top of the hero (top-center), floating
+        # over the artwork and invisible until hovered.
         self._chevron_icon = Gtk.Image.new_from_icon_name("pan-down-symbolic")
         self._chevron_icon.add_css_class("vitrine-detail-toggle-icon")
 
         self._toggle = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         self._toggle.add_css_class("vitrine-detail-toggle")
         self._toggle.set_halign(Gtk.Align.CENTER)
-        self._toggle.set_valign(Gtk.Align.END)
+        self._toggle.set_valign(Gtk.Align.START)
         self._toggle.set_vexpand(False)
         self._toggle.append(self._chevron_icon)
-        self._toggle.set_margin_bottom(6)
+        self._toggle.set_margin_top(6)
 
-        # Clicking the toggle collapses/expands; dragging (a press that moves)
-        # shrinks the hero down from its locked default height.
         click = Gtk.GestureClick()
         click.connect("released", self._on_toggle_released)
         self._toggle.add_controller(click)
-
-        self._drag = Gtk.GestureDrag()
-        self._drag.connect("drag-begin", self._on_drag_begin)
-        self._drag.connect("drag-update", self._on_drag_update)
-        self._drag.connect("drag-end", self._on_drag_end)
-        self._toggle.add_controller(self._drag)
 
         # Overlays that describe the game; hidden while collapsed so only the
         # backdrop scrim and the toggle chevron remain in the thin strip.
@@ -203,22 +188,7 @@ class GameDetailBar(Gtk.Box):
         self._lastplayed_label.set_text(format_lastplayed(self._game.lastplayed))
 
     def _on_toggle_released(self, _gesture: Gtk.GestureClick, n_press: int, x: float, y: float) -> None:
-        if not self._dragging:
-            self._set_expanded(not self._expanded)
-
-    def _on_drag_begin(self, _drag: Gtk.GestureDrag, start_x: float, start_y: float) -> None:
-        self._dragging = True
-        self._drag_start_height = max(self._height, MIN_HEIGHT)
-
-    def _on_drag_update(self, _drag: Gtk.GestureDrag, offset_x: float, offset_y: float) -> None:
-        # Dragging only shrinks the panel down towards MIN_HEIGHT; it can never
-        # grow past the locked default height.
-        new_height = self._drag_start_height + int(offset_y)
-        self._set_expanded(True)
-        self._set_height(clamp(new_height, MIN_HEIGHT, DEFAULT_HEIGHT))
-
-    def _on_drag_end(self, _drag: Gtk.GestureDrag, offset_x: float, offset_y: float) -> None:
-        self._dragging = False
+        self._set_expanded(not self._expanded)
 
     def _set_expanded(self, expanded: bool) -> None:
         self._expanded = expanded
@@ -227,11 +197,6 @@ class GameDetailBar(Gtk.Box):
         )
         for widget in self._content_overlays:
             widget.set_visible(expanded)
-        if not expanded:
-            self._body.set_size_request(-1, COLLAPSED_HEIGHT)
-        else:
-            self._body.set_size_request(-1, max(self._height, MIN_HEIGHT))
-
-    def _set_height(self, height: int) -> None:
-        self._height = clamp(height, MIN_HEIGHT, DEFAULT_HEIGHT)
-        self._body.set_size_request(-1, self._height)
+        self._body.set_size_request(
+            -1, DEFAULT_HEIGHT if expanded else COLLAPSED_HEIGHT
+        )

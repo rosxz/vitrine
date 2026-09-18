@@ -45,7 +45,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import GLib
+from gi.repository import Adw, GLib
 
 from vitrine.application import VitrineApplication
 from vitrine.library import Game
@@ -106,12 +106,16 @@ def check_shell(application: VitrineApplication) -> None:
     game_settings = GameSettingsDialog(library, tile.game, on_save=lambda g: None, parent=window)
     game_settings.present()
     assert not game_settings.get_modal(), "per-game settings should be a movable, non-modal window"
+    assert isinstance(game_settings, Adw.Window), "per-game settings should be an Adw.Window for theming"
+    assert "vitrine-window" in game_settings.get_css_classes(), "editor windows must follow the theme"
     game_settings.close()
     print("right-click context builds the per-game settings window")
 
     # The global settings window also opens from the cog.
     settings = SettingsDialog(library, window.theme_manager, parent=window)
     settings.present()
+    assert isinstance(settings, Adw.Window), "settings should be an Adw.Window for theming"
+    assert "vitrine-window" in settings.get_css_classes(), "settings window must follow the theme"
     settings.close()
     print("global settings window opens from the cog")
 
