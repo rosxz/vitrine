@@ -10,21 +10,55 @@
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
 
-      python = pkgs.python3.withPackages (ps: [
-        ps.pygobject3
-        ps.requests
-        ps.pillow
-        ps.pytest
-      ]);
+      # Everything the app needs at runtime. The devShell adds tooling on top.
+      runtime = {
+        python = with pkgs.python3; withPackages (ps: [
+          ps.pygobject3
+          ps.requests
+          ps.pillow
+        ]);
+        libs = [ pkgs.gtk4 pkgs.libadwaita pkgs.gobject-introspection pkgs.gdk-pixbuf pkgs.graphene pkgs.pango pkgs.harfbuzz ];
+        themes = [ pkgs.adwaita-icon-theme pkgs.hicolor-icon-theme ];
+      };
+
+      runtimeEnv = pkgs.lib.makeLibraryPath (runtime.libs ++ runtime.themes);
+      # Typelibs ship in the ``out`` output for every dependent, which is not
+      # always the default output (pango's default is its ``bin`` output), so
+      # reference ``.out`` explicitly.
+      typelibs = runtime.libs ++ runtime.themes;
+      typelibPath = pkgs.lib.concatStringsSep ":" (map (p: "${p.out}/lib/girepository-1.0") typelibs);
+      dataDirs = pkgs.lib.concatStringsSep ":" (map (p: "${p}/share") (runtime.libs ++ runtime.themes));
+
+      # Run Vitrine from the source tree with the runtime environment set.
+      vitrineApp = pkgs.writeShellScriptBin "vitrine" ''
+        export LD_LIBRARY_PATH="${runtimeEnv}:$LD_LIBRARY_PATH"
+        export GI_TYPELIB_PATH="${typelibPath}:$GI_TYPELIB_PATH"
+        export XDG_DATA_DIRS="${dataDirs}:$XDG_DATA_DIRS"
+        exec ${runtime.python}/bin/python -m vitrine "$@"
+      '';
     in
     {
+      packages.${system}.default = pkgs.symlinkJoin {
+        name = "vitrine";
+        paths = [ vitrineApp ];
+        passthru.python = runtime.python;
+      };
+
+      apps.${system}.default = {
+        type = "app";
+        program = "${vitrineApp}/bin/vitrine";
+      };
+
       devShells.${system}.default = pkgs.mkShell {
         buildInputs = [
-          python
+          runtime.python
           pkgs.gtk4
           pkgs.libadwaita
           pkgs.gobject-introspection
           pkgs.gdk-pixbuf
+          pkgs.graphene
+          pkgs.pango
+          pkgs.harfbuzz
           pkgs.adwaita-icon-theme
           pkgs.hicolor-icon-theme
           pkgs.blueprint-compiler
@@ -36,14 +70,9 @@
 
         shellHook = ''
           echo "NIX Dev Environment: Vitrine"
-          export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
-            pkgs.gtk4
-            pkgs.libadwaita
-            pkgs.gobject-introspection
-            pkgs.gdk-pixbuf
-          ]}:$LD_LIBRARY_PATH"
-          export GI_TYPELIB_PATH="${pkgs.gtk4}/lib/girepository-1.0:${pkgs.libadwaita}/lib/girepository-1.0:$GI_TYPELIB_PATH"
-          export XDG_DATA_DIRS="${pkgs.gtk4}/share:${pkgs.libadwaita}/share:${pkgs.adwaita-icon-theme}/share:${pkgs.hicolor-icon-theme}/share:$XDG_DATA_DIRS"
+          export LD_LIBRARY_PATH="${runtimeEnv}:$LD_LIBRARY_PATH"
+          export GI_TYPELIB_PATH="${typelibPath}:$GI_TYPELIB_PATH"
+          export XDG_DATA_DIRS="${dataDirs}:$XDG_DATA_DIRS"
           export VITRINE_DEV=1
         '';
       };

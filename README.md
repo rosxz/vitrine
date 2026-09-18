@@ -22,10 +22,17 @@ Status: **early scaffolding**. Nothing here launches a game yet.
 ## Development
 
 ```sh
-nix develop
-python -m vitrine          # launch the app
-python -m pytest           # run the tests
+nix develop             # enter the dev shell
+python -m vitrine       # launch the app
+python -m pytest        # run the tests
 ruff check .
+```
+
+The app is also exposed as a flake app and package, with the runtime
+environment (GTK, libadwaita and their typelibs) wired up automatically:
+
+```sh
+nix run .#              # run Vitrine without entering the dev shell
 ```
 
 `tools/gui_smoke.py` builds the real window, database and library grid against a
