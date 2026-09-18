@@ -1,0 +1,36 @@
+[project]
+name = "vitrine"
+version = "0.0.1"
+description = "A unified game library launcher for Linux: local games, Steam (owned + family), more sources later."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+dependencies = [
+    "PyGObject",
+    "requests",
+    "Pillow",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+    "mypy",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["vitrine", "vitrine.sources", "vitrine.ui"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
