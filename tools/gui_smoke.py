@@ -133,6 +133,16 @@ def check_shell(application: VitrineApplication) -> None:
     assert not isinstance(settings, Adw.Window), "settings must be a plain Gtk.Window (Adw forbids set_titlebar)"
     assert "vitrine-window" in settings.get_css_classes(), "settings window must follow the theme"
     settings.close()
+
+    # The Steam sign-in window builds (browser + cookie-paste flow).
+    from vitrine.sources.steam.auth import SteamTokenStore
+    from vitrine.ui.steam_login_dialog import SteamLoginDialog
+
+    with tempfile.TemporaryDirectory() as tmp:
+        login = SteamLoginDialog(SteamTokenStore(tmp, "111"), parent=window)
+        login.present()
+        login.close()
+    print("Steam sign-in window builds")
     print("global settings window opens from the cog")
 
     # Launching the window should take effect through the supervisor. The game

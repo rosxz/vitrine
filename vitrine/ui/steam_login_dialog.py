@@ -59,11 +59,19 @@ class SteamLoginDialog(Gtk.Window):
         help_label.set_margin_start(16)
         help_label.set_margin_end(16)
 
+        hint = Gtk.Label(
+            label="Paste the cookie list here (sessionid=… / steamLoginSecure=…, "
+            "one per line).",
+            halign=Gtk.Align.START,
+        )
+        hint.add_css_class("dim-label")
+        hint.set_margin_top(4)
+        hint.set_margin_bottom(4)
+        hint.set_margin_start(16)
+        hint.set_margin_end(16)
+
         self._cookies = Gtk.TextView()
         self._cookies.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        self._cookies.set_placeholder_text(
-            "sessionid=...\nsteamLoginSecure=...\n# paste the Netscape-format cookie list"
-        )
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         scroller.set_child(self._cookies)
@@ -96,6 +104,7 @@ class SteamLoginDialog(Gtk.Window):
 
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         content.append(help_label)
+        content.append(hint)
         content.append(scroller)
         content.append(actions)
 
