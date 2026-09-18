@@ -50,20 +50,15 @@ class SettingsWindow(Gtk.Window):
         style.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         style.set_child(page)
 
-        toolbar = Adw.ToolbarView()
-        toolbar.add_top_bar(self._build_header_bar())
-        toolbar.set_content(style)
-
-        self.set_child(toolbar)
-
-    def _build_header_bar(self) -> Adw.HeaderBar:
         header = Adw.HeaderBar()
         header.set_title_widget(Adw.WindowTitle(title="Settings", subtitle=""))
         header.set_show_end_title_buttons(True)
-        close = Gtk.Button(label="Close")
-        close.connect("clicked", lambda _btn: self.close())
-        header.pack_end(close)
-        return header
+
+        # Make the header the window's single title bar (with native window
+        # buttons) rather than a second header inside the content, which would
+        # duplicate the Close affordance.
+        self.set_titlebar(header)
+        self.set_child(style)
 
     def _on_theme_selected(self, row: Gtk.ComboRow, _pspec: object) -> None:
         index = row.get_selected()

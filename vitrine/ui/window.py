@@ -25,7 +25,6 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.library = library
         self.theme_manager = application.theme_manager
         self.current_source: str | None = None
-        self._sidebar_drag_start_width = 0
 
         self.set_default_size(1100, 760)
         self.add_css_class("vitrine-window")
@@ -72,8 +71,8 @@ class VitrineWindow(Adw.ApplicationWindow):
         split = Adw.OverlaySplitView()
         split.set_sidebar(self._build_sidebar())
         split.set_content(toolbar)
-        split.set_min_sidebar_width(180)
-        split.set_max_sidebar_width(520)
+        split.set_min_sidebar_width(210)
+        split.set_max_sidebar_width(320)
         self.set_content(split)
 
         self._ticker: int | None = None
@@ -110,41 +109,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         scroller.set_vexpand(True)
         sidebar.append(scroller)
 
-        # Horizontal divider that can be dragged to resize the sources column.
-        root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        root.append(sidebar)
-        root.append(self._build_sidebar_divider())
-        return root
-
-    def _build_sidebar_divider(self) -> Gtk.Widget:
-        divider = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        divider.set_size_request(6, -1)
-        divider.add_css_class("sidebar-divider")
-        divider.set_cursor_from_name("col-resize")
-
-        drag = Gtk.GestureDrag()
-        drag.connect("drag-begin", self._on_sidebar_drag_begin)
-        drag.connect("drag-update", self._on_sidebar_drag_update)
-        divider.add_controller(drag)
-        return divider
-
-    # -- sidebar divider drag --------------------------------------------------
-
-    def _on_sidebar_drag_begin(self, _drag: Gtk.GestureDrag, start_x: float, start_y: float) -> None:
-        view = self.get_child()
-        if isinstance(view, Adw.OverlaySplitView):
-            self._sidebar_drag_start_width = int(view.get_sidebar_width_fraction() * view.get_width())
-
-    def _on_sidebar_drag_update(self, _drag: Gtk.GestureDrag, offset_x: float, offset_y: float) -> None:
-        view = self.get_child()
-        if not isinstance(view, Adw.OverlaySplitView):
-            return
-        width = view.get_width()
-        if width <= 0:
-            return
-        new_width = self._sidebar_drag_start_width + int(offset_x)
-        fraction = new_width / width
-        view.set_sidebar_width_fraction(max(0.0, min(1.0, fraction)))
+        return sidebar
 
     def _add_source_row(self, source_id: str, title: str, icon_name: str) -> None:
         row = Gtk.ListBoxRow()

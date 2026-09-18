@@ -12,14 +12,6 @@ window.vitrine-window {
     border-right: 1px solid #1e1c23;
 }
 
-.sidebar-divider {
-    background-color: #1e1c23;
-}
-
-.sidebar-divider:hover {
-    background-color: #a269ff;
-}
-
 .sidebar-header {
     color: #efeaf8;
     font-weight: 600;
@@ -116,27 +108,27 @@ window.vitrine-window {
     color: #a269ff;
 }
 
-.vitrine-detail-handle {
+/* Collapse toggle: sits on the hero, invisible until hovered. */
+.vitrine-detail-toggle {
     background-color: transparent;
-    min-height: 8px;
-    padding: 0;
     border: none;
     border-radius: 0;
+    min-height: 16px;
+    padding: 0 8px;
 }
 
-.vitrine-detail-handle-chevron {
-    opacity: 0;
-    min-height: 8px;
+.vitrine-detail-toggle-icon {
     color: #8a83a0;
+    opacity: 0;
 }
 
-.vitrine-detail-handle:hover .vitrine-detail-handle-chevron {
+.vitrine-detail:hover .vitrine-detail-toggle-icon,
+.vitrine-detail-toggle:hover .vitrine-detail-toggle-icon {
     opacity: 1;
 }
 
-.vitrine-detail-handle:hover {
-    background-color: #201d27;
-    border-top: 1px solid #2a2634;
+.vitrine-detail-toggle:hover .vitrine-detail-toggle-icon {
+    color: #efeaf8;
 }
 
 /* Prominent play button ---------------------------------------------------- */
