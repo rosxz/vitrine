@@ -144,6 +144,13 @@ class LibraryView(Gtk.Stack):
         self.flow.connect("child-activated", self._on_child_activated)
         self.flow.connect("selected-children-changed", self._on_selection_changed)
 
+        # A click on the grid background (not on a tile) clears the selection,
+        # which hides the detail bar.
+        background_click = Gtk.GestureClick()
+        background_click.set_button(1)
+        background_click.connect("pressed", self._on_background_pressed)
+        self.flow.add_controller(background_click)
+
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroller.set_child(self.flow)
@@ -189,6 +196,14 @@ class LibraryView(Gtk.Stack):
         if isinstance(child, GameTile):
             self._on_activate(child.game)
 
+    def _on_background_pressed(self, gesture: Gtk.GestureClick, n_press: int, x: float, y: float) -> None:
+        """Clear the selection when the click was on the grid, not a tile."""
+        if n_press > 1:
+            return
+        picked = self.flow.pick(int(x), int(y), Gtk.PickFlags(0))
+        if picked is None or not _within_tile(picked):
+            self.flow.unselect_all()
+
     def _on_selection_changed(self, flow: Gtk.FlowBox) -> None:
         selected = _selected(flow)
         for child in _children(flow):
@@ -205,6 +220,16 @@ def _children(flow: Gtk.FlowBox):
     while child is not None:
         yield child
         child = child.get_next_sibling()
+
+
+def _within_tile(widget: Gtk.Widget) -> bool:
+    """True if ``widget`` is a GameTile or a descendant of one."""
+    current: Gtk.Widget | None = widget
+    while current is not None:
+        if isinstance(current, GameTile):
+            return True
+        current = current.get_parent()
+    return False
 
 
 def _selected(flow: Gtk.FlowBox) -> Gtk.FlowBoxChild | None:

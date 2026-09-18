@@ -49,18 +49,26 @@ class GameDetailBar(Gtk.Box):
         self.set_visible(False)
 
     def _build_body(self) -> Gtk.Widget:
+        # The scrim is the overlay's main child and dictates the fixed height;
+        # the backdrop picture sits on top of it, filling the box and cropping
+        # its artwork (cover-fit) so the hero never grows beyond the height.
+        scrim = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        scrim.set_vexpand(True)
+        scrim.set_hexpand(True)
+        scrim.add_css_class("vitrine-detail-scrim")
+
         self._backdrop = Gtk.Picture()
         self._backdrop.set_content_fit(Gtk.ContentFit.COVER)
         self._backdrop.set_can_shrink(True)
+        self._backdrop.set_halign(Gtk.Align.FILL)
+        self._backdrop.set_valign(Gtk.Align.FILL)
+        self._backdrop.set_hexpand(True)
+        self._backdrop.set_vexpand(False)
         self._backdrop.add_css_class("vitrine-detail-backdrop")
 
         self._placeholder = Gtk.Label()
         self._placeholder.add_css_class("title-1")
         self._placeholder.add_css_class("dim-label")
-
-        scrim = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        scrim.set_vexpand(True)
-        scrim.add_css_class("vitrine-detail-scrim")
 
         self._title = Gtk.Label(halign=Gtk.Align.START)
         self._title.add_css_class("vitrine-detail-title")
@@ -125,12 +133,13 @@ class GameDetailBar(Gtk.Box):
         self._toggle.add_controller(click)
 
         # Overlays that describe the game; hidden while collapsed so only the
-        # backdrop scrim and the toggle chevron remain in the thin strip.
-        self._content_overlays = [self._placeholder, scrim, text, controls]
+        # toggle chevron remains in the thin strip.
+        self._content_overlays = [self._backdrop, self._placeholder, scrim, text, controls]
 
         overlay = Gtk.Overlay()
-        overlay.set_child(self._backdrop)
-        for widget in (self._placeholder, scrim, text, controls):
+        overlay.set_child(scrim)  # dictates the fixed height
+        overlay.add_overlay(self._backdrop)  # cover-crops to fill the scrim
+        for widget in (self._placeholder, text, controls):
             overlay.add_overlay(widget)
         overlay.add_overlay(self._toggle)
         self._backdrop_overlay = overlay
@@ -143,7 +152,11 @@ class GameDetailBar(Gtk.Box):
         return self._game
 
     def set_game(self, game: Game | None) -> None:
-        """Show the given game's details, expanding if not already visible."""
+        """Show the given game's details, keeping the current collapse state.
+
+        Collapsing is sticky: cycling between games will not re-expand a panel
+        the user has toggled closed.
+        """
         self._game = game
         if game is None:
             self.set_visible(False)
@@ -163,8 +176,6 @@ class GameDetailBar(Gtk.Box):
             self._placeholder.set_text(initials(game.name))
             self._placeholder.set_visible(True)
 
-        if not self._expanded:
-            self._set_expanded(True)
         self._refresh_meta()
 
     def set_running(self, elapsed_seconds: float | None) -> None:

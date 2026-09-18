@@ -16,7 +16,7 @@ from ..library import Library
 from .theme import THEMES, ThemeManager
 
 
-class SettingsWindow(Adw.Window):
+class SettingsWindow(Gtk.Window):
     def __init__(
         self,
         library: Library,
@@ -59,7 +59,7 @@ class SettingsWindow(Adw.Window):
         # buttons) rather than a second header inside the content, which would
         # duplicate the Close affordance.
         self.set_titlebar(header)
-        self.set_content(style)
+        self.set_child(style)
 
     def _on_theme_selected(self, row: Gtk.ComboRow, _pspec: object) -> None:
         index = row.get_selected()

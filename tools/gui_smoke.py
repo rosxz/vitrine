@@ -101,12 +101,28 @@ def check_shell(application: VitrineApplication) -> None:
     selected = window.library_view.selected_game()
     assert window.detail_bar.game() is selected, "detail bar did not follow selection change"
 
+    # Clicking the grid background (empty area) clears the selection and hides
+    # the detail bar.
+    window.library_view._on_background_pressed(None, 1, 300, 700)
+    assert window.library_view.selected_game() is None, "background click should deselect"
+    assert not window.detail_bar.get_visible(), "detail bar should hide after background click"
+
+    # Collapsing the detail bar is sticky when switching games.
+    window.library_view.flow.select_child(window.library_view.flow.get_child_at_index(0))
+    assert window.detail_bar.get_visible(), "detail bar should reappear on selection"
+    window.detail_bar._set_expanded(False)
+    assert not window.detail_bar._expanded, "detail bar should be collapsed"
+    window.library_view.flow.select_child(window.library_view.flow.get_child_at_index(1))
+    assert window.detail_bar.game() is window.library_view.selected_game()
+    assert not window.detail_bar._expanded, "collapsed state must persist across game switches"
+
     # Right-click (secondary-click) opens per-game settings; build the window.
     tile = window.library_view.flow.get_child_at_index(0)
     game_settings = GameSettingsDialog(library, tile.game, on_save=lambda g: None, parent=window)
     game_settings.present()
     assert not game_settings.get_modal(), "per-game settings should be a movable, non-modal window"
-    assert isinstance(game_settings, Adw.Window), "per-game settings should be an Adw.Window for theming"
+    # Adw.Window forbids set_titlebar (hard abort); editors stay plain windows.
+    assert not isinstance(game_settings, Adw.Window)
     assert "vitrine-window" in game_settings.get_css_classes(), "editor windows must follow the theme"
     game_settings.close()
     print("right-click context builds the per-game settings window")
@@ -114,7 +130,7 @@ def check_shell(application: VitrineApplication) -> None:
     # The global settings window also opens from the cog.
     settings = SettingsDialog(library, window.theme_manager, parent=window)
     settings.present()
-    assert isinstance(settings, Adw.Window), "settings should be an Adw.Window for theming"
+    assert not isinstance(settings, Adw.Window), "settings must be a plain Gtk.Window (Adw forbids set_titlebar)"
     assert "vitrine-window" in settings.get_css_classes(), "settings window must follow the theme"
     settings.close()
     print("global settings window opens from the cog")
