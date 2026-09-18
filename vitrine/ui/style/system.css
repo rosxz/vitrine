@@ -42,6 +42,11 @@ window.vitrine-window {
     box-shadow: 0 0 0 2px alpha(currentColor, 0.35);
 }
 
+/* Owned but not installed (store) games: translucent, marked. */
+.vitrine-tile.not-installed {
+    opacity: 0.6;
+}
+
 .vitrine-tile-name.dim {
     opacity: 0.6;
 }

@@ -30,7 +30,9 @@ class GameTile(Gtk.FlowBoxChild):
         super().__init__()
         self.game = game
         self.add_css_class("vitrine-tile")
-        self._context_callback: Callable[[Game]] | None = None
+        if not game.installed and game.source == "steam":
+            self.add_css_class("not-installed")
+        self._context_callback: Callable[[Game, float, float], None] | None = None
 
         gesture = Gtk.GestureClick()
         gesture.set_button(3)  # GDK_BUTTON_SECONDARY (right mouse button)
@@ -104,13 +106,17 @@ class GameTile(Gtk.FlowBoxChild):
         self.running_label.set_text(human_playtime(elapsed_seconds / 3600.0))
         self.running_footer.set_visible(True)
 
-    def set_context_callback(self, callback: Callable[[Game], None]) -> None:
-        """Call ``callback(game)`` on a right-click over this tile."""
+    def set_context_callback(self, callback: Callable[[Game, float, float], None]) -> None:
+        """Call ``callback(game, x, y)`` on a right-click over this tile.
+
+        (x, y) are the click coordinates relative to this tile, useful for
+        anchoring a context menu.
+        """
         self._context_callback = callback
 
     def _on_secondary_pressed(self, _gesture: Gtk.GestureClick, n_press: int, x: float, y: float) -> None:
         if self._context_callback is not None:
-            self._context_callback(self.game)
+            self._context_callback(self.game, float(x), float(y))
 
 
 class LibraryView(Gtk.Stack):
@@ -119,11 +125,11 @@ class LibraryView(Gtk.Stack):
     def __init__(
         self,
         on_activate: Callable[[Game], None],
-        on_context: Callable[[Game], None] | None = None,
+        on_context: Callable[[Game, float, float], None] | None = None,
     ) -> None:
         super().__init__()
         self._on_activate = on_activate
-        self._on_context = on_context or (lambda _game: None)
+        self._on_context = on_context or (lambda _game, _x, _y: None)
 
         self.flow = Gtk.FlowBox()
         self.flow.set_homogeneous(True)

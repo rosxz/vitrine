@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .util import now, slugify
+
+if TYPE_CHECKING:
+    from .sources.base import SourceGame
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "graphics": "x11",  # "x11" or "wayland"
@@ -170,6 +174,52 @@ class Library:
     def clear_source_games(self, source: str) -> None:
         """Drop all cached catalogue rows for a store."""
         self.conn.execute("DELETE FROM source_games WHERE source = ?", (source,))
+        self.conn.commit()
+
+    def merge_source_games(self, source: str, games: Iterable[SourceGame]) -> int:
+        """Upsert catalogue games into the library as installable entries.
+
+        Owned-but-not-installed entries appear in the grid too; they carry a
+        ``source``/``source_id`` so the UI can link to the store. Returns how
+        many rows were touched (inserted or updated).
+        """
+        touched = 0
+        for catalog in games:
+            if not all(hasattr(catalog, attr) for attr in ("appid", "name", "slug", "installed")):
+                continue
+            existing = self.game_by_source_id(source, catalog.appid)
+            if existing is None:
+                game = Game(
+                    name=catalog.name,
+                    slug=catalog.slug or slugify(catalog.name),
+                    runner="steam" if source == "steam" else "wine",
+                    source=source,
+                    source_id=catalog.appid,
+                    installed=catalog.installed,
+                )
+                self.add(game)
+                touched += 1
+            else:
+                dirty = False
+                if existing.name != catalog.name:
+                    existing.name = catalog.name
+                    dirty = True
+                if existing.installed != catalog.installed:
+                    existing.installed = catalog.installed
+                    dirty = True
+                if dirty:
+                    self.update(existing)
+                touched += 1
+        return touched
+
+    def remove_source_game(self, source: str, source_id: str) -> None:
+        """Remove a library entry that came from a store catalogue."""
+        game = self.game_by_source_id(source, source_id)
+        if game is not None and game.id is not None:
+            self.remove(game.id)
+        self.conn.execute(
+            "DELETE FROM source_games WHERE source = ? AND appid = ?", (source, source_id)
+        )
         self.conn.commit()
 
     # -- settings --------------------------------------------------------------

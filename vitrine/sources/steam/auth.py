@@ -29,10 +29,21 @@ import time
 from pathlib import Path
 from typing import Any
 
+import requests
+
 #: Minimum remaining lifetime (seconds) for a cached token to be trusted
 #: without refreshing. Tokens are minted server-side; keeping a small margin
 #: avoids a failed call racing the expiry.
 TOKEN_GRACE_SECONDS = 300
+
+#: Endpoint that returns the short-lived ``webapi_token`` for a logged-in
+#: browser session (the same one Lutris' Steam Family service uses).
+ACCESS_TOKEN_URL = "https://store.steampowered.com/pointssummary/ajaxgetasyncconfig"
+
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
 
 class SteamAuthError(Exception):
@@ -88,6 +99,8 @@ class SteamTokenStore:
         self.secret_dir = Path(secret_dir)
         self.steamid64 = steamid64
         self.filename = self.secret_dir / "steam" / f"auth_{steamid64}.json"
+        #: Netscape-format cookie file that the login browser writes to.
+        self.cookie_file = self.secret_dir / "steam" / f"cookies_{steamid64}.txt"
 
     # -- persistence ----------------------------------------------------------
 
@@ -148,3 +161,40 @@ class SteamTokenStore:
     def needs_network_refresh(self, access_token_ttl: int) -> bool:
         """Whether the cached access token is too old to trust."""
         return self.age_seconds() + TOKEN_GRACE_SECONDS > access_token_ttl
+
+    # -- web token fetch ------------------------------------------------------
+
+    def fetch_access_token(self) -> str:
+        """Request a fresh access token for the stored session.
+
+        Uses the persisted cookies; does not open a browser. Raises
+        :class:`SteamAuthError` if the session credentials are missing or
+        rejected.
+        """
+        cookies = self.cookies()
+        if not cookies.to_dict():
+            raise SteamAuthError("No cached Steam session to refresh")
+
+        session = requests.Session()
+        session.headers["User-Agent"] = USER_AGENT
+        response = session.get(
+            ACCESS_TOKEN_URL,
+            cookies=_cookies_for_requests(cookies),
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        token_data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(token_data, dict):
+            raise SteamAuthError("Unexpected access-token response")
+        token = token_data.get("webapi_token")
+        if not isinstance(token, str) or not token:
+            raise SteamAuthError("No webapi_token in response")
+
+        self.set_credentials(cookies, access_token=token)
+        return token
+
+
+def _cookies_for_requests(jar: CookieJar) -> dict[str, str]:
+    """Flatten a CookieJar into a ``{name: value}`` map for requests."""
+    return {cookie["name"]: str(cookie["value"]) for cookie in jar.to_dict()}

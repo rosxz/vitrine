@@ -77,11 +77,13 @@ class _GameWindow(Gtk.Window):
         title: str,
         form: GameForm,
         parent: Gtk.Widget | None,
+        on_remove: Callable[[Game], None] | None = None,
     ) -> None:
         super().__init__(title=title)
         self.library = library
         self._form = form
         self._save_callback: Callable[[Game], None] | None = None
+        self._remove_callback = on_remove
         self.add_css_class("vitrine-window")
         self.set_default_size(_FORM_WIDTH, _FORM_HEIGHT)
         parent_window = _parent_window(parent)
@@ -107,11 +109,41 @@ class _GameWindow(Gtk.Window):
         save.connect("clicked", self._on_save)
         header.pack_end(save)
 
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        content.append(body)
+        if on_remove is not None:
+            content.append(self._build_footer())
+
         self.set_titlebar(header)
-        self.set_child(body)
+        self.set_child(content)
 
         for kind in _BROWSE_TITLES:
             form.connect_browse(kind, self._make_browse(kind))
+
+    def _build_footer(self) -> Gtk.Widget:
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        footer.set_margin_top(8)
+        footer.set_margin_bottom(12)
+        footer.set_margin_start(16)
+        footer.set_margin_end(16)
+
+        remove = Gtk.Button(label="Remove from library")
+        remove.add_css_class("destructive-action")
+        remove.set_tooltip_text("Delete this entry from Vitrine (the installed files are untouched)")
+        remove.connect("clicked", self._on_remove)
+        footer.pack_start(remove)
+        return footer
+
+    def _on_remove(self, _button: Gtk.Button) -> None:
+        if self._remove_callback is None:
+            return
+        game = self._remove_game()
+        if game is not None:
+            self._remove_callback(game)
+            self.close()
+
+    def _remove_game(self) -> Game | None:
+        return None
 
     def _make_browse(self, kind: str) -> Callable[[_LabeledEntry], None]:
         def accept(path: str) -> None:
@@ -162,12 +194,19 @@ class GameSettingsWindow(_GameWindow):
         library: Library,
         game: Game,
         on_save: Callable[[Game], None],
+        on_remove: Callable[[Game], None] | None = None,
         parent: Gtk.Widget | None = None,
     ) -> None:
         self._game = game
         form = GameForm()
         form.populate(game)
-        super().__init__(library, title=f"Edit {game.name}", form=form, parent=parent)
+        super().__init__(
+            library,
+            title=f"Edit {game.name}",
+            form=form,
+            parent=parent,
+            on_remove=on_remove,
+        )
         self._save_callback = on_save
 
     def save(self) -> Game:
@@ -176,6 +215,9 @@ class GameSettingsWindow(_GameWindow):
         if self._save_callback is not None:
             self._save_callback(game)
         return game
+
+    def _remove_game(self) -> Game:
+        return self._game
 
 
 # Backwards-compatible aliases (the names historically referred to these

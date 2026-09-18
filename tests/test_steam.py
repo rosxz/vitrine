@@ -208,37 +208,134 @@ def _library(tmp_path: Path):
     return Library(conn)
 
 
-def test_steam_source_syncs_installed_games(steam_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_steam_source_syncs_with_auth(
+    steam_root: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from vitrine.sources import steam_source as steam_source_mod
+    from vitrine.sources.base import SourceGame
+    from vitrine.sources.steam.auth import CookieJar, SteamTokenStore
     from vitrine.sources.steam_source import SteamSource
 
+    # Seed an authenticated session (token store) alongside the fake install.
+    monkeypatch.setattr(steam_source_mod.paths, "secret_dir", lambda: tmp_path)
+    store = SteamTokenStore(tmp_path, "76561198123871777")
+    store.set_credentials(CookieJar([{"name": "sessionid", "value": "abc"}]), access_token="tok-123")
+
     library = _library(steam_root)
-    monkeypatch.setenv("XDG_DATA_HOME", str(steam_root / "xdg" / "data"))
     monkeypatch.setattr(steam_config, "find_steam_root", lambda: str(steam_root))
+    monkeypatch.setattr(SteamSource, "_owned_games", lambda self, store: [
+        SourceGame(source="steam", appid="1002300", name="Fear & Hunger"),
+        SourceGame(source="steam", appid="999999", name="Not Installed Anything"),
+        SourceGame(source="steam", appid="221410", name="Steamworks Common Redistributables"),
+    ])
 
     source = SteamSource(library)
+    source.steamid64 = "76561198123871777"
     count = source.sync()
 
-    # 2 installed games (main + extra), 221410 redist excluded, no web token.
+    # 2 real games after exclusions: the locally-installed Fear & Hunger plus a
+    # web-only uninstalled title. 221410 is dropped.
     assert count == 2, f"expected 2 known games, got {count}"
     rows = library.source_games("steam")
     names = {r["name"] for r in rows}
     assert "Fear & Hunger" in names
-    assert "Grand Theft Auto: Vice City" in names
-    # Steamworks redistributable is excluded.
+    assert "Not Installed Anything" in names
     assert "Steamworks Common Redistributables" not in names
 
+    # The unified games table also received the entries.
+    grid = {g.name for g in library.games(source="steam")}
+    assert "Fear & Hunger" in grid
+    assert "Not Installed Anything" in grid
 
-def test_steam_source_rejects_without_steam(monkeypatch: pytest.MonkeyPatch) -> None:
+
+def test_steam_source_requires_login_to_sync(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from vitrine.sources import steam_source as steam_source_mod
+    from vitrine.sources.steam.auth import SteamAuthError
     from vitrine.sources.steam_source import SteamSource
 
+    monkeypatch.setattr(steam_source_mod.paths, "secret_dir", lambda: tmp_path)
     monkeypatch.setattr(steam_config, "find_steam_root", lambda: "")
     source = SteamSource(_library(monkeypatch))
 
     assert not source.is_configured()
-    assert source.sync() == 0
+    with pytest.raises(SteamAuthError):
+        source.sync()
+
+
+def test_steam_source_no_token_interrupts_sync(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from vitrine.sources import steam_source as steam_source_mod
+    from vitrine.sources.steam.auth import SteamAuthError
+    from vitrine.sources.steam_source import SteamSource
+
+    monkeypatch.setattr(steam_source_mod.paths, "secret_dir", lambda: tmp_path)
+    source = SteamSource(_library(monkeypatch))
+    assert not source.is_authenticated()
+    with pytest.raises(SteamAuthError):
+        source.sync()
 
 
 def test_steam_source_is_registered() -> None:
     from vitrine.sources.base import registry
 
     assert registry.get("steam") is not None
+
+# -- login cookie dump parsing ---------------------------------------------------
+
+def test_parse_cookie_dump_netscape() -> None:
+    from vitrine.ui.steam_login_dialog import _parse_cookie_dump
+
+    dump = (
+        "#HttpOnly_store.steampowered.com\tFALSE\t/\tTRUE\t1820967283\tsteamLoginSecure\tTOKEN-ABC\n"
+        "store.steampowered.com\tFALSE\t/\tFALSE\t1820967284\tsessionid\t123456789\n"
+    )
+    jar = _parse_cookie_dump(dump)
+    assert jar.get("steamLoginSecure") == "TOKEN-ABC"
+    assert jar.get("sessionid") == "123456789"
+    assert jar.expires("steamLoginSecure") == 1820967283
+
+
+def test_parse_cookie_dump_chrome_rows() -> None:
+    from vitrine.ui.steam_login_dialog import _parse_cookie_dump
+
+    jar = _parse_cookie_dump("sessionid=abc123\nsteamLoginSecure=DEF456\n")
+    assert jar.get("steamLoginSecure") == "DEF456"
+    assert jar.get("sessionid") == "abc123"
+
+
+def test_parse_cookie_dump_rejects_empty() -> None:
+    from vitrine.ui.steam_login_dialog import _parse_cookie_dump
+
+    assert _parse_cookie_dump("# comments only\n\n").to_dict() == []
+
+
+def test_fetch_access_token_uses_saved_cookies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import requests
+
+    from vitrine.sources import steam_source as steam_source_mod
+    from vitrine.sources.steam.auth import CookieJar, SteamTokenStore
+
+    monkeypatch.setattr(steam_source_mod.paths, "secret_dir", lambda: tmp_path)
+    store = SteamTokenStore(tmp_path, "111")
+    jar = CookieJar([{"name": "sessionid", "value": "abc"}, {"name": "steamLoginSecure", "value": "jwt"}])
+    store.set_credentials(jar)
+
+    recorded: dict = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self):
+            return {"success": True, "data": {"webapi_token": "fresh-token"}}
+
+    def fake_get(self, url, **kwargs):  # noqa: ARG001 - patched onto Session.get
+        recorded["cookies"] = kwargs.get("cookies")
+        recorded["url"] = url
+        return FakeResponse()
+
+    monkeypatch.setattr(requests.Session, "get", fake_get)
+    token = store.fetch_access_token()
+    assert token == "fresh-token"
+    assert recorded["cookies"] == {"sessionid": "abc", "steamLoginSecure": "jwt"}
+    # The refreshed token is persisted.
+    assert SteamTokenStore(tmp_path, "111").access_token() == "fresh-token"

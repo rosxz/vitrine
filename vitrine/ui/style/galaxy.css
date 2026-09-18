@@ -60,6 +60,16 @@ window.vitrine-window {
     box-shadow: 0 0 0 2px #a269ff;
 }
 
+/* Owned but not installed (store) games: translucent, marked. */
+.vitrine-tile.not-installed {
+    opacity: 0.55;
+    filter: grayscale(0.3);
+}
+
+.vitrine-tile.not-installed .vitrine-tile-name {
+    color: #c8c2d6;
+}
+
 .vitrine-tile-name {
     color: #fffbff;
     font-weight: 600;

@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from gi.repository import Adw, GLib, Gtk
 
 from ..library import Game, Library
 from ..running import GameAlreadyRunning, Runtime
 from ..sources import registry
+from ..sources.steam_source import SteamAuthError, SteamSource
 from .game_detail_bar import GameDetailBar
 from .game_dialogs import AddGameDialog, GameSettingsDialog
 from .library_view import LibraryView
 from .settings_dialog import SettingsDialog
+from .steam_login_dialog import SteamLoginDialog
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +61,20 @@ class VitrineWindow(Adw.ApplicationWindow):
         add_button.set_tooltip_text("Add a game")
         add_button.connect("clicked", self.on_add_game_clicked)
         header.pack_end(add_button)
+        self.add_button = add_button
+
+        refresh_button = Gtk.Button(icon_name="view-refresh-symbolic")
+        refresh_button.set_tooltip_text("Refresh Steam library")
+        refresh_button.connect("clicked", self.on_refresh_source)
+        refresh_button.set_visible(False)
+        header.pack_end(refresh_button)
+        self.refresh_button = refresh_button
 
         cog = Gtk.Button(icon_name="emblem-system-symbolic")
         cog.set_tooltip_text("Settings")
         cog.connect("clicked", self.on_settings_clicked)
         header.pack_end(cog)
+        self.cog_button = cog
 
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(header)
@@ -144,16 +156,66 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.title_widget.set_subtitle(
             "1 game" if len(games) == 1 else f"{len(games)} games"
         )
+        # The Steam source gets a refresh button instead of "add a game".
+        if self.current_source == "steam":
+            self.add_button.set_visible(False)
+            self.refresh_button.set_visible(True)
+        else:
+            self.add_button.set_visible(True)
+            self.refresh_button.set_visible(False)
 
     def on_settings_clicked(self, _button: Gtk.Button) -> None:
         SettingsDialog(
             self.library,
             self.theme_manager,
+            on_steam_login=self.on_steam_login,
+            on_steam_refresh=self._run_steam_sync,
             parent=self,
         ).present()
 
     def on_add_game_clicked(self, _button: Gtk.Button) -> None:
         AddGameDialog(self.library, on_add=self.on_game_added, parent=self).present()
+
+    def on_refresh_source(self, _button: Gtk.Button) -> None:
+        self._run_steam_sync()
+
+    def on_steam_login(self) -> None:
+        """Open the Steam sign-in browser, then refresh the library."""
+        source = SteamSource(self.library)
+
+        def on_complete(ok: bool) -> None:
+            if not ok:
+                self.toasts.add_toast(Adw.Toast(title="Steam sign-in failed"))
+                return
+            self.toasts.add_toast(Adw.Toast(title="Steam sign-in complete"))
+            self._run_steam_sync()
+
+        store = source.login_token_store()
+        if self.library.setting("steam_steamid"):
+            # Reuse the account we already know about.
+            store = type(store)(store.secret_dir, self.library.setting("steam_steamid"))
+        dialog = SteamLoginDialog(store, on_complete=on_complete, parent=self)
+        dialog.present()
+
+    def _run_steam_sync(self) -> None:
+        try:
+            source = SteamSource(self.library)
+            if not source.is_authenticated():
+                self.toasts.add_toast(Adw.Toast(title="Sign in to Steam first (cog → Steam)"))
+                return
+            # Record the account for future launches.
+            if source.steamid64:
+                self.library.set_setting("steam_steamid", source.steamid64)
+            count = source.sync()
+            source.sync_installed()
+            self.current_source = "steam"
+            self.reload()
+            self.toasts.add_toast(Adw.Toast(title=f"Steam refreshed · {count} games"))
+        except SteamAuthError as error:
+            self.toasts.add_toast(Adw.Toast(title=str(error)))
+        except Exception as error:  # noqa: BLE001
+            logger.exception("Steam sync failed")
+            self.toasts.add_toast(Adw.Toast(title=f"Steam sync failed: {error}"))
 
     def on_game_added(self, game: Game) -> None:
         self.library.add(game)
@@ -170,14 +232,33 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.on_edit_game(game)
 
     def on_edit_game(self, game: Game) -> None:
-        GameSettingsDialog(self.library, game, on_save=self.on_game_edited, parent=self).present()
+        GameSettingsDialog(
+            self.library,
+            game,
+            on_save=self.on_game_edited,
+            on_remove=self.on_game_removed,
+            parent=self,
+        ).present()
 
     def on_game_edited(self, game: Game) -> None:
         self.reload()
         self.detail_bar.set_game(game)
         self.toasts.add_toast(Adw.Toast(title=f"Updated {game.name}"))
 
+    def on_game_removed(self, game: Game) -> None:
+        if game.source == "steam":
+            self.library.remove_source_game("steam", game.source_id or "")
+        else:
+            self.library.remove(game.id) if game.id is not None else None
+        self.reload()
+        self.detail_bar.set_game(None)
+        self.toasts.add_toast(Adw.Toast(title=f"Removed {game.name}"))
+
     def on_game_activated(self, game: Game) -> None:
+        # An uninstalled store game links to its store page rather than launching.
+        if game.source == "steam" and not game.installed:
+            self.open_store_page(game)
+            return
         if game.id is None:
             return
         if self.runtime.running_game is game:
@@ -196,6 +277,17 @@ class VitrineWindow(Adw.ApplicationWindow):
             logger.exception("Failed to launch %s", game.name)
             self.toasts.add_toast(Adw.Toast(title=f"Failed to launch {game.name}"))
 
+    def open_store_page(self, game: Game) -> None:
+        """Open a store game's page in the system browser."""
+        from gi.repository import Gio
+
+        url = f"https://store.steampowered.com/app/{game.source_id}"
+        try:
+            Gio.AppInfo.launch_default_for_uri(url)
+        except Exception as error:  # noqa: BLE001
+            logger.warning("Failed to open store page for %s: %s", game.name, error)
+            self.toasts.add_toast(Adw.Toast(title=f"Could not open store page for {game.name}"))
+
     def _stop_game(self) -> None:
         game = self.runtime.running_game
         self.runtime.stop()
@@ -207,9 +299,41 @@ class VitrineWindow(Adw.ApplicationWindow):
     def _on_selection_changed(self, view: LibraryView) -> None:
         self.detail_bar.set_game(view.selected_game())
 
-    def on_tile_context(self, game: Game) -> None:
-        """Right-click on a tile: open its per-game settings."""
-        self.on_edit_game(game)
+    def on_tile_context(self, game: Game, _x: float, _y: float) -> None:
+        """Right-click on a tile: show a context menu."""
+        # Ensure the tile is selected so the detail bar follows.
+        tile = None
+        child = self.library_view.flow.get_first_child()
+        while child is not None:
+            if getattr(child, "game", None) is game:
+                tile = child
+                break
+            child = child.get_next_sibling()
+        if tile is not None:
+            self.library_view.flow.select_child(tile)
+
+        popover = Gtk.Popover()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        for label, handler in self._context_items(game):
+            button = Gtk.Button(label=label)
+            button.add_css_class("flat")
+            button.set_halign(Gtk.Align.FILL)
+            button.connect("clicked", lambda _b, h=handler: (h(), popover.popdown()))
+            box.append(button)
+
+        popover.set_child(box)
+        popover.set_parent(tile or self)
+        popover.set_position(Gtk.PositionType.RIGHT)
+        popover.popup()
+
+    def _context_items(self, game: Game) -> list[tuple[str, Callable[[], None]]]:
+        items: list[tuple[str, Callable[[], None]]] = [
+            ("Properties", lambda: self.on_edit_game(game)),
+        ]
+        if game.source == "steam" and not game.installed:
+            items.append(("Open store page", lambda: self.open_store_page(game)))
+        items.append(("Remove from library", lambda: self.on_game_removed(game)))
+        return items
 
     # -- runtime callbacks (come from a background thread) ----------------------
 

@@ -1,28 +1,33 @@
 """Steam as a Vitrine game source.
 
-Two capabilities, both off the UI thread:
+Steam is an online store: the whole owned library (installed or not) only ever
+comes from the Web API, so login is always required to fill the library. The
+locally-installed games discovered from ``appmanifest_*.acf`` are merged over
+the web list to mark them installed and add playtime, but they never substitute
+for login.
 
-- **Installed** games are discovered without any login, from Steam's local
-  ``appmanifest_<appid>.acf`` files. This always works, even offline.
-- **Owned / Family** library lists require the store's access token. When a
-  valid token is cached (see ``steam.auth``), the web API is queried for owned
-  games (``GetOwnedGames``) and, if the user is in a Steam Family group, the
-  shared library too.
+The library therefore shows every owned game; ones you do not own locally (or
+that are not installed) render translucent and open the store page when
+activated. A per-source setting toggles whether the Steam Family shared library
+is included.
 
-The credential cache reuses an unexpired token and only re-fetches it when it
-is nearly expired, so the user is not asked to log in again on every launch.
+All network access goes through a durable credential cache (see
+``steam.auth``): the access token is reused until near expiry and refreshed in
+the background without reopening a browser.
 """
 
 from __future__ import annotations
 
+import dataclasses
+
 import requests
 
+from .. import paths
 from ..library import Library
-from ..paths import secret_dir
 from ..util import slugify
 from .base import Source, SourceGame, registry
 from .steam import config as steam_config
-from .steam.auth import SteamTokenStore
+from .steam.auth import CookieJar, SteamAuthError, SteamTokenStore
 
 #: Excluded Steam tool apps that are not games.
 EXCLUDED_APPIDS = {
@@ -39,20 +44,27 @@ EXCLUDED_APPIDS = {
     "4628710",  # Proton 11.0
 }
 
+#: Setting key (boolean) controlling whether the Steam Family shared library is
+#: included in the owned list.
+FAMILY_SETTING = "steam_include_family"
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.38 Safari/537.36"
 )
 
 OWNED_URL = "https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/"
 SHARED_URL = "https://api.steampowered.com/IFamilyGroupsService/GetSharedLibraryApps/v1/"
 FAMILY_URL = "https://api.steampowered.com/IFamilyGroupsService/GetFamilyGroupForUser/v1/"
 
+WITHOUT_LOGIN_HINT = "Sign in to Steam to see your full library"
+
 
 class SteamSource(Source):
     id = "steam"
     name = "Steam"
     icon = "steam-client"
+    requires_auth = True
 
     def __init__(self, library: Library) -> None:
         self.library = library
@@ -62,15 +74,27 @@ class SteamSource(Source):
     # -- Source API -----------------------------------------------------------
 
     def is_configured(self) -> bool:
-        return bool(self.steam_root)
+        # Login is required; but the source is still "configured" if we can find
+        # any Steam install or any cached account. Detect by token store.
+        return bool(self._token_store().exists()) or bool(self.steam_root)
+
+    def login_token_store(self) -> SteamTokenStore:
+        return self._token_store()
+
+    def is_authenticated(self) -> bool:
+        store = self._token_store()
+        return store.exists() and bool(store.access_token())
 
     def sync(self) -> int:
-        """Refresh the Steam catalogue into the library's source-games cache."""
+        """Refresh the Steam catalogue into the library.
+
+        Writes both the source-games cache and the library's own ``games``
+        table so every owned title (installed or not) shows in the unified
+        grid.
+        """
         self.library.clear_source_games(self.id)
 
-        games = self._installed_games()
-        if self._has_access_token():
-            games.extend(self._web_games())
+        games = self._all_games()
 
         deduped: dict[str, SourceGame] = {}
         for game in games:
@@ -88,24 +112,153 @@ class SteamSource(Source):
                 installed=game.installed,
                 **game.details,
             )
+
+        self.library.merge_source_games(self.id, deduped.values())
         return len(deduped)
 
     def sync_installed(self) -> int:
-        """Mark locally-installed Steam games as installed in the library."""
-        installed_appids = {game.appid for game in self._installed_games()}
+        """Merge locally-installed information over the web library."""
+        installed = {game.appid: game for game in self._installed_games()}
         updated = 0
-        for parsed in self.library.games(source=self.id):
-            if parsed.source_id in installed_appids and not parsed.installed:
-                parsed.installed = True
-                self.library.update(parsed)
+        for game in self.library.games(source=self.id):
+            local = installed.get(game.source_id or "")
+            if not local:
+                continue
+            if not game.installed:
+                game.installed = True
+                self.library.update(game)
                 updated += 1
-            elif parsed.source_id not in installed_appids and parsed.installed:
-                parsed.installed = False
-                self.library.update(parsed)
-                updated += 1
+            if local.details.get("playtime_forever"):
+                game.playtime = float(local.details["playtime_forever"]) / 60.0
+            if local.details.get("lastplayed"):
+                game.lastplayed = int(local.details["lastplayed"])
         return updated
 
-    # -- local discovery ------------------------------------------------------
+    # -- login / logout -------------------------------------------------------
+
+    def save_cookies(self, cookies: CookieJar) -> None:
+        """Store a freshly-captured browser session, then fetch the token."""
+        store = self._token_store()
+        store.set_credentials(cookies)
+        store.fetch_access_token()
+
+    def logout(self) -> None:
+        self._token_store().clear()
+
+    # -- game collection ------------------------------------------------------
+
+    def _all_games(self) -> list[SourceGame]:
+        store = self._token_store()
+        installed = {g.appid: g for g in self._installed_games()}
+        if not store.exists() or not store.access_token():
+            raise SteamAuthError(WITHOUT_LOGIN_HINT)
+
+        games = self._owned_games(store)
+        # Mark and enrich entries that are installed locally (the dataclass is
+        # frozen, so produce updated copies).
+        merged: list[SourceGame] = []
+        for game in games:
+            local = installed.get(game.appid)
+            if not local:
+                merged.append(game)
+                continue
+            details = {**game.details, **local.details}
+            merged.append(dataclasses.replace(game, installed=True, details=details))
+        return merged
+
+    def include_family(self) -> bool:
+        return bool(self.library.setting(FAMILY_SETTING, True))
+
+    def _owned_games(self, store: SteamTokenStore) -> list[SourceGame]:
+        session = self._api_session(store)
+        games = self._owned_page(session, store)
+        if self.include_family():
+            group = self._family_group(session, store)
+            if group:
+                games += self._family_page(session, store, group)
+        return games
+
+    # -- web API --------------------------------------------------------------
+
+    def _api_session(self, store: SteamTokenStore) -> requests.Session:
+        session = requests.Session()
+        session.headers["User-Agent"] = USER_AGENT
+        session.params = {"access_token": store.access_token()}
+        return session
+
+    def _owned_page(self, session: requests.Session, store: SteamTokenStore) -> list[SourceGame]:
+        response = session.get(
+            OWNED_URL,
+            params={
+                "key": store.access_token(),
+                "steamid": store.steamid64 or self.steamid64,
+                "format": "json",
+                "include_appinfo": "1",
+                "include_played_free_games": "1",
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json().get("response") or {}
+        games: list[SourceGame] = []
+        for item in payload.get("games") or []:
+            playtime = item.get("playtime_forever", 0)
+            games.append(
+                SourceGame(
+                    source=self.id,
+                    appid=str(item["appid"]),
+                    name=item.get("name", str(item["appid"])),
+                    slug=slugify(item.get("name", "")),
+                    installed=bool(playtime) or item.get("playtime_2weeks"),
+                    details={
+                        "playtime_forever": playtime,
+                        "time_last_played": item.get("rtime_last_played"),
+                        "store_url": f"https://store.steampowered.com/app/{item['appid']}",
+                    },
+                )
+            )
+        return games
+
+    def _family_group(self, session: requests.Session, store: SteamTokenStore) -> str | None:
+        response = session.get(
+            FAMILY_URL,
+            params={"steamid": store.steamid64 or self.steamid64},
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json().get("response") or {}
+        if payload.get("is_not_member_of_any_group"):
+            return None
+        return payload.get("family_groupid")
+
+    def _family_page(self, session: requests.Session, store: SteamTokenStore, group: str) -> list[SourceGame]:
+        response = session.get(
+            SHARED_URL,
+            params={
+                "family_groupid": group,
+                "steamid": store.steamid64 or self.steamid64,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        games: list[SourceGame] = []
+        for item in response.json().get("response", {}).get("apps") or []:
+            appid = str(item.get("appid"))
+            games.append(
+                SourceGame(
+                    source=self.id,
+                    appid=appid,
+                    name=item.get("name", appid),
+                    slug=slugify(item.get("name", "")),
+                    details={"family_shared": True, "store_url": f"https://store.steampowered.com/app/{appid}"},
+                )
+            )
+        return games
+
+    # -- helpers --------------------------------------------------------------
+
+    def _token_store(self) -> SteamTokenStore:
+        return SteamTokenStore(paths.secret_dir(), self.steamid64 or "0")
 
     def _installed_games(self) -> list[SourceGame]:
         if not self.steam_root:
@@ -144,102 +297,6 @@ class SteamSource(Source):
                 "state_flags": state.get("StateFlags"),
             },
         )
-
-    # -- web API --------------------------------------------------------------
-
-    def _has_access_token(self) -> bool:
-        if not self.steamid64:
-            return False
-        store = SteamTokenStore(secret_dir(), self.steamid64)
-        if not store.exists():
-            return False
-        token = store.access_token()
-        return bool(token) and not store.age_seconds() > 3600 * 26
-
-    def _web_games(self) -> list[SourceGame]:
-        """Fetch owned + family games, requiring a cached valid token."""
-        if not self.steamid64:
-            return []
-        store = SteamTokenStore(secret_dir(), self.steamid64)
-        token = store.access_token()
-        if not token:
-            return []
-        session = requests.Session()
-        session.headers["User-Agent"] = USER_AGENT
-
-        games: list[SourceGame] = []
-        response = session.get(
-            OWNED_URL,
-            params={
-                "key": token,
-                "steamid": self.steamid64,
-                "format": "json",
-                "include_appinfo": "1",
-                "include_played_free_games": "1",
-            },
-            timeout=30,
-        )
-        response.raise_for_status()
-        payload = response.json().get("response") or {}
-        for item in payload.get("games") or []:
-            playtime = item.get("playtime_forever", 0)
-            games.append(
-                SourceGame(
-                    source=self.id,
-                    appid=str(item["appid"]),
-                    name=item.get("name", str(item["appid"])),
-                    slug=slugify(item.get("name", "")),
-                    details={
-                        "playtime_forever": playtime,
-                        "time_last_played": item.get("rtime_last_played"),
-                        "store_url": f"https://store.steampowered.com/app/{item['appid']}",
-                    },
-                )
-            )
-
-        family_group = self._family_group(session, store)
-        if family_group:
-            shared = session.get(
-                SHARED_URL,
-                params={
-                    "access_token": token,
-                    "family_groupid": family_group,
-                    "steamid": self.steamid64,
-                },
-                timeout=30,
-            )
-            shared.raise_for_status()
-            owned = {g.appid for g in games}
-            for item in shared.json().get("response", {}).get("apps") or []:
-                appid = str(item.get("appid"))
-                if appid in owned:
-                    continue
-                games.append(
-                    SourceGame(
-                        source=self.id,
-                        appid=appid,
-                        name=item.get("name", appid),
-                        slug=slugify(item.get("name", "")),
-                        details={"family_shared": True},
-                    )
-                )
-        return games
-
-    @staticmethod
-    def _family_group(session: requests.Session, store: SteamTokenStore) -> str | None:
-        response = session.get(
-            FAMILY_URL,
-            params={
-                "access_token": store.access_token(),
-                "steamid": store.steamid64,
-            },
-            timeout=30,
-        )
-        response.raise_for_status()
-        payload = response.json().get("response") or {}
-        if payload.get("is_not_member_of_any_group"):
-            return None
-        return payload.get("family_groupid")
 
 
 registry.register(SteamSource)

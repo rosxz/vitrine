@@ -82,7 +82,10 @@ nix develop -c sh -c 'Xvfb :99 -screen 0 1280x800x24 & sleep 1; DISPLAY=:99 pyth
 3. Steam source
    - Local installed-library discovery from `appmanifest_*.acf` + `libraryfolders.vdf` — done
    - Durable auth cache (cookies + access/refresh tokens) that avoids frequent re-login — done
-   - Owned + Steam Family web lists via Web API when a token is cached — done
+   - Whole-owned library sync (installed + store-only, translucent tiles) via Web API — done
+   - Steam Family inclusion toggle (global settings) — done
+   - Sign-in via browser + pasted session cookie (no WebKit dependency) — done
+   - Per-source refresh button, per-game remove, right-click menu — done
 4. Runner catalogue, download, per-game and global defaults
 4. Per-game configuration UI (prefix, DLLs, DXVK, env, arguments)
 5. Metadata and artwork (lutris.net, SteamGridDB, IGDB, manual override)

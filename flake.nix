@@ -20,7 +20,16 @@
         # glib is required: it ships the Gio/GObject/GLib typelibs that GTK's own
         # typelibs depend on, and without them PyGObject cannot create a real
         # GApplication.
-        libs = [ pkgs.gtk4 pkgs.libadwaita pkgs.glib pkgs.gobject-introspection pkgs.gdk-pixbuf pkgs.graphene pkgs.pango pkgs.harfbuzz ];
+        libs = [
+          pkgs.gtk4
+          pkgs.libadwaita
+          pkgs.glib
+          pkgs.gobject-introspection
+          pkgs.gdk-pixbuf
+          pkgs.graphene
+          pkgs.pango
+          pkgs.harfbuzz
+        ];
         themes = [ pkgs.adwaita-icon-theme pkgs.hicolor-icon-theme ];
       };
 
