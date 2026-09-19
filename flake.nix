@@ -21,7 +21,8 @@
         # typelibs depend on, and without them PyGObject cannot create a real
         # GApplication. webkitgtk_6_0 is the GTK4 WebKit build that powers the
         # embedded Steam sign-in window (webkitgtk_4_1 is a GTK3 rebuild, so it
-        # cannot coexist with GTK4 in one process).
+        # cannot coexist with GTK4 in one process); libsoup_3 supplies the
+        # Soup-3.0 typelib WebKit's GI needs.
         libs = [
           pkgs.gtk4
           pkgs.libadwaita
@@ -32,6 +33,7 @@
           pkgs.pango
           pkgs.harfbuzz
           pkgs.webkitgtk_6_0
+          pkgs.libsoup_3
         ];
         themes = [ pkgs.adwaita-icon-theme pkgs.hicolor-icon-theme ];
       };
@@ -77,6 +79,7 @@
           pkgs.pango
           pkgs.harfbuzz
           pkgs.webkitgtk_6_0
+          pkgs.libsoup_3
           pkgs.adwaita-icon-theme
           pkgs.hicolor-icon-theme
           pkgs.blueprint-compiler
