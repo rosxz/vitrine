@@ -19,8 +19,8 @@ from ..util import human_playtime, initials
 #: Max lines a game name spans before it is truncated with an ellipsis.
 NAME_MAX_LINES = 2
 #: Approximate height of one name line, used to reserve the name area so
-#: content never changes tile height.
-NAME_LINE_HEIGHT = 16
+#: content never changes tile height (kept roomy so two lines aren't clipped).
+NAME_LINE_HEIGHT = 20
 
 #: Portrait cover ratio (width / height), matching Steam's library capsules.
 COVER_RATIO = 2 / 3
@@ -111,6 +111,11 @@ class GameTile(Gtk.FlowBoxChild):
         name_bg.set_vexpand(False)
         name_area = Gtk.Overlay()
         name_area.set_child(name_bg)
+        # Anchor the label to the top of the reserved area so the first line is
+        # never clipped; it wraps and ellipsizes within the fixed slot.
+        name.set_valign(Gtk.Align.START)
+        name.set_halign(Gtk.Align.FILL)
+        name.set_vexpand(True)
         name_area.add_overlay(name)
         name_area.set_overflow(Gtk.Overflow.HIDDEN)
 
