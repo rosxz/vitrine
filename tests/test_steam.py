@@ -289,7 +289,12 @@ def test_fetch_access_token_uses_saved_cookies(tmp_path: Path, monkeypatch: pyte
 
     monkeypatch.setattr(steam_source_mod.paths, "secret_dir", lambda: tmp_path)
     store = SteamTokenStore(tmp_path, "111")
-    jar = CookieJar([{"name": "sessionid", "value": "abc"}, {"name": "steamLoginSecure", "value": "jwt"}])
+    jar = CookieJar(
+        [
+            {"name": "sessionid", "value": "abc", "domain": "store.steampowered.com", "path": "/"},
+            {"name": "steamLoginSecure", "value": "jwt", "domain": "store.steampowered.com", "path": "/"},
+        ]
+    )
     store.set_credentials(jar)
 
     recorded: dict = {}
@@ -309,7 +314,9 @@ def test_fetch_access_token_uses_saved_cookies(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setattr(requests.Session, "get", fake_get)
     token = store.fetch_access_token()
     assert token == "fresh-token"
-    assert recorded["cookies"] == {"sessionid": "abc", "steamLoginSecure": "jwt"}
+    sent = recorded["cookies"]
+    assert sent.get("sessionid", domain="store.steampowered.com") == "abc"
+    assert sent.get("steamLoginSecure", domain="store.steampowered.com") == "jwt"
     # The refreshed token is persisted.
     assert SteamTokenStore(tmp_path, "111").access_token() == "fresh-token"
 
@@ -354,3 +361,47 @@ def test_extract_webapi_token_missing() -> None:
     assert _extract_webapi_token({"success": False}) == ""
     assert _extract_webapi_token(["not", "a", "dict"]) == ""
     assert _extract_webapi_token({}) == ""
+
+
+# -- domain-aware cookie jar ----------------------------------------------------
+
+def test_cookies_for_requests_preserves_domains() -> None:
+    from vitrine.sources.steam.auth import CookieJar, _cookies_for_requests
+
+    jar = CookieJar(
+        [
+            {
+                "name": "sessionid",
+                "value": "store-session",
+                "domain": "store.steampowered.com",
+                "path": "/",
+                "secure": True,
+            },
+            {
+                "name": "sessionid",
+                "value": "community-session",
+                "domain": "steamcommunity.com",
+                "path": "/",
+                "secure": True,
+            },
+            {
+                "name": "steamLoginSecure",
+                "value": "JWT",
+                "domain": "store.steampowered.com",
+                "path": "/",
+                "secure": True,
+            },
+        ]
+    )
+    out = _cookies_for_requests(jar)
+    # Both sessionids must survive (flattening would fold them into one).
+    assert out.get("sessionid", domain="store.steampowered.com") == "store-session"
+    assert out.get("sessionid", domain="steamcommunity.com") == "community-session"
+    assert out.get("steamLoginSecure", domain="store.steampowered.com") == "JWT"
+
+
+def test_cookies_for_requests_skips_domainless() -> None:
+    from vitrine.sources.steam.auth import CookieJar, _cookies_for_requests
+
+    jar = CookieJar([{"name": "orphan", "value": "x", "domain": ""}])
+    assert len(_cookies_for_requests(jar)) == 0

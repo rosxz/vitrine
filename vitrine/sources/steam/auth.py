@@ -224,6 +224,42 @@ def _extract_webapi_token(payload: Any) -> str:
     return ""
 
 
-def _cookies_for_requests(jar: CookieJar) -> dict[str, str]:
-    """Flatten a CookieJar into a ``{name: value}`` map for requests."""
-    return {cookie["name"]: str(cookie["value"]) for cookie in jar.to_dict()}
+def _cookies_for_requests(jar: CookieJar):
+    """Build a real domain-aware cookie jar for ``requests``.
+
+    Lutris passes a genuine jar (WebkitCookieJar); a bare ``{name: value}``
+    dict is wrong here because Steam sets ``sessionid`` on both
+    ``store.steampowered.com`` and ``steamcommunity.com`` -- flattening them
+    would collapse one of the pair and send each cookie to every host, which
+    breaks the store session the token endpoint needs.
+    """
+    from http.cookiejar import Cookie
+
+    out = requests.cookies.RequestsCookieJar()
+    for entry in jar.to_dict():
+        # requests needs a domain with the leading dot removed to match.
+        domain = str(entry.get("domain") or "").lstrip(".")
+        if not domain:
+            continue
+        out.set_cookie(
+            Cookie(
+                version=0,
+                name=str(entry.get("name")),
+                value=str(entry.get("value")),
+                port=None,
+                port_specified=False,
+                domain=domain,
+                domain_specified=True,
+                domain_initial_dot=bool(entry.get("domain")),
+                path=str(entry.get("path") or "/"),
+                path_specified=True,
+                secure=bool(entry.get("secure")),
+                expires=entry.get("expires") or None,
+                discard=False,
+                comment=None,
+                comment_url=None,
+                rest={},
+                rfc2109=False,
+            )
+        )
+    return out
