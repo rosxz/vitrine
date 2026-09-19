@@ -128,10 +128,12 @@ class SteamSource(Source):
                 game.installed = True
                 self.library.update(game)
                 updated += 1
-            if local.details.get("playtime_forever"):
-                game.playtime = float(local.details["playtime_forever"]) / 60.0
-            if local.details.get("lastplayed"):
-                game.lastplayed = int(local.details["lastplayed"])
+            playtime_seconds = _to_number(local.details.get("playtime_forever"))
+            if playtime_seconds is not None:
+                game.playtime = float(playtime_seconds) / 60.0
+            lastplayed = _to_number(local.details.get("lastplayed"))
+            if lastplayed is not None:
+                game.lastplayed = lastplayed
         return updated
 
     # -- login / logout -------------------------------------------------------
@@ -300,3 +302,24 @@ class SteamSource(Source):
 
 
 registry.register(SteamSource)
+
+
+def _to_number(value) -> int | float | None:
+    """Coerce a VDF/API value to a number, tolerating None/empty/non-numeric.
+
+    Steam manifests store numbers as strings (``"0"``), but a field can also
+    be absent (→ ``None``) or a dash; never pass those into ``int()``/``float()``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    text = str(value).strip().replace(",", "")
+    if not text or text in ("-", "--"):
+        return None
+    try:
+        return float(text) if "." in text else int(text)
+    except ValueError:
+        return None

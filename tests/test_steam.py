@@ -405,3 +405,38 @@ def test_cookies_for_requests_skips_domainless() -> None:
 
     jar = CookieJar([{"name": "orphan", "value": "x", "domain": ""}])
     assert len(_cookies_for_requests(jar)) == 0
+
+
+def test_sync_installed_tolerates_absent_numbers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from vitrine.sources import steam_source as ss_mod
+    from vitrine.sources.base import SourceGame
+    from vitrine.sources.steam_source import SteamSource
+
+    monkeypatch.setattr(ss_mod.paths, "secret_dir", lambda: tmp_path)
+    conn = __import__("vitrine.db", fromlist=["connect"]).connect(":memory:")
+    __import__("vitrine.db", fromlist=["initialize"]).initialize(conn)
+    lib = __import__("vitrine.library", fromlist=["Library"]).Library(conn)
+    lib.merge_source_games(
+        "steam",
+        [SourceGame(source="steam", appid="123", name="G", slug="g")],
+    )
+
+    src = SteamSource(lib)
+    # Manifests mimic fields that are absent/None for never-run games.
+    src._installed_games = lambda: [  # type: ignore[assignment]
+        SourceGame(
+            source="steam", appid="123", name="G", slug="g", installed=True,
+            details={"playtime_forever": None, "lastplayed": None},
+        )
+    ]
+    src.sync_installed()  # must not raise int(None)
+
+    game = lib.games(source="steam")[0]
+    assert game.installed is True
+    from vitrine.sources.steam_source import _to_number
+
+    assert _to_number(None) is None
+    assert _to_number("0") == 0
+    assert _to_number("12345") == 12345
+    assert _to_number("1.5") == 1.5
+    assert _to_number("-") is None
