@@ -30,7 +30,9 @@ from ..sources.steam.auth import (
 )
 
 LOGIN_URL = "https://store.steampowered.com/login/?redir=/about"
-REDIRECT_URI = "https://store.steampowered.com/about"
+
+#: How often the dialog polls the cookie manager for the session cookies.
+POLL_INTERVAL_MS = 800
 
 
 class SteamLoginDialog(Gtk.Window):
@@ -63,8 +65,10 @@ class SteamLoginDialog(Gtk.Window):
         )
 
         self.webview = WebKit.WebView()
-        self.webview.connect("load-changed", self._on_load_changed)
+        self.webview.connect("load_changed", self._on_load_changed)
         self.webview.connect("create", self._on_create_popup)
+        self._poll_id: int | None = None
+        self._capturing = False
 
         header = Adw.HeaderBar()
         header.set_title_widget(Adw.WindowTitle(title="Sign in to Steam", subtitle=""))
@@ -79,17 +83,15 @@ class SteamLoginDialog(Gtk.Window):
         self.set_child(self.webview)
 
         self.webview.load_uri(LOGIN_URL)
+        self._start_polling()
 
     # -- WebKit callbacks -----------------------------------------------------
 
     def _on_load_changed(self, _webview: WebKit.WebView, load_event: WebKit.LoadEvent) -> None:
+        # A page load is a convenient kick for the cookie poller, but the
+        # poller is the real detector (QR login may not navigate to /about).
         if load_event == WebKit.LoadEvent.FINISHED:
-            url = self.webview.get_uri() or ""
-            # Steam may land on /about directly, or a QR login flow may carry a
-            # query/hash; either way, once we are on the store post-login path
-            # we try to capture, retrying briefly for late-appearing cookies.
-            if "steamLoginSecure" not in _cached_names(self.store) and self._is_after_login(url):
-                self._attempt_capture(retries=3)
+            self._kick_poll()
 
     def _on_create_popup(
         self, _webview: WebKit.WebView, _navigation: WebKit.NavigationAction
@@ -98,11 +100,44 @@ class SteamLoginDialog(Gtk.Window):
         # session intact and avoiding ownership/GC issues from swapping children.
         return None
 
+    # -- cookie polling --------------------------------------------------------
+
+    def _start_polling(self) -> None:
+        if self._poll_id is None:
+            self._poll_id = GLib.timeout_add(POLL_INTERVAL_MS, self._poll_tick)
+
+    def _kick_poll(self) -> None:
+        self._poll_tick()
+
+    def _poll_tick(self) -> bool:
+        """Read cookies once; the callback re-arms the poller unless the
+        session is complete. Return True to keep the timeout, False to stop."""
+        if self._capturing:
+            return False
+        if _cached_names(self.store) & {"steamLoginSecure", "sessionid"} == {"steamLoginSecure", "sessionid"}:
+            # Already fully captured on an earlier run of this dialog.
+            self._capturing = True
+            GLib.idle_add(lambda: self._finish(True))
+            return False
+        self._read_cookies()
+        return False  # the callback re-arms polling
+
+    def _read_cookies(self) -> None:
+        self._cookie_manager.get_all_cookies(None, self._on_cookies_read)
+
+    def _reschedule(self) -> None:
+        if not self._capturing:
+            self._poll_id = GLib.timeout_add(POLL_INTERVAL_MS, self._poll_tick)
+
     # -- session reset ----------------------------------------------------------
 
     def reset_session(self, _button: Gtk.Button | None = None) -> None:
         """Clear stored credentials and the browser's cookies, then reload."""
         self.store.clear()
+        self._capturing = False
+        if self._poll_id is not None:
+            GLib.source_remove(self._poll_id)
+            self._poll_id = None
         if self.store.cookie_file.exists():
             try:
                 self.store.cookie_file.unlink()
@@ -121,53 +156,27 @@ class SteamLoginDialog(Gtk.Window):
             self._on_cookies_cleared(None, None)
 
     def _on_cookies_cleared(self, _manager, _result) -> None:
+        self._capturing = False
         self.webview.load_uri(LOGIN_URL)
+        self._start_polling()
 
     # -- credential capture ---------------------------------------------------
 
-    def _is_after_login(self, url: str) -> bool:
-        """True if ``url`` looks like Steam's signed-in store destination.
-
-        Compares the URL *path* (not the query string, which can carry
-        ``redir=/about`` on the login page itself).
-        """
-        from urllib.parse import urlparse
-
-        if url.startswith(REDIRECT_URI):
-            return True
-        if not url.startswith("https://store.steampowered.com/"):
-            return False
-        path = urlparse(url).path
-        return path == "/about" or path == "/account" or path.startswith("/about") or path.startswith("/account")
-
-    def _attempt_capture(self, retries: int = 0) -> None:
-        """Read the live cookie manager; session cookies never hit the disk
-        file, so the manager is the only reliable source."""
-        if retries > 0:
-
-            def delayed() -> bool:
-                self._read_cookies(retries)
-                return False
-
-            GLib.timeout_add(500, delayed)
-            return
-        self._read_cookies(retries)
-
-    def _read_cookies(self, retries: int) -> None:
-        self._cookie_manager.get_all_cookies(None, lambda mgr, res: self._on_cookies_read(mgr, res, retries))
-
     def _on_cookies_read(
-        self, _manager: WebKit.CookieManager, result: Gio.AsyncResult, retries: int = 0
+        self, _manager: WebKit.CookieManager, result: Gio.AsyncResult
     ) -> None:
         try:
             cookies = cast_cookie_list(self._cookie_manager.get_all_cookies_finish(result))
-            missing = not cookies.get("steamLoginSecure") or not cookies.get("sessionid")
-            if missing and retries > 0:
-                # Cookies can arrive a moment after the redirect finishes.
-                self._attempt_capture(retries - 1)
+            if cookies.get("steamLoginSecure") and cookies.get("sessionid"):
+                self._capturing = True
+                self._save_and_finish(cookies)
                 return
-            if missing:
-                raise SteamAuthError("Login did not produce Steam session cookies")
+        except Exception as exc:  # noqa: BLE001 - cookie read failed; keep polling
+            logger.warning("Cookie read failed: %s", exc)
+        self._reschedule()
+
+    def _save_and_finish(self, cookies: CookieJar) -> None:
+        try:
             self.store.set_credentials(cookies)
             token = self.store.fetch_access_token()
             if not token:
