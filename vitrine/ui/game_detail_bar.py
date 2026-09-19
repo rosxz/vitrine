@@ -70,7 +70,9 @@ class GameDetailBar(Gtk.Box):
         self._placeholder.add_css_class("title-1")
         self._placeholder.add_css_class("dim-label")
 
-        self._title = Gtk.Label(halign=Gtk.Align.START)
+        self._title = Gtk.Label(halign=Gtk.Align.START, wrap=True, lines=2)
+        self._title.set_ellipsize(3)  # Pango.EllipsizeMode.END (truncates with '…')
+        self._title.set_max_width_chars(40)
         self._title.add_css_class("vitrine-detail-title")
 
         self._meta = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
