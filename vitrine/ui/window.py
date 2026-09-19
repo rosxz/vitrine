@@ -168,6 +168,10 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     def reload(self) -> None:
         games = self.library.games(source=self.current_source)
+        # Local games are by definition installed on this machine.
+        for game in games:
+            if game.source == "local" and not game.installed:
+                game.installed = True
         if self.hide_not_installed:
             games = [g for g in games if g.installed or not g.source]
         self.library_view.set_games(games)

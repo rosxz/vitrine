@@ -140,6 +140,7 @@ class GameForm(Gtk.Box):
             cover=v["cover"],
             banner=v["banner"],
             source="local",
+            installed=True,
         )
 
     def apply_to(self, game: Game) -> Game:

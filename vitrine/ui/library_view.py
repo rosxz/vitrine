@@ -19,10 +19,10 @@ from ..util import human_playtime, initials
 #: Portrait cover ratio (width / height), matching Steam's library capsules.
 COVER_RATIO = 2 / 3
 COVER_WIDTH = 180
-#: Fixed tile height = cover (COVER_WIDTH / ratio) + a name line, so every
-#: tile -- whatever the source or how few games are shown -- keeps the same
-#: dimensions instead of the grid stretching a lone tile to fill the pane.
-TILE_HEIGHT = int(COVER_WIDTH / COVER_RATIO) + 64
+#: Fixed tile height = cover (COVER_WIDTH / ratio) + a compact name line, so
+#: every tile -- whatever the source or how few games are shown -- keeps the
+#: same dimensions instead of the grid stretching a lone tile to fill the pane.
+TILE_HEIGHT = int(COVER_WIDTH / COVER_RATIO) + 30
 MIN_COLUMNS = 2
 MAX_COLUMNS = 9
 
