@@ -79,8 +79,21 @@ class SteamLoginDialog(Gtk.Window):
         reset_button.connect("clicked", self.reset_session)
         header.pack_start(reset_button)
 
+        # A slim banner under the header for progress/errors; the window stays
+        # open on failure so the reset button is always reachable.
+        self._status = Gtk.Label(label="", wrap=True, xalign=0.0)
+        self._status.add_css_class("dim-label")
+        self._status.set_margin_top(6)
+        self._status.set_margin_bottom(6)
+        self._status.set_margin_start(12)
+        self._status.set_margin_end(12)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        content.append(self._status)
+        content.append(self.webview)
+
         self.set_titlebar(header)
-        self.set_child(self.webview)
+        self.set_child(content)
 
         self.webview.load_uri(LOGIN_URL)
         self._start_polling()
@@ -114,13 +127,12 @@ class SteamLoginDialog(Gtk.Window):
         session is complete. Return True to keep the timeout, False to stop."""
         if self._capturing:
             return False
-        if _cached_names(self.store) & {"steamLoginSecure", "sessionid"} == {"steamLoginSecure", "sessionid"}:
-            # Already fully captured on an earlier run of this dialog.
-            self._capturing = True
-            GLib.idle_add(lambda: self._finish(True))
-            return False
         self._read_cookies()
         return False  # the callback re-arms polling
+
+    def _set_status(self, message: str, error: bool = False) -> None:
+        self._status.set_text(("Error: " if error else "") + message)
+        self._status.set_visible(bool(message))
 
     def _read_cookies(self) -> None:
         self._cookie_manager.get_all_cookies(None, self._on_cookies_read)
@@ -143,6 +155,8 @@ class SteamLoginDialog(Gtk.Window):
                 self.store.cookie_file.unlink()
             except OSError:
                 pass
+        # Clear WebKit's cookie store, then eagerly drop every cookie from the
+        # live manager too (clear() alone can leave session cookies behind).
         try:
             data_manager = WebKit.NetworkSession.get_default().get_website_data_manager()
             data_manager.clear(
@@ -156,7 +170,28 @@ class SteamLoginDialog(Gtk.Window):
             self._on_cookies_cleared(None, None)
 
     def _on_cookies_cleared(self, _manager, _result) -> None:
+        try:
+            self._cookie_manager.get_all_cookies(None, self._drop_all_cookies)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to enumerate cookies after reset: %s", exc)
+            self._after_cookies_dropped()
+
+    def _drop_all_cookies(self, _manager: WebKit.CookieManager, result: Gio.AsyncResult) -> None:
+        try:
+            cookies = self._cookie_manager.get_all_cookies_finish(result)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to list cookies after reset: %s", exc)
+            cookies = []
+        for cookie in cookies or []:
+            try:
+                self._cookie_manager.delete_cookie(cookie, None, lambda *_: None)
+            except Exception:  # noqa: BLE001
+                pass
+        self._after_cookies_dropped()
+
+    def _after_cookies_dropped(self) -> None:
         self._capturing = False
+        self._set_status("")
         self.webview.load_uri(LOGIN_URL)
         self._start_polling()
 
@@ -167,12 +202,19 @@ class SteamLoginDialog(Gtk.Window):
     ) -> None:
         try:
             cookies = cast_cookie_list(self._cookie_manager.get_all_cookies_finish(result))
-            if cookies.get("steamLoginSecure") and cookies.get("sessionid"):
-                self._capturing = True
-                self._save_and_finish(cookies)
-                return
         except Exception as exc:  # noqa: BLE001 - cookie read failed; keep polling
             logger.warning("Cookie read failed: %s", exc)
+            self._reschedule()
+            return
+        if cookies.get("steamLoginSecure") and cookies.get("sessionid"):
+            # Session cookies appeared (QR completed). Stop polling and validate.
+            if self._poll_id is not None:
+                GLib.source_remove(self._poll_id)
+                self._poll_id = None
+            self._capturing = True
+            self._set_status("Steam detected your login — completing…")
+            self._save_and_finish(cookies)
+            return
         self._reschedule()
 
     def _save_and_finish(self, cookies: CookieJar) -> None:
@@ -181,10 +223,21 @@ class SteamLoginDialog(Gtk.Window):
             token = self.store.fetch_access_token()
             if not token:
                 raise SteamAuthError("Login succeeded but no access token was returned")
-        except Exception as exc:  # noqa: BLE001 - surface any login failure
-            logger.exception("Steam login capture failed: %s", exc)
-            self._finish(False)
+        except SteamAuthError as error:
+            # Do NOT close: keep the window open with a clear message so the
+            # user can reset and retry.
+            logger.warning("Steam login validation failed: %s", error)
+            self._set_status(str(error), error=True)
+            self._capturing = False
+            self._start_polling()
             return
+        except Exception as exc:  # noqa: BLE001 - unexpected failure, stay open
+            logger.exception("Steam login validation failed: %s", exc)
+            self._set_status(f"Steam validation failed: {exc}", error=True)
+            self._capturing = False
+            self._start_polling()
+            return
+        self._set_status("")
         self._finish(True)
 
     def _finish(self, ok: bool) -> None:
@@ -222,8 +275,3 @@ def _cookie_expiry(cookie) -> int | None:
     except (AttributeError, TypeError, ValueError):
         return None
     return int(stamp) if stamp else None
-
-
-def _cached_names(store: SteamTokenStore) -> set[str]:
-    """Names of cookies already stored for this account."""
-    return {c["name"] for c in store.cookies().to_dict()}
