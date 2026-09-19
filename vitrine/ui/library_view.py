@@ -88,6 +88,10 @@ class GameTile(Gtk.FlowBoxChild):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.append(frame)
         box.append(name)
+        # Constrain the whole tile to the cover width so a long name wraps
+        # at that width instead of widening the tile and unbalancing the
+        # cross-source homogeneous grid.
+        box.set_size_request(COVER_WIDTH, -1)
         self.set_child(box)
 
     def set_cover(self, path: str | None) -> None:

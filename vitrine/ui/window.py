@@ -288,6 +288,11 @@ class VitrineWindow(Adw.ApplicationWindow):
         if game.source == "steam" and not game.installed:
             self.open_store_page(game)
             return
+        # Installed Steam games launch through Steam itself, not the local
+        # Wine/Proton pipeline.
+        if game.source == "steam" and game.installed:
+            self._launch_steam_game(game)
+            return
         if game.id is None:
             return
         if self.runtime.running_game is game:
@@ -305,6 +310,23 @@ class VitrineWindow(Adw.ApplicationWindow):
         except Exception:
             logger.exception("Failed to launch %s", game.name)
             self.toasts.add_toast(Adw.Toast(title=f"Failed to launch {game.name}"))
+
+    def _launch_steam_game(self, game: Game) -> None:
+        """Launch an installed Steam game via Steam's run-game URI."""
+        from gi.repository import Gio
+
+        appid = game.source_id or ""
+        if not appid:
+            self.toasts.add_toast(Adw.Toast(title=f"No Steam appid for {game.name}"))
+            return
+        uri = f"steam://rungameid/{appid}"
+        try:
+            Gio.AppInfo.launch_default_for_uri(uri)
+        except Exception as error:  # noqa: BLE001
+            logger.warning("Failed to launch Steam game %s: %s", game.name, error)
+            self.toasts.add_toast(Adw.Toast(title=f"Could not launch {game.name} via Steam"))
+            return
+        self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name} via Steam"))
 
     def open_store_page(self, game: Game) -> None:
         """Open a store game's page in the system browser."""
