@@ -93,6 +93,8 @@ class _GameWindow(Gtk.Window):
         body = Gtk.ScrolledWindow()
         body.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         body.set_child(form)
+        body.set_vexpand(True)
+        body.set_hexpand(True)
         body.set_margin_top(12)
         body.set_margin_bottom(12)
         body.set_margin_start(16)
