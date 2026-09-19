@@ -17,16 +17,16 @@ from ..library import Game
 from ..util import human_playtime, initials
 
 #: Max lines a game name spans before it is truncated with an ellipsis.
-NAME_MAX_LINES = 3
+NAME_MAX_LINES = 2
 
 #: Portrait cover ratio (width / height), matching Steam's library capsules.
 COVER_RATIO = 2 / 3
 COVER_WIDTH = 180
-#: Fixed tile height = cover (COVER_WIDTH / ratio) + a name area sized for up to
-#: NAME_MAX_LINES lines, so every tile -- whatever the source or how few games
-#: are shown -- keeps the same dimensions instead of the grid stretching a lone
-#: tile to fill the pane or a long title stretching the tile.
-TILE_HEIGHT = int(COVER_WIDTH / COVER_RATIO) + NAME_MAX_LINES * 22
+#: Fixed tile height = cover (COVER_WIDTH / ratio) + a compact name area, so
+#: every tile -- whatever the source or how few games are shown -- keeps the
+#: same dimensions instead of the grid stretching a lone tile to fill the pane
+#: or a long title stretching the tile.
+TILE_HEIGHT = int(COVER_WIDTH / COVER_RATIO) + 26
 MIN_COLUMNS = 2
 MAX_COLUMNS = 9
 
