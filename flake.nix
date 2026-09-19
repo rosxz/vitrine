@@ -19,7 +19,9 @@
         ]);
         # glib is required: it ships the Gio/GObject/GLib typelibs that GTK's own
         # typelibs depend on, and without them PyGObject cannot create a real
-        # GApplication.
+        # GApplication. webkitgtk_6_0 is the GTK4 WebKit build that powers the
+        # embedded Steam sign-in window (webkitgtk_4_1 is a GTK3 rebuild, so it
+        # cannot coexist with GTK4 in one process).
         libs = [
           pkgs.gtk4
           pkgs.libadwaita
@@ -29,6 +31,7 @@
           pkgs.graphene
           pkgs.pango
           pkgs.harfbuzz
+          pkgs.webkitgtk_6_0
         ];
         themes = [ pkgs.adwaita-icon-theme pkgs.hicolor-icon-theme ];
       };
@@ -73,6 +76,7 @@
           pkgs.graphene
           pkgs.pango
           pkgs.harfbuzz
+          pkgs.webkitgtk_6_0
           pkgs.adwaita-icon-theme
           pkgs.hicolor-icon-theme
           pkgs.blueprint-compiler

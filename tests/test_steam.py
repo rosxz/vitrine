@@ -279,33 +279,41 @@ def test_steam_source_is_registered() -> None:
 
     assert registry.get("steam") is not None
 
-# -- login cookie dump parsing ---------------------------------------------------
+# -- login cookie capture --------------------------------------------------------
 
-def test_parse_cookie_dump_netscape() -> None:
-    from vitrine.ui.steam_login_dialog import _parse_cookie_dump
+def test_read_netscape_cookies(tmp_path: Path) -> None:
+    from vitrine.sources.steam.auth import read_netscape_cookies
 
-    dump = (
+    cookie_file = tmp_path / "cookies.txt"
+    cookie_file.write_text(
         "#HttpOnly_store.steampowered.com\tFALSE\t/\tTRUE\t1820967283\tsteamLoginSecure\tTOKEN-ABC\n"
-        "store.steampowered.com\tFALSE\t/\tFALSE\t1820967284\tsessionid\t123456789\n"
+        "store.steampowered.com\tFALSE\t/\tFALSE\t1820967284\tsessionid\t123456789\n",
+        encoding="utf-8",
     )
-    jar = _parse_cookie_dump(dump)
+    jar = read_netscape_cookies(cookie_file)
     assert jar.get("steamLoginSecure") == "TOKEN-ABC"
     assert jar.get("sessionid") == "123456789"
     assert jar.expires("steamLoginSecure") == 1820967283
 
 
-def test_parse_cookie_dump_chrome_rows() -> None:
-    from vitrine.ui.steam_login_dialog import _parse_cookie_dump
+def test_read_netscape_cookies_preserves_session_cookies(tmp_path: Path) -> None:
+    from vitrine.sources.steam.auth import read_netscape_cookies
 
-    jar = _parse_cookie_dump("sessionid=abc123\nsteamLoginSecure=DEF456\n")
-    assert jar.get("steamLoginSecure") == "DEF456"
+    cookie_file = tmp_path / "cookies.txt"
+    # A session cookie has no expires field and must still survive reload.
+    cookie_file.write_text(
+        "store.steampowered.com\tFALSE\t/\tFALSE\t\tsessionid\tabc123\n",
+        encoding="utf-8",
+    )
+    jar = read_netscape_cookies(cookie_file)
     assert jar.get("sessionid") == "abc123"
+    assert jar.expires("sessionid") is None
 
 
-def test_parse_cookie_dump_rejects_empty() -> None:
-    from vitrine.ui.steam_login_dialog import _parse_cookie_dump
+def test_read_netscape_cookies_missing_file_is_empty(tmp_path: Path) -> None:
+    from vitrine.sources.steam.auth import read_netscape_cookies
 
-    assert _parse_cookie_dump("# comments only\n\n").to_dict() == []
+    assert read_netscape_cookies(tmp_path / "nope.txt").to_dict() == []
 
 
 def test_fetch_access_token_uses_saved_cookies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -134,12 +134,13 @@ def check_shell(application: VitrineApplication) -> None:
     assert "vitrine-window" in settings.get_css_classes(), "settings window must follow the theme"
     settings.close()
 
-    # The Steam sign-in window builds (browser + cookie-paste flow).
+    # The Steam sign-in window builds an embedded WebKit view.
     from vitrine.sources.steam.auth import SteamTokenStore
     from vitrine.ui.steam_login_dialog import SteamLoginDialog
 
     with tempfile.TemporaryDirectory() as tmp:
         login = SteamLoginDialog(SteamTokenStore(tmp, "111"), parent=window)
+        assert login.webview is not None, "embedded login needs a WebKit webview"
         login.present()
         login.close()
     print("Steam sign-in window builds")
