@@ -208,8 +208,14 @@ class VitrineWindow(Adw.ApplicationWindow):
             steamid = path.rsplit("auth_", 1)[1].rsplit(".json", 1)[0]
             SteamTokenStore(secret_dir(), steamid).clear()
             cleared += 1
+        # Drop owned-but-not-installed entries from the previous account/session.
+        pruned = self.library.prune_source_games("steam", keep_appids=[])
+        self.library.clear_source_games("steam")
         self.library.set_setting("steam_steamid", None)
-        self.toasts.add_toast(Adw.Toast(title="Steam session reset" if cleared else "No Steam session to reset"))
+        self.reload()
+        self.toasts.add_toast(
+            Adw.Toast(title="Steam session reset" if cleared else f"No credentials to reset · {pruned} removed")
+        )
         self.on_steam_login()
 
     def _run_steam_sync(self) -> None:

@@ -82,7 +82,7 @@ class Game:
         row = asdict(self)
         row.pop("id", None)
         row["config"] = json.dumps(row["config"])
-        row["installed"] = int(self.installed)
+        row["installed"] = int(bool(self.installed))
         return row
 
 
@@ -221,6 +221,23 @@ class Library:
             "DELETE FROM source_games WHERE source = ? AND appid = ?", (source, source_id)
         )
         self.conn.commit()
+
+    def prune_source_games(self, source: str, keep_appids: Iterable[str]) -> int:
+        """Delete library entries for a store that are no longer synced.
+
+        Entries that are locally installed (``installed`` flag) are preserved
+        even if the store no longer lists them; only uninstalled ones that have
+        dropped out of the catalogue are removed. Returns how many were pruned.
+        """
+        keep = set(keep_appids)
+        removed = 0
+        for game in self.games(source=source):
+            if game.installed or (game.source_id or "") in keep:
+                continue
+            if game.id is not None:
+                self.remove(game.id)
+            removed += 1
+        return removed
 
     # -- settings --------------------------------------------------------------
 

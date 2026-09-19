@@ -440,3 +440,50 @@ def test_sync_installed_tolerates_absent_numbers(tmp_path: Path, monkeypatch: py
     assert _to_number("12345") == 12345
     assert _to_number("1.5") == 1.5
     assert _to_number("-") is None
+
+
+# -- installed flag stays bool / prune on resync ---------------------------------
+
+def test_owned_installed_is_never_none() -> None:
+    from vitrine.library import Game
+
+    # The old expression bool(playtime) or item.get("playtime_2weeks") could be
+    # None for a 0-playtime game missing playtime_2weeks -> int(None) crash.
+    item = {"appid": 9, "name": "X", "playtime_forever": 0}
+    installed = bool(item.get("playtime_forever", 0)) or bool(item.get("playtime_2weeks"))
+    assert installed is False
+    # And an installed game stays a real bool too.
+    item2 = {"appid": 9, "name": "X", "playtime_forever": 120, "playtime_2weeks": 60}
+    assert bool(item2.get("playtime_forever", 0)) or bool(item2.get("playtime_2weeks")) is True
+    # to_row must always produce an int (never crash on a falsy/None flag).
+    row = Game(name="X", source="steam", source_id="9", installed=False).to_row()
+    assert row["installed"] == 0
+    row2 = Game(name="Y", source="steam", source_id="10", installed=None).to_row()  # type: ignore[arg-type]
+    assert row2["installed"] == 0
+
+
+def test_prune_source_games_removes_only_uninstalled(tmp_path: Path) -> None:
+    from vitrine import db
+    from vitrine.library import Game, Library
+    from vitrine.sources.base import SourceGame
+
+    conn = db.connect(":memory:")
+    db.initialize(conn)
+    lib = Library(conn)
+    lib.merge_source_games(
+        "steam",
+        [
+            SourceGame(source="steam", appid="1", name="Kept Owned", installed=False),
+            SourceGame(source="steam", appid="2", name="Installed", installed=True),
+        ],
+    )
+    lib.add(Game(name="Manual-local", source="local"))
+    assert len(lib.games(source="steam")) == 2
+
+    # Resync that no longer lists appid 1 -> should prune it, keep installed.
+    removed = lib.prune_source_games("steam", keep_appids=["2"])
+    assert removed == 1
+    apps = {g.source_id for g in lib.games(source="steam")}
+    assert apps == {"2"}
+    # Local source untouched.
+    assert len(lib.games(source="local")) == 1

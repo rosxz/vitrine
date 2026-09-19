@@ -114,6 +114,9 @@ class SteamSource(Source):
             )
 
         self.library.merge_source_games(self.id, deduped.values())
+        # Drop owned-but-not-installed entries that fell out of the catalogue
+        # on this refresh (e.g. after a logout in a *different* Steam app).
+        self.library.prune_source_games(self.id, deduped.keys())
         return len(deduped)
 
     def sync_installed(self) -> int:
@@ -205,13 +208,14 @@ class SteamSource(Source):
         games: list[SourceGame] = []
         for item in payload.get("games") or []:
             playtime = item.get("playtime_forever", 0)
+            installed = bool(playtime) or bool(item.get("playtime_2weeks"))
             games.append(
                 SourceGame(
                     source=self.id,
                     appid=str(item["appid"]),
                     name=item.get("name", str(item["appid"])),
                     slug=slugify(item.get("name", "")),
-                    installed=bool(playtime) or item.get("playtime_2weeks"),
+                    installed=installed,
                     details={
                         "playtime_forever": playtime,
                         "time_last_played": item.get("rtime_last_played"),
