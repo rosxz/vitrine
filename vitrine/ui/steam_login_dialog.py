@@ -1,11 +1,13 @@
+# ruff: noqa: E402
+
 """Steam login window (embedded WebKit).
 
 Signs the user in inside the app using a real WebKitWebView (the GTK4 build,
-``webkitgtk_6_0``). Login cookies are captured by pointing the default
-network session's cookie manager at a persistent Netscape-text file; when the
-load lands on Steam's ``/about`` redirect URI the cookie file is read into a
-:class:`CookieJar`, the short-lived ``webapi_token`` is fetched with those
-cookies, and both are saved to the account's durable token store.
+``webkitgtk_6_0``). Login cookies are captured from the live cookie manager
+when the load lands on Steam's ``/about`` redirect URI (session cookies never
+reach WebKit's persistent file, so the manager is the only reliable source);
+the short-lived ``webapi_token`` is fetched with those cookies and both are
+saved to the account's durable token store.
 """
 
 from __future__ import annotations
@@ -15,17 +17,17 @@ from collections.abc import Callable
 
 import gi
 
-from ..sources.steam.auth import (
-    SteamAuthError,
-    SteamTokenStore,
-    read_netscape_cookies,
-)
-
 logger = logging.getLogger(__name__)
 
 gi.require_version("WebKit", "6.0")
 
-from gi.repository import Adw, Gtk, WebKit  # noqa: E402
+from gi.repository import Adw, Gio, Gtk, WebKit  # noqa: E402
+
+from ..sources.steam.auth import (
+    CookieJar,
+    SteamAuthError,
+    SteamTokenStore,
+)
 
 LOGIN_URL = "https://store.steampowered.com/login/?redir=/about"
 REDIRECT_URI = "https://store.steampowered.com/about"
@@ -49,13 +51,13 @@ class SteamLoginDialog(Gtk.Window):
             self.set_transient_for(parent)
 
         # Point the shared network session's cookie manager at a persistent
-        # Netscape-text file so login cookies are captured on disk.
+        # Netscape-text file so WebKit flushes cookie state; session cookies
+        # (e.g. ``sessionid``) are only ever alive in the manager itself, so
+        # capture always reads from the live manager, never from this file.
         self.store.cookie_file.parent.mkdir(parents=True, exist_ok=True)
-        if self.store.cookie_file.exists():
-            self.store.cookie_file.unlink()
         session = WebKit.NetworkSession.get_default()
-        cookie_manager = session.get_cookie_manager()
-        cookie_manager.set_persistent_storage(
+        self._cookie_manager = session.get_cookie_manager()
+        self._cookie_manager.set_persistent_storage(
             str(self.store.cookie_file),
             WebKit.CookiePersistentStorage.TEXT,
         )
@@ -78,7 +80,7 @@ class SteamLoginDialog(Gtk.Window):
     def _on_load_changed(self, _webview: WebKit.WebView, load_event: WebKit.LoadEvent) -> None:
         if load_event == WebKit.LoadEvent.FINISHED:
             url = self.webview.get_uri() or ""
-            if url.startswith(REDIRECT_URI):
+            if url.startswith(REDIRECT_URI) and "steamLoginSecure" not in _cached_names(self.store):
                 self._capture_credentials()
 
     def _on_create_popup(
@@ -97,8 +99,15 @@ class SteamLoginDialog(Gtk.Window):
     # -- credential capture ---------------------------------------------------
 
     def _capture_credentials(self) -> None:
+        """Read the live cookie manager; session cookies never hit the disk
+        file, so reading the manager is the only reliable capture point."""
+        self._cookie_manager.get_all_cookies(None, self._on_cookies_read)
+
+    def _on_cookies_read(
+        self, _manager: WebKit.CookieManager, result: Gio.AsyncResult
+    ) -> None:
         try:
-            cookies = read_netscape_cookies(self.store.cookie_file)
+            cookies = cast_cookie_list(self._cookie_manager.get_all_cookies_finish(result))
             if not cookies.get("steamLoginSecure") or not cookies.get("sessionid"):
                 raise SteamAuthError("Login did not produce Steam session cookies")
             self.store.set_credentials(cookies)
@@ -115,3 +124,39 @@ class SteamLoginDialog(Gtk.Window):
         if self._on_complete is not None:
             self._on_complete(ok)
         self.close()
+
+
+def cast_cookie_list(cookies) -> CookieJar:
+    """Convert the ``Soup.Cookie`` list from the cookie manager into a
+    :class:`CookieJar`, keeping session cookies (no expires) too."""
+    jar = CookieJar()
+    for cookie in cookies or []:
+        jar.add(
+            {
+                "name": cookie.get_name(),
+                "value": cookie.get_value(),
+                "domain": cookie.get_domain(),
+                "path": cookie.get_path(),
+                "secure": bool(cookie.get_secure()),
+                "http_only": bool(cookie.get_http_only()),
+                "expires": _cookie_expiry(cookie),
+            }
+        )
+    return jar
+
+
+def _cookie_expiry(cookie) -> int | None:
+    expires = cookie.get_expires()
+    if expires is None:
+        return None
+    # GLib.DateTime -> unix seconds (0 == session/not-set).
+    try:
+        stamp = expires.to_unix()
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return int(stamp) if stamp else None
+
+
+def _cached_names(store: SteamTokenStore) -> set[str]:
+    """Names of cookies already stored for this account."""
+    return {c["name"] for c in store.cookies().to_dict()}

@@ -281,41 +281,6 @@ def test_steam_source_is_registered() -> None:
 
 # -- login cookie capture --------------------------------------------------------
 
-def test_read_netscape_cookies(tmp_path: Path) -> None:
-    from vitrine.sources.steam.auth import read_netscape_cookies
-
-    cookie_file = tmp_path / "cookies.txt"
-    cookie_file.write_text(
-        "#HttpOnly_store.steampowered.com\tFALSE\t/\tTRUE\t1820967283\tsteamLoginSecure\tTOKEN-ABC\n"
-        "store.steampowered.com\tFALSE\t/\tFALSE\t1820967284\tsessionid\t123456789\n",
-        encoding="utf-8",
-    )
-    jar = read_netscape_cookies(cookie_file)
-    assert jar.get("steamLoginSecure") == "TOKEN-ABC"
-    assert jar.get("sessionid") == "123456789"
-    assert jar.expires("steamLoginSecure") == 1820967283
-
-
-def test_read_netscape_cookies_preserves_session_cookies(tmp_path: Path) -> None:
-    from vitrine.sources.steam.auth import read_netscape_cookies
-
-    cookie_file = tmp_path / "cookies.txt"
-    # A session cookie has no expires field and must still survive reload.
-    cookie_file.write_text(
-        "store.steampowered.com\tFALSE\t/\tFALSE\t\tsessionid\tabc123\n",
-        encoding="utf-8",
-    )
-    jar = read_netscape_cookies(cookie_file)
-    assert jar.get("sessionid") == "abc123"
-    assert jar.expires("sessionid") is None
-
-
-def test_read_netscape_cookies_missing_file_is_empty(tmp_path: Path) -> None:
-    from vitrine.sources.steam.auth import read_netscape_cookies
-
-    assert read_netscape_cookies(tmp_path / "nope.txt").to_dict() == []
-
-
 def test_fetch_access_token_uses_saved_cookies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import requests
 
@@ -347,3 +312,22 @@ def test_fetch_access_token_uses_saved_cookies(tmp_path: Path, monkeypatch: pyte
     assert recorded["cookies"] == {"sessionid": "abc", "steamLoginSecure": "jwt"}
     # The refreshed token is persisted.
     assert SteamTokenStore(tmp_path, "111").access_token() == "fresh-token"
+
+
+def test_cast_cookie_list_keeps_session_cookies() -> None:
+    import gi
+
+    gi.require_version("Soup", "3.0")
+    from gi.repository import Soup
+
+    from vitrine.ui.steam_login_dialog import cast_cookie_list
+
+    login = Soup.Cookie.new("steamLoginSecure", "JWT", "store.steampowered.com", "/", 3600)
+    session = Soup.Cookie.new("sessionid", "abc123", "store.steampowered.com", "/", -1)
+    jar = cast_cookie_list([login, session])
+    assert jar.get("steamLoginSecure") == "JWT"
+    assert jar.get("sessionid") == "abc123"
+    # The session cookie must keep its (missing) expiry; the secure cookie has one.
+    assert jar.expires("sessionid") is None
+    assert jar.expires("steamLoginSecure") is not None
+    assert jar.to_dict()[0]["domain"] == "store.steampowered.com"
