@@ -7,4 +7,4 @@ APP_NAME = "Vitrine"
 APP_DESCRIPTION = "A unified game library launcher"
 
 # The database schema version. Bump this whenever db.MIGRATIONS grows.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3

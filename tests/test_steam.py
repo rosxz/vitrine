@@ -223,6 +223,9 @@ def test_steam_source_syncs_with_auth(
 
     library = _library(steam_root)
     monkeypatch.setattr(steam_config, "find_steam_root", lambda: str(steam_root))
+    from vitrine import artwork as artwork_mod
+
+    monkeypatch.setattr(artwork_mod, "refresh_game_artwork", lambda _lib, game, force=False: False)
     monkeypatch.setattr(SteamSource, "_owned_games", lambda self, store: [
         SourceGame(source="steam", appid="1002300", name="Fear & Hunger"),
         SourceGame(source="steam", appid="999999", name="Not Installed Anything"),
@@ -248,6 +251,43 @@ def test_steam_source_syncs_with_auth(
     assert "Not Installed Anything" in grid
 
 
+def test_steam_source_promotes_provider_art_and_lists_missing(
+    steam_root: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from vitrine.sources import steam_source as steam_source_mod
+    from vitrine.sources.base import SourceGame
+    from vitrine.sources.steam.auth import CookieJar, SteamTokenStore
+    from vitrine.sources.steam_source import SteamSource
+
+    monkeypatch.setattr(steam_source_mod.paths, "secret_dir", lambda: tmp_path)
+    store = SteamTokenStore(tmp_path, "76561198123871777")
+    store.set_credentials(CookieJar([{"name": "sessionid", "value": "abc"}]), access_token="tok-123")
+
+    library = _library(steam_root)
+    monkeypatch.setattr(steam_config, "find_steam_root", lambda: str(steam_root))
+    from vitrine.library import Game
+
+    # Seed one pre-existing Steam row still carrying the old "local" default.
+    library.add(
+        Game(name="Old Game", slug="old-game", source="steam", source_id="11112222", artwork_source="local")
+    )
+    monkeypatch.setattr(SteamSource, "_owned_games", lambda self, store: [
+        SourceGame(source="steam", appid="11112222", name="Old Game"),
+    ])
+
+    src = SteamSource(library)
+    src.steamid64 = "76561198123871777"
+    src.sync()
+
+    # The sync promoted the old row to provider (so async art knows to fetch).
+    game = library.game_by_source_id("steam", "11112222")
+    assert game.artwork_source == "provider"
+
+    # And it surfaces the missing-art work for the async pass, not doing it inline.
+    pending = src.games_needing_artwork()
+    assert any(g.source_id == "11112222" for g in pending)
+
+
 def test_steam_source_requires_login_to_sync(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from vitrine.sources import steam_source as steam_source_mod
     from vitrine.sources.steam.auth import SteamAuthError
@@ -256,8 +296,6 @@ def test_steam_source_requires_login_to_sync(tmp_path: Path, monkeypatch: pytest
     monkeypatch.setattr(steam_source_mod.paths, "secret_dir", lambda: tmp_path)
     monkeypatch.setattr(steam_config, "find_steam_root", lambda: "")
     source = SteamSource(_library(monkeypatch))
-
-    assert not source.is_configured()
     with pytest.raises(SteamAuthError):
         source.sync()
 

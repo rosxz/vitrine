@@ -71,9 +71,14 @@ class GameForm(Gtk.Box):
     def __init__(
         self,
         on_browse: Callable[[str, _LabeledEntry], None] | None = None,
+        *,
+        allow_provider: bool = True,
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self._on_browse = on_browse or (lambda _kind, _entry: None)
+        self._on_source_changed: Callable[[str], None] | None = None
+        self._allow_provider = allow_provider
+        self._loading = False
 
         self.name = _LabeledEntry("Name")
         self.executable = _LabeledEntry("Executable", browse=True)
@@ -83,6 +88,29 @@ class GameForm(Gtk.Box):
         self.cover = _LabeledEntry("Cover image (portrait)", browse=True)
         self.banner = _LabeledEntry("Banner image (wide hero)", browse=True)
 
+        self.lutris_slug = _LabeledEntry("Lutris slug (defaults to game name)")
+
+        art_sources = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        self._source_label = Gtk.Label(label="Artwork:", halign=Gtk.Align.START)
+        art_sources.append(self._source_label)
+        self._artwork_source = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        self._source_buttons: dict[str, Gtk.CheckButton] = {}
+        group = None
+        sources = (("local", "Local"), ("lutris", "Lutris"))
+        if self._allow_provider:
+            sources = (("local", "Local"), ("provider", "Provider"), ("lutris", "Lutris"))
+        for src, label in sources:
+            if group is None:
+                btn = Gtk.CheckButton(label=label)
+                group = btn  # subsequent buttons join this radio group.
+            else:
+                btn = Gtk.CheckButton(label=label, group=group)
+            btn.connect("toggled", self._on_source_toggled, src)
+            self._artwork_source.append(btn)
+            self._source_buttons[src] = btn
+        self._source_buttons["lutris"].set_active(True)
+        art_sources.append(self._artwork_source)
+
         for entry in (
             self.name,
             self.executable,
@@ -91,8 +119,10 @@ class GameForm(Gtk.Box):
             self.prefix,
             self.cover,
             self.banner,
+            self.lutris_slug,
         ):
             self.append(entry)
+        self.append(art_sources)
 
         self._fields: dict[str, _LabeledEntry] = {
             "executable": self.executable,
@@ -101,6 +131,16 @@ class GameForm(Gtk.Box):
         }
         for kind, entry in self._fields.items():
             entry.on_browse(lambda k=kind, e=entry: self._on_browse(k, e))
+
+    def _on_source_toggled(self, btn: Gtk.CheckButton, src: str) -> None:
+        if self._loading or not btn.get_active():
+            return
+        if self._on_source_changed is not None:
+            self._on_source_changed(src)
+
+    def connect_source_changed(self, handler: Callable[[str], None]) -> None:
+        """Subscribe to artwork-source changes (only active selections fire)."""
+        self._on_source_changed = handler
 
     def connect_browse(self, kind: str, handler: Callable[[_LabeledEntry], None]) -> None:
         """Bind a host-provided file-picker to one browse button."""
@@ -122,6 +162,24 @@ class GameForm(Gtk.Box):
         self.prefix.set(expand(game.prefix))
         self.cover.set(expand(game.cover))
         self.banner.set(expand(game.banner))
+        self.lutris_slug.set(game.lutris_slug)
+        self.set_artwork_source(game.artwork_source)
+
+    def set_artwork_source(self, source: str) -> None:
+        source = source or "lutris"
+        if source not in self._source_buttons:
+            source = "lutris"
+        self._loading = True
+        try:
+            self._source_buttons[source].set_active(True)
+        finally:
+            self._loading = False
+
+    def artwork_source(self) -> str:
+        for src, btn in self._source_buttons.items():
+            if btn.get_active():
+                return src
+        return "lutris"
 
     def validate(self) -> str | None:
         if not self.name.text():
@@ -139,6 +197,8 @@ class GameForm(Gtk.Box):
             prefix=v["prefix"],
             cover=v["cover"],
             banner=v["banner"],
+            artwork_source=v["artwork_source"],
+            lutris_slug=v["lutris_slug"],
             source="local",
             installed=True,
         )
@@ -152,6 +212,8 @@ class GameForm(Gtk.Box):
         game.prefix = v["prefix"]
         game.cover = v["cover"]
         game.banner = v["banner"]
+        game.artwork_source = v["artwork_source"]
+        game.lutris_slug = v["lutris_slug"]
         return game
 
     def _values(self) -> dict:
@@ -163,4 +225,6 @@ class GameForm(Gtk.Box):
             "prefix": self.prefix.value(),
             "cover": self.cover.value(),
             "banner": self.banner.value(),
+            "artwork_source": self.artwork_source(),
+            "lutris_slug": (self.lutris_slug.value() or "").strip(),
         }

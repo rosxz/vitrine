@@ -60,6 +60,8 @@ class Game:
     lastplayed: int | None = None
     cover: str | None = None
     banner: str | None = None
+    artwork_source: str = "lutris"
+    lutris_slug: str | None = None
     config: dict[str, Any] = field(default_factory=dict)
 
     def merged_config(self, global_config: dict[str, Any]) -> dict[str, Any]:
@@ -176,14 +178,15 @@ class Library:
         self.conn.execute("DELETE FROM source_games WHERE source = ?", (source,))
         self.conn.commit()
 
-    def merge_source_games(self, source: str, games: Iterable[SourceGame]) -> int:
+    def merge_source_games(self, source: str, games: Iterable[SourceGame]) -> list[Game]:
         """Upsert catalogue games into the library as installable entries.
 
         Owned-but-not-installed entries appear in the grid too; they carry a
-        ``source``/``source_id`` so the UI can link to the store. Returns how
-        many rows were touched (inserted or updated).
+        ``source``/``source_id`` so the UI can link to the store. Returns the
+        newly-inserted games (best-effort) so callers can fetch artwork only
+        for brand-new entries.
         """
-        touched = 0
+        new_games: list[Game] = []
         for catalog in games:
             if not all(hasattr(catalog, attr) for attr in ("appid", "name", "slug", "installed")):
                 continue
@@ -198,7 +201,7 @@ class Library:
                     installed=catalog.installed,
                 )
                 self.add(game)
-                touched += 1
+                new_games.append(game)
             else:
                 dirty = False
                 if existing.name != catalog.name:
@@ -209,8 +212,7 @@ class Library:
                     dirty = True
                 if dirty:
                     self.update(existing)
-                touched += 1
-        return touched
+        return new_games
 
     def remove_source_game(self, source: str, source_id: str) -> None:
         """Remove a library entry that came from a store catalogue."""

@@ -17,6 +17,7 @@ from ..sources.steam_source import FAMILY_SETTING
 from .theme import THEMES, ThemeManager
 
 STEAM_SOURCE_NAME = "Steam"
+GOG_SOURCE_NAME = "GOG"
 
 
 class SettingsWindow(Gtk.Window):
@@ -28,6 +29,9 @@ class SettingsWindow(Gtk.Window):
         on_steam_login: Callable[[], None] | None = None,
         on_steam_refresh: Callable[[], None] | None = None,
         on_steam_reset: Callable[[], None] | None = None,
+        on_gog_login: Callable[[], None] | None = None,
+        on_gog_refresh: Callable[[], None] | None = None,
+        on_gog_reset: Callable[[], None] | None = None,
         parent: Gtk.Window | None = None,
     ) -> None:
         super().__init__(title="Settings")
@@ -37,6 +41,9 @@ class SettingsWindow(Gtk.Window):
         self._on_steam_login = on_steam_login or (lambda: None)
         self._on_steam_refresh = on_steam_refresh or (lambda: None)
         self._on_steam_reset = on_steam_reset or (lambda: None)
+        self._on_gog_login = on_gog_login or (lambda: None)
+        self._on_gog_refresh = on_gog_refresh or (lambda: None)
+        self._on_gog_reset = on_gog_reset or (lambda: None)
         self.add_css_class("vitrine-window")
         self.set_default_size(460, 460)
         if parent is not None:
@@ -45,6 +52,7 @@ class SettingsWindow(Gtk.Window):
         page = Adw.PreferencesPage()
         page.add(self._build_appearance_group())
         page.add(self._build_steam_group())
+        page.add(self._build_gog_group())
 
         style = Gtk.ScrolledWindow()
         style.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -92,6 +100,24 @@ class SettingsWindow(Gtk.Window):
         reset_button.set_tooltip_text("Clear saved login and store cookies, then sign in again")
         reset_button.add_css_class("destructive-action")
         reset_button.connect("clicked", lambda _b: self._on_steam_reset())
+        reset_button.set_halign(Gtk.Align.FILL)
+        reset_button.set_margin_top(6)
+        group.add(_row_widget(reset_button))
+        return group
+
+    def _build_gog_group(self) -> Adw.PreferencesGroup:
+        group = Adw.PreferencesGroup(title=GOG_SOURCE_NAME)
+
+        login_button = Gtk.Button(label="Sign in / refresh GOG")
+        login_button.connect("clicked", lambda _b: self._on_gog_login())
+        login_button.set_halign(Gtk.Align.FILL)
+        login_button.set_margin_top(6)
+        group.add(_row_widget(login_button))
+
+        reset_button = Gtk.Button(label="Reset GOG session…")
+        reset_button.set_tooltip_text("Clear saved login, then sign in again")
+        reset_button.add_css_class("destructive-action")
+        reset_button.connect("clicked", lambda _b: self._on_gog_reset())
         reset_button.set_halign(Gtk.Align.FILL)
         reset_button.set_margin_top(6)
         group.add(_row_widget(reset_button))

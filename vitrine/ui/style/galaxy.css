@@ -104,6 +104,12 @@ window.vitrine-window {
     );
 }
 
+/* Translucent dark panel behind the title / playtime / play button, spanning
+   the full width and reaching the bottom edge of the hero. */
+.vitrine-detail-shade {
+    background-color: rgba(10, 9, 12, 0.50);
+}
+
 .vitrine-detail-title {
     color: #fffbff;
     font-weight: 700;

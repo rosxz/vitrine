@@ -134,13 +134,31 @@ class GameDetailBar(Gtk.Box):
         click.connect("released", self._on_toggle_released)
         self._toggle.add_controller(click)
 
+        # A semi-translucent dark panel behind the title/playtime/play controls
+        # so text keeps contrast regardless of what the banner shows underneath.
+        # It spans the full width and reaches the bottom edge of the hero.
+        shade = Gtk.Box()
+        shade.set_hexpand(True)
+        shade.set_valign(Gtk.Align.END)
+        shade.set_size_request(-1, 96)
+        shade.add_css_class("vitrine-detail-shade")
+        self._shade = shade
+
         # Overlays that describe the game; hidden while collapsed so only the
         # toggle chevron remains in the thin strip.
-        self._content_overlays = [self._backdrop, self._placeholder, scrim, text, controls]
+        self._content_overlays = [
+            self._backdrop,
+            self._placeholder,
+            scrim,
+            shade,
+            text,
+            controls,
+        ]
 
         overlay = Gtk.Overlay()
         overlay.set_child(scrim)  # dictates the fixed height
         overlay.add_overlay(self._backdrop)  # cover-crops to fill the scrim
+        overlay.add_overlay(self._shade)  # full-bleed dark panel over the art
         for widget in (self._placeholder, text, controls):
             overlay.add_overlay(widget)
         overlay.add_overlay(self._toggle)

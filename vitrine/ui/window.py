@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import glob
 import logging
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Sequence
 
 from gi.repository import Adw, GLib, Gtk
 
@@ -12,6 +13,7 @@ from ..library import Game, Library
 from ..paths import secret_dir
 from ..running import GameAlreadyRunning, Runtime
 from ..sources import registry
+from ..sources.gog.auth import GogTokenStore
 from ..sources.steam.auth import SteamTokenStore
 from ..sources.steam_source import SteamAuthError, SteamSource
 from .game_detail_bar import GameDetailBar
@@ -70,7 +72,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.add_button = add_button
 
         refresh_button = Gtk.Button(icon_name="view-refresh-symbolic")
-        refresh_button.set_tooltip_text("Refresh Steam library")
+        refresh_button.set_tooltip_text("Refresh library")
         refresh_button.connect("clicked", self.on_refresh_source)
         refresh_button.set_visible(False)
         header.pack_end(refresh_button)
@@ -138,6 +140,16 @@ class VitrineWindow(Adw.ApplicationWindow):
         scroller.set_vexpand(True)
         sidebar.append(scroller)
 
+        # Artwork-fetch progress, shown only while a background fetch runs.
+        self.art_progress = Gtk.ProgressBar()
+        self.art_progress.set_show_text(True)
+        self.art_progress.set_margin_top(6)
+        self.art_progress.set_margin_bottom(8)
+        self.art_progress.set_margin_start(10)
+        self.art_progress.set_margin_end(10)
+        self.art_progress.set_visible(False)
+        sidebar.append(self.art_progress)
+
         return sidebar
 
     def _add_source_row(self, source_id: str, title: str, icon_name: str) -> None:
@@ -178,8 +190,8 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.title_widget.set_subtitle(
             "1 game" if len(games) == 1 else f"{len(games)} games"
         )
-        # The Steam source gets a refresh button instead of "add a game".
-        if self.current_source == "steam":
+        # Store sources get a refresh button instead of "add a game".
+        if self.current_source and self.current_source != "local":
             self.add_button.set_visible(False)
             self.refresh_button.set_visible(True)
         else:
@@ -202,6 +214,9 @@ class VitrineWindow(Adw.ApplicationWindow):
             on_steam_login=self.on_steam_login,
             on_steam_refresh=self._run_steam_sync,
             on_steam_reset=self.on_steam_reset_session,
+            on_gog_login=self.on_gog_login,
+            on_gog_refresh=self._run_gog_sync,
+            on_gog_reset=self.on_gog_reset_session,
             parent=self,
         ).present()
 
@@ -209,7 +224,12 @@ class VitrineWindow(Adw.ApplicationWindow):
         AddGameDialog(self.library, on_add=self.on_game_added, parent=self).present()
 
     def on_refresh_source(self, _button: Gtk.Button) -> None:
-        self._run_steam_sync()
+        if self.current_source == "steam":
+            self._run_steam_sync()
+        elif self.current_source == "gog":
+            self._run_gog_sync()
+        else:
+            self._run_steam_sync()
 
     def on_steam_login(self) -> None:
         """Open the Steam sign-in browser, then refresh the library."""
@@ -268,11 +288,154 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.current_source = "steam"
             self.reload()
             self.toasts.add_toast(Adw.Toast(title=f"Steam refreshed · {count} games"))
+            # Artwork is downloaded asynchronously so hundreds of games never
+            # block the UI thread; we only syndicate the work here.
+            pending = source.games_needing_artwork()
+            if pending:
+                self._start_artwork_fetch(pending)
         except SteamAuthError as error:
             self.toasts.add_toast(Adw.Toast(title=str(error)))
         except Exception as error:  # noqa: BLE001
             logger.exception("Steam sync failed")
             self.toasts.add_toast(Adw.Toast(title=f"Steam sync failed: {error}"))
+
+    # -- GOG -------------------------------------------------------------------
+
+    def on_gog_login(self) -> None:
+        """Open the GOG sign-in browser, then refresh the library."""
+        from ..sources.gog_source import USER_SETTING, GogSource
+        from .gog_login_dialog import GogLoginDialog
+
+        source = GogSource(self.library)
+
+        def on_complete(ok: bool, user_id: str | None = None) -> None:
+            if not ok:
+                self.toasts.add_toast(Adw.Toast(title="GOG sign-in failed"))
+                return
+            if user_id:
+                self.library.set_setting(USER_SETTING, user_id)
+            self.toasts.add_toast(Adw.Toast(title="GOG sign-in complete"))
+            self._run_gog_sync()
+
+        store = source.login_token_store()
+        dialog = GogLoginDialog(store, on_complete=on_complete, parent=self)
+        dialog.present()
+
+    def on_gog_reset_session(self) -> None:
+        """Clear stored GOG credentials so the user can sign in afresh."""
+        from ..sources.gog_source import USER_SETTING
+
+        cleared = 0
+        for path in glob.glob(str(secret_dir() / "gog" / "auth_*.json")):
+            user_id = path.rsplit("auth_", 1)[1].rsplit(".json", 1)[0]
+            GogTokenStore(secret_dir(), user_id).clear()
+            cleared += 1
+        self.library.clear_source_games("gog")
+        self.library.set_setting(USER_SETTING, None)
+        if self.current_source == "gog":
+            self.current_source = None
+        self.reload()
+        self.toasts.add_toast(
+            Adw.Toast(title="GOG session reset" if cleared else "No GOG credentials to reset")
+        )
+
+    def _run_gog_sync(self) -> None:
+        from ..sources.gog_source import USER_SETTING, GogAuthError, GogSource
+
+        try:
+            source = GogSource(self.library)
+            if not source.is_authenticated():
+                self.toasts.add_toast(Adw.Toast(title="Sign in to GOG first (cog → GOG)"))
+                return
+            if source.user_id:
+                self.library.set_setting(USER_SETTING, source.user_id)
+            count = source.sync()
+            self.current_source = "gog"
+            self.reload()
+            self.toasts.add_toast(Adw.Toast(title=f"GOG refreshed · {count} games"))
+            pending = source.games_needing_artwork()
+            if pending:
+                self._start_artwork_fetch(pending)
+        except GogAuthError as error:
+            self.toasts.add_toast(Adw.Toast(title=str(error)))
+        except Exception as error:  # noqa: BLE001
+            logger.exception("GOG sync failed")
+            self.toasts.add_toast(Adw.Toast(title=f"GOG sync failed: {error}"))
+
+    # -- asynchronous artwork -------------------------------------------------
+
+    _ART_WORKERS = 8
+
+    def _start_artwork_fetch(self, games: Sequence[Game]) -> None:
+        """Fetch artwork for many games on a worker pool, off the UI thread."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        from ..artwork import fetch_game_artwork
+
+        total = len(games)
+        self._art_total = total
+        self._art_done = 0
+        self._art_games = {id(game): game for game in games}
+        self._art_lock = threading.Lock()
+
+        self.art_progress.set_visible(True)
+        self.art_progress.set_text("")
+        self.art_progress.set_fraction(0.0)
+
+        def _work(game: Game) -> tuple[Game, bool]:
+            try:
+                changed = fetch_game_artwork(game, force=False)
+            except Exception:  # noqa: BLE001 - one bad game must not kill others.
+                logger.exception("Artwork fetch failed for %s", game.name)
+                changed = False
+            return game, changed
+
+        def _runner() -> None:
+            changed_list: list[Game] = []
+            try:
+                with ThreadPoolExecutor(max_workers=self._ART_WORKERS) as pool:
+                    futures = [pool.submit(_work, game) for game in games]
+                    for future in as_completed(futures):
+                        game, changed = future.result()
+                        with self._art_lock:
+                            self._art_done += 1
+                        if changed:
+                            changed_list.append(game)
+                            # Persist freshly-fetched artwork on the main thread.
+                            GLib.idle_add(self._on_art_progress, id(game), True)
+                        else:
+                            GLib.idle_add(self._on_art_progress, id(game), False)
+            finally:
+                self._art_changed = changed_list
+                GLib.idle_add(self._on_art_finished)
+
+        self._art_changed: list[Game] = []
+        threading.Thread(target=_runner, daemon=True, name="vitrine-artwork").start()
+
+    def _on_art_progress(self, game_id: int, changed: bool) -> None:
+        """Main-thread callback: update the progress bar for one finished game."""
+        if self._art_total == 0:
+            return
+        with self._art_lock:
+            done = self._art_done
+        fraction = min(done / self._art_total, 1.0)
+        self.art_progress.set_fraction(fraction)
+        self.art_progress.set_text(f"{done}/{self._art_total}")
+        if changed:
+            game = self._art_games.get(game_id)
+            if game is not None:
+                try:
+                    self.library.update(game)
+                except Exception:  # noqa: BLE001
+                    logger.exception("Failed to persist artwork for %s", game.name)
+        return None
+
+    def _on_art_finished(self) -> None:
+        """Main-thread callback: hide the progress bar and refresh the grid."""
+        self.art_progress.set_visible(False)
+        self.art_progress.set_text("")
+        if getattr(self, "_art_changed", None):
+            self.reload()
 
     def on_game_added(self, game: Game) -> None:
         self.library.add(game)
@@ -294,8 +457,27 @@ class VitrineWindow(Adw.ApplicationWindow):
             game,
             on_save=self.on_game_edited,
             on_remove=self.on_game_removed,
+            on_refresh_artwork=self._on_refresh_artwork,
             parent=self,
         ).present()
+
+    def _on_refresh_artwork(self, game: Game) -> None:
+        try:
+            from ..artwork import refresh_game_artwork
+
+            changed = refresh_game_artwork(self.library, game, force=True)
+        except Exception as exc:  # noqa: BLE001 - surface as a toast, not a crash.
+            self.toasts.add_toast(Adw.Toast(title=f"Refresh failed: {exc}"))
+            return
+        if changed:
+            self.library.update(game)
+            self.reload()
+            self.detail_bar.set_game(game)
+            self.toasts.add_toast(Adw.Toast(title=f"Updated artwork for {game.name}"))
+        else:
+            self.toasts.add_toast(
+                Adw.Toast(title=f"No automatic artwork for {game.name} (set a source and slug, or use Local)")
+            )
 
     def on_game_edited(self, game: Game) -> None:
         self.reload()
@@ -303,8 +485,8 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.toasts.add_toast(Adw.Toast(title=f"Updated {game.name}"))
 
     def on_game_removed(self, game: Game) -> None:
-        if game.source == "steam":
-            self.library.remove_source_game("steam", game.source_id or "")
+        if game.source in ("steam", "gog"):
+            self.library.remove_source_game(game.source, game.source_id or "")
         else:
             self.library.remove(game.id) if game.id is not None else None
         self.reload()

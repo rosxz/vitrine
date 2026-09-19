@@ -47,6 +47,71 @@ def test_cover_tiles_are_portrait() -> None:
     assert library_view.COVER_RATIO < 1, "covers must be portrait (2:3)"
 
 
+def test_tile_loads_cover_and_falls_back_when_absent() -> None:
+    """Tiles must call set_cover(game.cover): a regression previously left the
+    grid showing initials even after artwork was downloaded and persisted."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct tiles")
+    import os
+    import tempfile
+
+    from gi.repository import GdkPixbuf
+
+    from vitrine.library import Game
+    from vitrine.ui.library_view import GameTile
+
+    cover = os.path.join(tempfile.mkdtemp(), "cover.png")
+    GdkPixbuf.Pixbuf.new(
+        colorspace=GdkPixbuf.Colorspace.RGB,
+        has_alpha=False,
+        bits_per_sample=8,
+        width=16,
+        height=24,
+    ).savev(cover, "png", [], [])
+
+    with_cover = Game(name="W", source="steam", source_id="1", cover=cover)
+    tile = GameTile(with_cover)
+    # Lazy loading: the constructor shows the placeholder; calling load_cover
+    # swaps in the artwork.
+    assert tile.cover.get_paintable() is None
+    tile.load_cover()
+    # set_filename() resolves its paintable asynchronously; pump the loop.
+    _pump_main_loop(50)
+    assert tile.cover.get_paintable() is not None, "tile must render game.cover"
+
+    no_cover = Game(name="N", source="local")
+    blank = GameTile(no_cover)
+    _pump_main_loop(5)
+    # A blank tile paints nothing and shows the initials placeholder.
+    assert blank.cover.get_paintable() is None
+
+
+def test_matrix_of_tiles_labels_game_tile_coverage() -> None:
+    """Check each GameTile is created without loading its cover eagerly."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct tiles")
+    from vitrine.library import Game
+    from vitrine.ui.library_view import GameTile
+
+    for source in ("local", "steam"):
+        game = Game(name="M", source=source, source_id="1", cover="/tmp/missing.jpg")
+        tile = GameTile(game)
+        # Eager construction must not touch the (fake, non-existent) image.
+        assert tile.cover.get_paintable() is None
+        # Once demanded, load_cover is idempotent (no error on missing file).
+        tile.load_cover()
+        tile.load_cover()
+
+
+def _pump_main_loop(iterations: int) -> None:
+    from gi.repository import GLib
+
+    context = GLib.MainContext.default()
+    for _ in range(iterations):
+        while context.pending():
+            context.iteration(False)
+
+
 def test_save_button_invokes_callback_with_game() -> None:
     """Regression: the save button must fire the callback with the Game, not
     with the clicked Button (a prior name shadowing bug passed the widget)."""
@@ -67,3 +132,38 @@ def test_save_button_invokes_callback_with_game() -> None:
     assert received, "expected the save callback to fire"
     assert isinstance(received[0], Game), f"callback received {type(received[0]).__name__}, expected Game"
     assert received[0].id == game.id
+
+
+def test_form_default_and_provider_visibility() -> None:
+    """The default art source is Lutris, and local games hide the provider option."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct widgets")
+    from vitrine.ui.game_form import GameForm
+
+    local = GameForm(allow_provider=False)
+    assert local.artwork_source() == "lutris"
+    assert "provider" not in local._source_buttons
+
+    store = GameForm(allow_provider=True)
+    assert store.artwork_source() == "lutris"
+    assert "provider" in store._source_buttons
+    assert "lutris" in store._source_buttons
+    assert "local" in store._source_buttons
+
+
+def test_form_source_change_notifies_only_on_active() -> None:
+    """Switching the art source fires the change callback for the new selection."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct widgets")
+    from vitrine.ui.game_form import GameForm
+
+    form = GameForm(allow_provider=True)
+    seen: list[str] = []
+    form.connect_source_changed(seen.append)
+
+    form._source_buttons["provider"].set_active(True)
+    assert seen and seen[-1] == "provider"
+
+    form.set_artwork_source("lutris")
+    # Programmatic population must not fire the callback.
+    assert seen[-1] == "provider"

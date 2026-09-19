@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
-from gi.repository import Adw, GObject, Gtk
+from gi.repository import Adw, GLib, GObject, Gtk
 
 from ..library import Game
 from ..util import human_playtime, initials
@@ -133,6 +133,18 @@ class GameTile(Gtk.FlowBoxChild):
         self.set_size_request(COVER_WIDTH, TILE_HEIGHT)
         self.set_hexpand(False)
         self.set_vexpand(False)
+        # Covers are loaded lazily (see LibraryView): the constructor shows the
+        # initials placeholder and `load_cover` swaps in the artwork only when
+        # the tile scrolls into view. Empty/initial tiles stay cheap.
+        self._cover_path = game.cover
+        self._cover_loaded = False
+
+    def load_cover(self) -> None:
+        """Show this tile's cover artwork once, on first visibility."""
+        if self._cover_loaded:
+            return
+        self._cover_loaded = True
+        self.set_cover(self._cover_path)
 
     def set_cover(self, path: str | None) -> None:
         """Show a cover file, or fall back to the initials placeholder."""
@@ -211,6 +223,7 @@ class LibraryView(Gtk.Stack):
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroller.set_child(self.flow)
         scroller.set_vexpand(True)
+        self.scroller = scroller
 
         self.empty = Adw.StatusPage()
         self.empty.set_icon_name("applications-games-symbolic")
@@ -221,6 +234,17 @@ class LibraryView(Gtk.Stack):
         self.add_named(self.empty, "empty")
         self.set_visible_child_name("empty")
 
+        # Load cover art only for tiles near the viewport; hook the scroll
+        # position so artwork appears as the user scrolls rather than all at
+        # once (hundreds of image decodes would stall the grid).
+        self._pending_reveal: set[int] = set()
+        self._idle_armed: bool = False
+        vadj = scroller.get_vadjustment()
+        vadj.connect("value-changed", self._on_scroll_changed)
+        vadj.connect("changed", self._on_scroll_changed)
+        scroller.connect("edge-reached", lambda *_a: self._reveal_visible())
+        scroller.connect("realize", lambda *_a: self._reveal_visible())
+
     # -- public API -----------------------------------------------------------
 
     def set_games(self, games: Iterable[Game]) -> None:
@@ -229,15 +253,19 @@ class LibraryView(Gtk.Stack):
             self.flow.remove(child)
 
         count = 0
+        self._pending_reveal.clear()
         for game in games:
             tile = GameTile(game)
             tile.set_context_callback(self._on_context)
             self.flow.append(tile)
+            self._pending_reveal.add(id(tile))
             count += 1
 
         self.set_visible_child_name("grid" if count else "empty")
         if count:
             self.flow.select_child(self.flow.get_first_child())
+        # Reveal the first window immediately (queue pending for when laid out).
+        GLib.idle_add(self._reveal_visible)
 
     def selected_game(self) -> Game | None:
         selected = self.flow.get_selected_children()
@@ -247,6 +275,47 @@ class LibraryView(Gtk.Stack):
         return child.game if isinstance(child, GameTile) else None
 
     # -- internals ------------------------------------------------------------
+
+    def _on_scroll_changed(self, _vadj: Gtk.Adjustment) -> None:
+        # value-changed fires rapidly; coalesce reveals to the idle loop.
+        if not self._idle_armed:
+            self._idle_armed = True
+            GLib.idle_add(self._reveal_visible)
+
+    def _reveal_visible(self, *_args) -> bool:
+        """Load covers for tiles intersecting the visible viewport.
+
+        Iterates only unmaterialised tiles (those still pending) and computes
+        their on-screen rectangle from the scroll position so artwork is decoded
+        just-in-time instead of all at once. Runs as a one-shot idle callback
+        (re-triggered by scrolling); returns False so it never loops by itself.
+        """
+        self._idle_armed = False
+        if not self._pending_reveal:
+            return False
+        vadj = self.scroller.get_vadjustment()
+        value = vadj.get_value()
+        # The visible band spans the scroller height, padded above/below so
+        # tiles approaching the viewport are already loaded when they arrive.
+        viewport_h = self.scroller.get_allocation().height or self.get_allocated_height()
+        top = value - TILE_HEIGHT
+        bottom = value + viewport_h + TILE_HEIGHT
+
+        still_pending: set[int] = set()
+        for child in _children(self.flow):
+            if not isinstance(child, GameTile):
+                continue
+            tile_id = id(child)
+            if tile_id not in self._pending_reveal:
+                continue
+            rect = child.get_allocation()
+            # Only load (decode) tiles whose row is on the screen.
+            if rect.width > 0 and rect.y < bottom and rect.y + rect.height > top:
+                child.load_cover()
+            else:
+                still_pending.add(tile_id)
+        self._pending_reveal = still_pending
+        return False
 
     def _on_child_activated(self, _flow: Gtk.FlowBox, child: Gtk.FlowBoxChild) -> None:
         if isinstance(child, GameTile):

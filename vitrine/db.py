@@ -64,12 +64,25 @@ def _add_artwork_columns(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE games ADD COLUMN banner TEXT")
 
 
+def _add_artwork_source(conn: sqlite3.Connection) -> None:
+    """v2 -> v3: how each game gets its artwork plus an optional Lutris override.
+
+    ``artwork_source`` is one of ``local`` (manual files picked by the user),
+    ``lutris`` (fetched from the lutris.net database) or ``provider`` (art from
+    the game's store). ``lutris_slug`` lets a user pin a specific Lutris entry
+    instead of relying on the automated name match.
+    """
+    conn.execute("ALTER TABLE games ADD COLUMN artwork_source TEXT NOT NULL DEFAULT 'lutris'")
+    conn.execute("ALTER TABLE games ADD COLUMN lutris_slug TEXT")
+
+
 # Each future schema change gets a function here; ``initialize`` runs the ones
 # this database has not seen yet. Index ``n`` upgrades version ``n`` to
 # ``n + 1``.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _noop,  # v0 -> v1 (the initial walking skeleton created a fresh schema)
     _add_artwork_columns,  # v1 -> v2
+    _add_artwork_source,  # v2 -> v3
 ]
 
 

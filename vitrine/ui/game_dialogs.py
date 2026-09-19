@@ -78,12 +78,14 @@ class _GameWindow(Gtk.Window):
         form: GameForm,
         parent: Gtk.Widget | None,
         on_remove: Callable[[Game], None] | None = None,
+        on_refresh_artwork: Callable[[Game], None] | None = None,
     ) -> None:
         super().__init__(title=title)
         self.library = library
         self._form = form
         self._save_callback: Callable[[Game], None] | None = None
         self._remove_callback = on_remove
+        self._refresh_artwork_callback = on_refresh_artwork
         self.add_css_class("vitrine-window")
         self.set_default_size(_FORM_WIDTH, _FORM_HEIGHT)
         parent_window = _parent_window(parent)
@@ -113,7 +115,7 @@ class _GameWindow(Gtk.Window):
 
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         content.append(body)
-        if on_remove is not None:
+        if on_remove is not None or self._refresh_artwork_callback is not None:
             content.append(self._build_footer())
 
         self.set_titlebar(header)
@@ -134,7 +136,19 @@ class _GameWindow(Gtk.Window):
         remove.set_tooltip_text("Delete this entry from Vitrine (the installed files are untouched)")
         remove.connect("clicked", self._on_remove)
         footer.append(remove)
+        if self._refresh_artwork_callback is not None:
+            refresh = Gtk.Button(label="Refresh artwork")
+            refresh.set_tooltip_text("Re-download automatic artwork for this game")
+            refresh.connect("clicked", self._on_refresh_artwork)
+            footer.append(refresh)
         return footer
+
+    def _on_refresh_artwork(self, _button: Gtk.Button) -> None:
+        if self._refresh_artwork_callback is None:
+            return
+        game = self._remove_game()
+        if game is not None:
+            self._refresh_artwork_callback(game)
 
     def _on_remove(self, _button: Gtk.Button) -> None:
         if self._remove_callback is None:
@@ -175,7 +189,7 @@ class AddGameWindow(_GameWindow):
         on_add: Callable[[Game], None],
         parent: Gtk.Widget | None = None,
     ) -> None:
-        super().__init__(library, title="Add a game", form=GameForm(), parent=parent)
+        super().__init__(library, title="Add a game", form=GameForm(allow_provider=False), parent=parent)
         self._save_callback = on_add
 
     def _save_label(self) -> str:
@@ -197,10 +211,12 @@ class GameSettingsWindow(_GameWindow):
         game: Game,
         on_save: Callable[[Game], None],
         on_remove: Callable[[Game], None] | None = None,
+        on_refresh_artwork: Callable[[Game], None] | None = None,
         parent: Gtk.Widget | None = None,
     ) -> None:
         self._game = game
-        form = GameForm()
+        form = GameForm(allow_provider=game.source != "local")
+        form.connect_source_changed(self._on_source_changed)
         form.populate(game)
         super().__init__(
             library,
@@ -208,6 +224,7 @@ class GameSettingsWindow(_GameWindow):
             form=form,
             parent=parent,
             on_remove=on_remove,
+            on_refresh_artwork=on_refresh_artwork,
         )
         self._save_callback = on_save
 
@@ -220,6 +237,14 @@ class GameSettingsWindow(_GameWindow):
 
     def _remove_game(self) -> Game:
         return self._game
+
+    def _on_source_changed(self, source: str) -> None:
+        """Fetch artwork when the user picks an automatic source and art is absent."""
+        self._game.artwork_source = source
+        if source == "local" or (self._game.cover and self._game.banner):
+            return
+        if self._refresh_artwork_callback is not None and self._game.id is not None:
+            self._refresh_artwork_callback(self._game)
 
 
 # Backwards-compatible aliases (the names historically referred to these

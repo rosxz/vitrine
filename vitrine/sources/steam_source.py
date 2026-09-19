@@ -19,6 +19,8 @@ the background without reopening a browser.
 from __future__ import annotations
 
 import dataclasses
+import logging
+from typing import Any
 
 import requests
 
@@ -28,6 +30,8 @@ from ..util import slugify
 from .base import Source, SourceGame, registry
 from .steam import config as steam_config
 from .steam.auth import CookieJar, SteamAuthError, SteamTokenStore
+
+logger = logging.getLogger(__name__)
 
 #: Excluded Steam tool apps that are not games.
 EXCLUDED_APPIDS = {
@@ -90,7 +94,9 @@ class SteamSource(Source):
 
         Writes both the source-games cache and the library's own ``games``
         table so every owned title (installed or not) shows in the unified
-        grid.
+        grid. Returns how many known games were synced. Artwork is *not*
+        downloaded here (it would block the UI for hundreds of games); callers
+        fetch it asynchronously.
         """
         self.library.clear_source_games(self.id)
 
@@ -117,7 +123,23 @@ class SteamSource(Source):
         # Drop owned-but-not-installed entries that fell out of the catalogue
         # on this refresh (e.g. after a logout in a *different* Steam app).
         self.library.prune_source_games(self.id, deduped.keys())
+        # Newly-synced Steam entries should use the store/provider artwork by
+        # default; older rows that predate the artwork feature still carry the
+        # old "local" default -- promote those to "provider" too so a later,
+        # async artwork pass knows to fetch them.
+        for game in self.library.games(source=self.id):
+            if (game.artwork_source or "") == "local":
+                game.artwork_source = "provider"
+                self.library.update(game)
         return len(deduped)
+
+    def games_needing_artwork(self) -> list[Any]:
+        """Return this source's games that still lack cached artwork."""
+        pending = []
+        for game in self.library.games(source=self.id):
+            if not (game.cover and game.banner):
+                pending.append(game)
+        return pending
 
     def sync_installed(self) -> int:
         """Merge locally-installed information over the web library."""
