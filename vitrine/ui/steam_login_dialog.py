@@ -92,17 +92,11 @@ class SteamLoginDialog(Gtk.Window):
                 self._attempt_capture(retries=3)
 
     def _on_create_popup(
-        self, _webview: WebKit.WebView, navigation: WebKit.NavigationAction
+        self, _webview: WebKit.WebView, _navigation: WebKit.NavigationAction
     ) -> WebKit.WebView | None:
-        uri = navigation.get_request().get_uri()
-        # Steam's 2FA and redirect flows can open popups; load them in this
-        # same window so the cookie session stays intact.
-        self.webview = WebKit.WebView()
-        self.webview.connect("load-changed", self._on_load_changed)
-        self.webview.connect("create", self._on_create_popup)
-        self.set_child(self.webview)
-        self.webview.load_uri(uri)
-        return self.webview
+        # Return None so the target opens in this same view, keeping the cookie
+        # session intact and avoiding ownership/GC issues from swapping children.
+        return None
 
     # -- session reset ----------------------------------------------------------
 
@@ -132,11 +126,19 @@ class SteamLoginDialog(Gtk.Window):
     # -- credential capture ---------------------------------------------------
 
     def _is_after_login(self, url: str) -> bool:
-        """True if ``url`` looks like Steam's signed-in store destination."""
-        return url.startswith(REDIRECT_URI) or (
-            url.startswith("https://store.steampowered.com/")
-            and ("/about" in url or "/account" in url)
-        )
+        """True if ``url`` looks like Steam's signed-in store destination.
+
+        Compares the URL *path* (not the query string, which can carry
+        ``redir=/about`` on the login page itself).
+        """
+        from urllib.parse import urlparse
+
+        if url.startswith(REDIRECT_URI):
+            return True
+        if not url.startswith("https://store.steampowered.com/"):
+            return False
+        path = urlparse(url).path
+        return path == "/about" or path == "/account" or path.startswith("/about") or path.startswith("/account")
 
     def _attempt_capture(self, retries: int = 0) -> None:
         """Read the live cookie manager; session cookies never hit the disk

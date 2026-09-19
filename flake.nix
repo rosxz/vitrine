@@ -34,6 +34,12 @@
           pkgs.harfbuzz
           pkgs.webkitgtk_6_0
           pkgs.libsoup_3
+          # WebKit's embedded media stack needs GStreamer; missing plugins make
+          # it spam 'appsink not found' and can correlate with crashes.
+          pkgs.gst_all_1.gstreamer
+          pkgs.gst_all_1.gst-plugins-base
+          pkgs.gst_all_1.gst-plugins-good
+          pkgs.gst_all_1.gst-plugins-bad
         ];
         themes = [ pkgs.adwaita-icon-theme pkgs.hicolor-icon-theme ];
       };
@@ -46,11 +52,16 @@
       typelibPath = pkgs.lib.concatStringsSep ":" (map (p: "${p.out}/lib/girepository-1.0") typelibs);
       dataDirs = pkgs.lib.concatStringsSep ":" (map (p: "${p}/share") (runtime.libs ++ runtime.themes));
 
+      # Where GStreamer looks for its plugins (used by WebKit's media stack).
+      gstPlugins = with pkgs.gst_all_1; [ gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad ];
+      gstPluginPath = pkgs.lib.concatStringsSep ":" (map (p: "${p}/lib/gstreamer-1.0") gstPlugins);
+
       # Run Vitrine from the source tree with the runtime environment set.
       vitrineApp = pkgs.writeShellScriptBin "vitrine" ''
         export LD_LIBRARY_PATH="${runtimeEnv}:$LD_LIBRARY_PATH"
         export GI_TYPELIB_PATH="${typelibPath}:$GI_TYPELIB_PATH"
         export XDG_DATA_DIRS="${dataDirs}:$XDG_DATA_DIRS"
+        export GST_PLUGIN_SYSTEM_PATH="${gstPluginPath}:$GST_PLUGIN_SYSTEM_PATH"
         exec ${runtime.python}/bin/python -m vitrine "$@"
       '';
     in
@@ -80,6 +91,10 @@
           pkgs.harfbuzz
           pkgs.webkitgtk_6_0
           pkgs.libsoup_3
+          pkgs.gst_all_1.gstreamer
+          pkgs.gst_all_1.gst-plugins-base
+          pkgs.gst_all_1.gst-plugins-good
+          pkgs.gst_all_1.gst-plugins-bad
           pkgs.adwaita-icon-theme
           pkgs.hicolor-icon-theme
           pkgs.blueprint-compiler
@@ -94,6 +109,7 @@
           export LD_LIBRARY_PATH="${runtimeEnv}:$LD_LIBRARY_PATH"
           export GI_TYPELIB_PATH="${typelibPath}:$GI_TYPELIB_PATH"
           export XDG_DATA_DIRS="${dataDirs}:$XDG_DATA_DIRS"
+          export GST_PLUGIN_SYSTEM_PATH="${gstPluginPath}:$GST_PLUGIN_SYSTEM_PATH"
           export VITRINE_DEV=1
         '';
       };
