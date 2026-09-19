@@ -212,11 +212,12 @@ class VitrineWindow(Adw.ApplicationWindow):
         pruned = self.library.prune_source_games("steam", keep_appids=[])
         self.library.clear_source_games("steam")
         self.library.set_setting("steam_steamid", None)
+        if self.current_source == "steam":
+            self.current_source = None
         self.reload()
         self.toasts.add_toast(
             Adw.Toast(title="Steam session reset" if cleared else f"No credentials to reset · {pruned} removed")
         )
-        self.on_steam_login()
 
     def _run_steam_sync(self) -> None:
         try:
