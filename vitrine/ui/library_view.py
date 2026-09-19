@@ -18,15 +18,18 @@ from ..util import human_playtime, initials
 
 #: Max lines a game name spans before it is truncated with an ellipsis.
 NAME_MAX_LINES = 2
+#: Approximate height of one name line, used to reserve a fixed name area so
+#: content never changes tile height.
+NAME_LINE_HEIGHT = 16
 
 #: Portrait cover ratio (width / height), matching Steam's library capsules.
 COVER_RATIO = 2 / 3
 COVER_WIDTH = 180
-#: Fixed tile height = cover (COVER_WIDTH / ratio) + a compact name area, so
-#: every tile -- whatever the source or how few games are shown -- keeps the
-#: same dimensions instead of the grid stretching a lone tile to fill the pane
-#: or a long title stretching the tile.
-TILE_HEIGHT = int(COVER_WIDTH / COVER_RATIO) + 26
+#: Fixed tile height = cover (COVER_WIDTH / ratio) + a fixed name area sized for
+#: up to NAME_MAX_LINES lines, so every tile -- whatever the source or how few
+#: games are shown -- keeps the same dimensions instead of the grid stretching
+#: a lone tile to fill the pane or a long title stretching the tile.
+TILE_HEIGHT = int(COVER_WIDTH / COVER_RATIO) + NAME_MAX_LINES * NAME_LINE_HEIGHT
 MIN_COLUMNS = 2
 MAX_COLUMNS = 9
 
@@ -92,6 +95,11 @@ class GameTile(Gtk.FlowBoxChild):
         # Cap the wrap width so a long name wraps within the cover instead of
         # widening the tile (which used to unbalance the cross-source grid).
         name.set_max_width_chars(COVER_WIDTH // 8)
+        # Reserve a fixed name area so a 2-line title never makes its tile
+        # taller than a 1-line one (the natural height must not depend on text).
+        name.set_size_request(COVER_WIDTH, NAME_MAX_LINES * NAME_LINE_HEIGHT)
+        name.set_valign(Gtk.Align.FILL)
+        name.set_vexpand(False)
         name.add_css_class("vitrine-tile-name")
         if not (game.cover or game.banner):
             name.add_css_class("dim")
