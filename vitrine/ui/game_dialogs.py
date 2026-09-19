@@ -131,7 +131,7 @@ class _GameWindow(Gtk.Window):
         remove.add_css_class("destructive-action")
         remove.set_tooltip_text("Delete this entry from Vitrine (the installed files are untouched)")
         remove.connect("clicked", self._on_remove)
-        footer.pack_start(remove)
+        footer.append(remove)
         return footer
 
     def _on_remove(self, _button: Gtk.Button) -> None:

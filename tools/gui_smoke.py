@@ -117,15 +117,18 @@ def check_shell(application: VitrineApplication) -> None:
     assert not window.detail_bar._expanded, "collapsed state must persist across game switches"
 
     # Right-click (secondary-click) opens per-game settings; build the window.
+    # Pass on_remove so the footer (removal UI) is also constructed.
     tile = window.library_view.flow.get_child_at_index(0)
-    game_settings = GameSettingsDialog(library, tile.game, on_save=lambda g: None, parent=window)
+    game_settings = GameSettingsDialog(
+        library, tile.game, on_save=lambda g: None, on_remove=lambda g: None, parent=window
+    )
     game_settings.present()
     assert not game_settings.get_modal(), "per-game settings should be a movable, non-modal window"
     # Adw.Window forbids set_titlebar (hard abort); editors stay plain windows.
     assert not isinstance(game_settings, Adw.Window)
     assert "vitrine-window" in game_settings.get_css_classes(), "editor windows must follow the theme"
     game_settings.close()
-    print("right-click context builds the per-game settings window")
+    print("right-click context builds the per-game settings window (with remove footer)")
 
     # The global settings window also opens from the cog.
     settings = SettingsDialog(library, window.theme_manager, parent=window)

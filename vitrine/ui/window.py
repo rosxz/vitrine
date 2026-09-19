@@ -378,11 +378,22 @@ class VitrineWindow(Adw.ApplicationWindow):
         popover.popup()
 
     def _context_items(self, game: Game) -> list[tuple[str, Callable[[], None]]]:
+        """Right-click actions derived from the tile kind, not the active view.
+
+        A Steam game that isn't installed locally only has Properties/Store, and
+        cannot be removed (it lives in Steam's cloud library, not Vitrine's).
+        """
         items: list[tuple[str, Callable[[], None]]] = [
             ("Properties", lambda: self.on_edit_game(game)),
         ]
         if game.source == "steam" and not game.installed:
             items.append(("Open store page", lambda: self.open_store_page(game)))
+            return items
+        if game.source != "local" and not game.installed:
+            # Other store entries that aren't installed: store link only.
+            items.append(("Open store page", lambda: self.open_store_page(game)))
+            return items
+        # Locally installed (local games or installed store games): removable.
         items.append(("Remove from library", lambda: self.on_game_removed(game)))
         return items
 
