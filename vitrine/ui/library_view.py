@@ -81,6 +81,9 @@ class GameTile(Gtk.FlowBoxChild):
 
         name = Gtk.Label(label=game.name, wrap=True, justify=Gtk.Justification.CENTER, lines=2)
         name.set_ellipsize(3)  # Pango.EllipsizeMode.END
+        # Cap the wrap width so a long name wraps within the cover instead of
+        # widening the tile (which used to unbalance the cross-source grid).
+        name.set_max_width_chars(COVER_WIDTH // 8)
         name.add_css_class("vitrine-tile-name")
         if not (game.cover or game.banner):
             name.add_css_class("dim")
@@ -88,9 +91,8 @@ class GameTile(Gtk.FlowBoxChild):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.append(frame)
         box.append(name)
-        # Constrain the whole tile to the cover width so a long name wraps
-        # at that width instead of widening the tile and unbalancing the
-        # cross-source homogeneous grid.
+        # Constrain the whole tile to the cover width so a long name wraps at
+        # that width and tiles stay uniform across sources.
         box.set_size_request(COVER_WIDTH, -1)
         self.set_child(box)
 
@@ -136,7 +138,9 @@ class LibraryView(Gtk.Stack):
         self._on_context = on_context or (lambda _game, _x, _y: None)
 
         self.flow = Gtk.FlowBox()
-        self.flow.set_homogeneous(True)
+        # Tiles keep their own fixed pixel width (hence not homogeneous), so
+        # short vs long names never stretch the grid; they wrap in columns.
+        self.flow.set_homogeneous(False)
         self.flow.set_min_children_per_line(MIN_COLUMNS)
         self.flow.set_max_children_per_line(MAX_COLUMNS)
         self.flow.set_selection_mode(Gtk.SelectionMode.SINGLE)
