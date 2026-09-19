@@ -139,6 +139,10 @@ class SteamSource(Source):
                 game.lastplayed = lastplayed
         return updated
 
+    def installed_on_disk(self) -> set[str]:
+        """AppIDs that are actually installed locally (from app manifests)."""
+        return {game.appid for game in self._installed_games()}
+
     # -- login / logout -------------------------------------------------------
 
     def save_cookies(self, cookies: CookieJar) -> None:
@@ -208,14 +212,17 @@ class SteamSource(Source):
         games: list[SourceGame] = []
         for item in payload.get("games") or []:
             playtime = item.get("playtime_forever", 0)
-            installed = bool(playtime) or bool(item.get("playtime_2weeks"))
+            # The web API only tells us the game is owned/played; it cannot say
+            # whether it is installed on THIS machine. Local installation is
+            # figured out from the app manifests in _all_games/_installed_games,
+            # so web entries always start as not-installed here.
             games.append(
                 SourceGame(
                     source=self.id,
                     appid=str(item["appid"]),
                     name=item.get("name", str(item["appid"])),
                     slug=slugify(item.get("name", "")),
-                    installed=installed,
+                    installed=False,
                     details={
                         "playtime_forever": playtime,
                         "time_last_played": item.get("rtime_last_played"),

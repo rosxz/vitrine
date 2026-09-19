@@ -208,8 +208,15 @@ class VitrineWindow(Adw.ApplicationWindow):
             steamid = path.rsplit("auth_", 1)[1].rsplit(".json", 1)[0]
             SteamTokenStore(secret_dir(), steamid).clear()
             cleared += 1
-        # Drop owned-but-not-installed entries from the previous account/session.
-        pruned = self.library.prune_source_games("steam", keep_appids=[])
+        # Drop every Steam library entry that is not actually installed on
+        # disk, based on the app manifests (the DB's installed flag can be
+        # stale for played-but-uninstalled games).
+        on_disk = SteamSource(self.library).installed_on_disk()
+        pruned = self.library.prune_source_games(
+            "steam",
+            keep_installed=False,
+            preserve_on_disk=on_disk,
+        )
         self.library.clear_source_games("steam")
         self.library.set_setting("steam_steamid", None)
         if self.current_source == "steam":

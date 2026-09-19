@@ -487,3 +487,30 @@ def test_prune_source_games_removes_only_uninstalled(tmp_path: Path) -> None:
     assert apps == {"2"}
     # Local source untouched.
     assert len(lib.games(source="local")) == 1
+
+
+def test_prune_source_games_removes_stale_installed_flag(tmp_path: Path) -> None:
+    from vitrine import db
+    from vitrine.library import Library
+    from vitrine.sources.base import SourceGame
+
+    conn = db.connect(":memory:")
+    db.initialize(conn)
+    lib = Library(conn)
+    lib.merge_source_games(
+        "steam",
+        [
+            SourceGame(source="steam", appid="1", name="Played not installed", installed=False),
+            SourceGame(source="steam", appid="2", name="Actually on disk", installed=True),
+            SourceGame(source="steam", appid="3", name="Stale-flagged", installed=True),
+        ],
+    )
+    # Simulate a full reset: only appid 2 is authoritative-on-disk.
+    removed = lib.prune_source_games(
+        "steam",
+        keep_installed=False,
+        preserve_on_disk={"2"},
+    )
+    assert removed == 2
+    apps = {g.source_id for g in lib.games(source="steam")}
+    assert apps == {"2"}, f"expected only truly-on-disk app to remain, got {apps}"

@@ -222,17 +222,31 @@ class Library:
         )
         self.conn.commit()
 
-    def prune_source_games(self, source: str, keep_appids: Iterable[str]) -> int:
-        """Delete library entries for a store that are no longer synced.
+    def prune_source_games(
+        self,
+        source: str,
+        keep_appids: Iterable[str] | None = None,
+        keep_installed: bool = True,
+        preserve_on_disk: Iterable[str] | None = None,
+    ) -> int:
+        """Delete library entries for a store that are no longer relevant.
 
-        Entries that are locally installed (``installed`` flag) are preserved
-        even if the store no longer lists them; only uninstalled ones that have
-        dropped out of the catalogue are removed. Returns how many were pruned.
+        By default rows flagged ``installed`` are preserved even if the store
+        no longer lists them. Pass ``keep_installed=False`` to drop every row
+        not named by ``keep_appids``/``preserve_on_disk`` — used on a session
+        reset, when the DB's ``installed`` flag can be stale (a played-but-
+        uninstalled game wrongly marked installed). ``preserve_on_disk``
+        carries the source's *authoritative* set of apps actually on disk.
+        Returns how many rows were pruned.
         """
-        keep = set(keep_appids)
+        keep = set(keep_appids or ())
+        on_disk = set(preserve_on_disk or ())
         removed = 0
         for game in self.games(source=source):
-            if game.installed or (game.source_id or "") in keep:
+            appid = game.source_id or ""
+            if keep_installed and (game.installed or appid in on_disk):
+                continue
+            if appid in keep or appid in on_disk:
                 continue
             if game.id is not None:
                 self.remove(game.id)
