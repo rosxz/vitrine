@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import glob
 import logging
 from collections.abc import Callable
 
 from gi.repository import Adw, GLib, Gtk
 
 from ..library import Game, Library
+from ..paths import secret_dir
 from ..running import GameAlreadyRunning, Runtime
 from ..sources import registry
+from ..sources.steam.auth import SteamTokenStore
 from ..sources.steam_source import SteamAuthError, SteamSource
 from .game_detail_bar import GameDetailBar
 from .game_dialogs import AddGameDialog, GameSettingsDialog
@@ -170,6 +173,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.theme_manager,
             on_steam_login=self.on_steam_login,
             on_steam_refresh=self._run_steam_sync,
+            on_steam_reset=self.on_steam_reset_session,
             parent=self,
         ).present()
 
@@ -196,6 +200,17 @@ class VitrineWindow(Adw.ApplicationWindow):
             store = type(store)(store.secret_dir, self.library.setting("steam_steamid"))
         dialog = SteamLoginDialog(store, on_complete=on_complete, parent=self)
         dialog.present()
+
+    def on_steam_reset_session(self) -> None:
+        """Clear stored Steam credentials so the user can sign in afresh."""
+        cleared = 0
+        for path in glob.glob(str(secret_dir() / "steam" / "auth_*.json")):
+            steamid = path.rsplit("auth_", 1)[1].rsplit(".json", 1)[0]
+            SteamTokenStore(secret_dir(), steamid).clear()
+            cleared += 1
+        self.library.set_setting("steam_steamid", None)
+        self.toasts.add_toast(Adw.Toast(title="Steam session reset" if cleared else "No Steam session to reset"))
+        self.on_steam_login()
 
     def _run_steam_sync(self) -> None:
         try:

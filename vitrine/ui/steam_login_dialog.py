@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 gi.require_version("WebKit", "6.0")
 
-from gi.repository import Adw, Gio, Gtk, WebKit  # noqa: E402
+from gi.repository import Adw, Gio, GLib, Gtk, WebKit  # noqa: E402
 
 from ..sources.steam.auth import (
     CookieJar,
@@ -69,6 +69,11 @@ class SteamLoginDialog(Gtk.Window):
         header = Adw.HeaderBar()
         header.set_title_widget(Adw.WindowTitle(title="Sign in to Steam", subtitle=""))
         header.set_show_end_title_buttons(True)
+        reset_button = Gtk.Button(label="Reset session")
+        reset_button.set_tooltip_text("Clear stored login and cookies, then start over")
+        reset_button.add_css_class("destructive-action")
+        reset_button.connect("clicked", self.reset_session)
+        header.pack_start(reset_button)
 
         self.set_titlebar(header)
         self.set_child(self.webview)
@@ -80,8 +85,11 @@ class SteamLoginDialog(Gtk.Window):
     def _on_load_changed(self, _webview: WebKit.WebView, load_event: WebKit.LoadEvent) -> None:
         if load_event == WebKit.LoadEvent.FINISHED:
             url = self.webview.get_uri() or ""
-            if url.startswith(REDIRECT_URI) and "steamLoginSecure" not in _cached_names(self.store):
-                self._capture_credentials()
+            # Steam may land on /about directly, or a QR login flow may carry a
+            # query/hash; either way, once we are on the store post-login path
+            # we try to capture, retrying briefly for late-appearing cookies.
+            if "steamLoginSecure" not in _cached_names(self.store) and self._is_after_login(url):
+                self._attempt_capture(retries=3)
 
     def _on_create_popup(
         self, _webview: WebKit.WebView, navigation: WebKit.NavigationAction
@@ -96,19 +104,67 @@ class SteamLoginDialog(Gtk.Window):
         self.webview.load_uri(uri)
         return self.webview
 
+    # -- session reset ----------------------------------------------------------
+
+    def reset_session(self, _button: Gtk.Button | None = None) -> None:
+        """Clear stored credentials and the browser's cookies, then reload."""
+        self.store.clear()
+        if self.store.cookie_file.exists():
+            try:
+                self.store.cookie_file.unlink()
+            except OSError:
+                pass
+        try:
+            data_manager = WebKit.NetworkSession.get_default().get_website_data_manager()
+            data_manager.clear(
+                WebKit.WebsiteDataTypes.COOKIES,
+                0,
+                None,
+                self._on_cookies_cleared,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to clear cookie manager: %s", exc)
+            self._on_cookies_cleared(None, None)
+
+    def _on_cookies_cleared(self, _manager, _result) -> None:
+        self.webview.load_uri(LOGIN_URL)
+
     # -- credential capture ---------------------------------------------------
 
-    def _capture_credentials(self) -> None:
+    def _is_after_login(self, url: str) -> bool:
+        """True if ``url`` looks like Steam's signed-in store destination."""
+        return url.startswith(REDIRECT_URI) or (
+            url.startswith("https://store.steampowered.com/")
+            and ("/about" in url or "/account" in url)
+        )
+
+    def _attempt_capture(self, retries: int = 0) -> None:
         """Read the live cookie manager; session cookies never hit the disk
-        file, so reading the manager is the only reliable capture point."""
-        self._cookie_manager.get_all_cookies(None, self._on_cookies_read)
+        file, so the manager is the only reliable source."""
+        if retries > 0:
+
+            def delayed() -> bool:
+                self._read_cookies(retries)
+                return False
+
+            GLib.timeout_add(500, delayed)
+            return
+        self._read_cookies(retries)
+
+    def _read_cookies(self, retries: int) -> None:
+        self._cookie_manager.get_all_cookies(None, lambda mgr, res: self._on_cookies_read(mgr, res, retries))
 
     def _on_cookies_read(
-        self, _manager: WebKit.CookieManager, result: Gio.AsyncResult
+        self, _manager: WebKit.CookieManager, result: Gio.AsyncResult, retries: int = 0
     ) -> None:
         try:
             cookies = cast_cookie_list(self._cookie_manager.get_all_cookies_finish(result))
-            if not cookies.get("steamLoginSecure") or not cookies.get("sessionid"):
+            missing = not cookies.get("steamLoginSecure") or not cookies.get("sessionid")
+            if missing and retries > 0:
+                # Cookies can arrive a moment after the redirect finishes.
+                self._attempt_capture(retries - 1)
+                return
+            if missing:
                 raise SteamAuthError("Login did not produce Steam session cookies")
             self.store.set_credentials(cookies)
             token = self.store.fetch_access_token()

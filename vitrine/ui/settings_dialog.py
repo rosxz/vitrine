@@ -27,6 +27,7 @@ class SettingsWindow(Gtk.Window):
         on_theme: Callable[[str], None] | None = None,
         on_steam_login: Callable[[], None] | None = None,
         on_steam_refresh: Callable[[], None] | None = None,
+        on_steam_reset: Callable[[], None] | None = None,
         parent: Gtk.Window | None = None,
     ) -> None:
         super().__init__(title="Settings")
@@ -35,6 +36,7 @@ class SettingsWindow(Gtk.Window):
         self._on_theme = on_theme
         self._on_steam_login = on_steam_login or (lambda: None)
         self._on_steam_refresh = on_steam_refresh or (lambda: None)
+        self._on_steam_reset = on_steam_reset or (lambda: None)
         self.add_css_class("vitrine-window")
         self.set_default_size(460, 460)
         if parent is not None:
@@ -85,6 +87,14 @@ class SettingsWindow(Gtk.Window):
         login_button.set_halign(Gtk.Align.FILL)
         login_button.set_margin_top(6)
         group.add(_row_widget(login_button))
+
+        reset_button = Gtk.Button(label="Reset Steam session…")
+        reset_button.set_tooltip_text("Clear saved login and store cookies, then sign in again")
+        reset_button.add_css_class("destructive-action")
+        reset_button.connect("clicked", lambda _b: self._on_steam_reset())
+        reset_button.set_halign(Gtk.Align.FILL)
+        reset_button.set_margin_top(6)
+        group.add(_row_widget(reset_button))
         return group
 
     # -- behaviour ------------------------------------------------------------

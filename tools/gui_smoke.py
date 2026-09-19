@@ -141,6 +141,7 @@ def check_shell(application: VitrineApplication) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         login = SteamLoginDialog(SteamTokenStore(tmp, "111"), parent=window)
         assert login.webview is not None, "embedded login needs a WebKit webview"
+        assert hasattr(login, "reset_session"), "login dialog must expose a session reset"
         login.present()
         login.close()
     print("Steam sign-in window builds")
