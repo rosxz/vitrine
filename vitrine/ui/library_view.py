@@ -19,6 +19,10 @@ from ..util import human_playtime, initials
 #: Portrait cover ratio (width / height), matching Steam's library capsules.
 COVER_RATIO = 2 / 3
 COVER_WIDTH = 180
+#: Fixed tile height = cover (COVER_WIDTH / ratio) + a name line, so every
+#: tile -- whatever the source or how few games are shown -- keeps the same
+#: dimensions instead of the grid stretching a lone tile to fill the pane.
+TILE_HEIGHT = int(COVER_WIDTH / COVER_RATIO) + 64
 MIN_COLUMNS = 2
 MAX_COLUMNS = 9
 
@@ -96,6 +100,12 @@ class GameTile(Gtk.FlowBoxChild):
         box.set_size_request(COVER_WIDTH, -1)
         self.set_child(box)
 
+        # Fix the tile's total size and stop it expanding, so the grid never
+        # stretches a lone tile to fill the pane (which made Local look huge
+        # versus populated Steam/All views).
+        self.set_size_request(COVER_WIDTH, TILE_HEIGHT)
+        self.set_hexpand(False)
+
     def set_cover(self, path: str | None) -> None:
         """Show a cover file, or fall back to the initials placeholder."""
         if path:
@@ -143,6 +153,10 @@ class LibraryView(Gtk.Stack):
         self.flow.set_homogeneous(False)
         self.flow.set_min_children_per_line(MIN_COLUMNS)
         self.flow.set_max_children_per_line(MAX_COLUMNS)
+        # Pack tiles at their fixed natural size (left-aligned) rather than
+        # stretching them to fill the pane; keeps sizes consistent across
+        # views regardless of how many games are shown.
+        self.flow.set_halign(Gtk.Align.START)
         self.flow.set_selection_mode(Gtk.SelectionMode.SINGLE)
         # Activation must be a deliberate double-click (or Enter/Space), not a
         # single click: GTK's default is activate-on-single-click, which would

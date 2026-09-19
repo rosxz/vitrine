@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 
 ALL_GAMES = "__all__"
 
+#: Setting key (boolean) for the eye button: hide owned-but-not-installed games.
+HIDE_NOT_INSTALLED = "hide_not_installed"
+
 
 class VitrineWindow(Adw.ApplicationWindow):
     def __init__(self, application: Adw.Application, library: Library) -> None:
@@ -78,6 +81,16 @@ class VitrineWindow(Adw.ApplicationWindow):
         cog.connect("clicked", self.on_settings_clicked)
         header.pack_end(cog)
         self.cog_button = cog
+
+        # Toggle to hide games that are not installed locally (owned-but-not
+        # downloaded store titles such as Steam). Eye icon reflects the state.
+        self.hide_not_installed = bool(self.library.setting(HIDE_NOT_INSTALLED, False))
+        eye_name = "view-reveal-symbolic" if self.hide_not_installed else "view-conceal-symbolic"
+        eye_button = Gtk.Button(icon_name=eye_name)
+        eye_button.set_tooltip_text("Hide games not installed locally")
+        eye_button.connect("clicked", self.on_toggle_hidden)
+        header.pack_end(eye_button)
+        self.eye_button = eye_button
 
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(header)
@@ -155,6 +168,8 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     def reload(self) -> None:
         games = self.library.games(source=self.current_source)
+        if self.hide_not_installed:
+            games = [g for g in games if g.installed or not g.source]
         self.library_view.set_games(games)
         self.title_widget.set_subtitle(
             "1 game" if len(games) == 1 else f"{len(games)} games"
@@ -166,6 +181,15 @@ class VitrineWindow(Adw.ApplicationWindow):
         else:
             self.add_button.set_visible(True)
             self.refresh_button.set_visible(False)
+
+    def on_toggle_hidden(self, _button: Gtk.Button) -> None:
+        """Toggle hiding owned-but-not-installed games."""
+        self.hide_not_installed = not self.hide_not_installed
+        self.library.set_setting(HIDE_NOT_INSTALLED, self.hide_not_installed)
+        self.eye_button.set_icon_name(
+            "view-reveal-symbolic" if self.hide_not_installed else "view-conceal-symbolic"
+        )
+        self.reload()
 
     def on_settings_clicked(self, _button: Gtk.Button) -> None:
         SettingsDialog(
@@ -284,13 +308,11 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.toasts.add_toast(Adw.Toast(title=f"Removed {game.name}"))
 
     def on_game_activated(self, game: Game) -> None:
-        # An uninstalled store game links to its store page rather than launching.
-        if game.source == "steam" and not game.installed:
-            self.open_store_page(game)
-            return
-        # Installed Steam games launch through Steam itself, not the local
+        # Every Steam game launches through Steam itself (steam://rungameid),
+        # installed or not -- for one that isn't installed locally, Steam will
+        # prompt to install it. Never route Steam games through the local
         # Wine/Proton pipeline.
-        if game.source == "steam" and game.installed:
+        if game.source == "steam":
             self._launch_steam_game(game)
             return
         if game.id is None:
@@ -312,7 +334,11 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.toasts.add_toast(Adw.Toast(title=f"Failed to launch {game.name}"))
 
     def _launch_steam_game(self, game: Game) -> None:
-        """Launch an installed Steam game via Steam's run-game URI."""
+        """Launch a Steam game via Steam's run-game URI.
+
+        Works for installed games and, by prompting Steam to install, for ones
+        that are only owned.
+        """
         from gi.repository import Gio
 
         appid = game.source_id or ""

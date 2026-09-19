@@ -84,6 +84,19 @@ def check_shell(application: VitrineApplication) -> None:
     assert rendered == 2, f"expected 2 tiles in the grid, got {rendered}"
     print(f"window '{window.get_title()}' rendered {rendered} tiles")
 
+    # All tiles must request the same fixed width regardless of source/name,
+    # so the grid does not stretch a lone tile differently across views.
+    reqs = {window.library_view.flow.get_child_at_index(i).get_size_request()[0] for i in range(rendered)}
+    assert len(reqs) == 1 and 0 not in reqs, f"tiles are not uniform width: {reqs}"
+    print(f"all tiles request the same fixed width: {reqs}")
+
+    # The eye button toggles the hide-not-installed setting.
+    window.on_toggle_hidden(window.eye_button)
+    assert window.hide_not_installed is True, "eye toggle should enable hiding"
+    window.on_toggle_hidden(window.eye_button)
+    assert window.hide_not_installed is False, "eye toggle should disable hiding"
+    print("eye toggle flips the hide-not-installed setting")
+
     # A single click must select without launching: activation is double-click
     # only (or Enter), so the grid must not be activate-on-single-click.
     assert not window.library_view.flow.get_activate_on_single_click(), \
