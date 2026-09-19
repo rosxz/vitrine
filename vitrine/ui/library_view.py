@@ -16,13 +16,17 @@ from gi.repository import Adw, GObject, Gtk
 from ..library import Game
 from ..util import human_playtime, initials
 
+#: Max lines a game name spans before it is truncated with an ellipsis.
+NAME_MAX_LINES = 3
+
 #: Portrait cover ratio (width / height), matching Steam's library capsules.
 COVER_RATIO = 2 / 3
 COVER_WIDTH = 180
-#: Fixed tile height = cover (COVER_WIDTH / ratio) + a compact name line, so
-#: every tile -- whatever the source or how few games are shown -- keeps the
-#: same dimensions instead of the grid stretching a lone tile to fill the pane.
-TILE_HEIGHT = int(COVER_WIDTH / COVER_RATIO) + 30
+#: Fixed tile height = cover (COVER_WIDTH / ratio) + a name area sized for up to
+#: NAME_MAX_LINES lines, so every tile -- whatever the source or how few games
+#: are shown -- keeps the same dimensions instead of the grid stretching a lone
+#: tile to fill the pane or a long title stretching the tile.
+TILE_HEIGHT = int(COVER_WIDTH / COVER_RATIO) + NAME_MAX_LINES * 22
 MIN_COLUMNS = 2
 MAX_COLUMNS = 9
 
@@ -83,8 +87,8 @@ class GameTile(Gtk.FlowBoxChild):
         overlay.add_overlay(running)
         self.running_footer = running
 
-        name = Gtk.Label(label=game.name, wrap=True, justify=Gtk.Justification.CENTER, lines=2)
-        name.set_ellipsize(3)  # Pango.EllipsizeMode.END
+        name = Gtk.Label(label=game.name, wrap=True, justify=Gtk.Justification.CENTER, lines=NAME_MAX_LINES)
+        name.set_ellipsize(3)  # Pango.EllipsizeMode.END (truncates with '…')
         # Cap the wrap width so a long name wraps within the cover instead of
         # widening the tile (which used to unbalance the cross-source grid).
         name.set_max_width_chars(COVER_WIDTH // 8)
