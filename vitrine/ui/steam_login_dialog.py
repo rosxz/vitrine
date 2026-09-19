@@ -67,6 +67,16 @@ class SteamLoginDialog(Gtk.Window):
         self.webview = WebKit.WebView()
         self.webview.connect("load_changed", self._on_load_changed)
         self.webview.connect("create", self._on_create_popup)
+        self.webview.set_vexpand(True)
+        self.webview.set_hexpand(True)
+        # The Steam login flow needs nothing from WebKit's media/GStreamer stack;
+        # disabling it avoids the web process spamming GStreamer GPU criticals.
+        web_settings = WebKit.Settings()
+        for prop in ("enable-media", "enable-mediasource", "enable-webaudio", "enable-webgl", "enable-media-stream"):
+            setter = "set_" + prop
+            if hasattr(web_settings, setter):
+                getattr(web_settings, setter)(False)
+        self.webview.set_settings(web_settings)
         self._poll_id: int | None = None
         self._capturing = False
 
@@ -122,13 +132,16 @@ class SteamLoginDialog(Gtk.Window):
     def _kick_poll(self) -> None:
         self._poll_tick()
 
+    def _stop_polling(self) -> None:
+        if self._poll_id is not None:
+            GLib.source_remove(self._poll_id)
+            self._poll_id = None
+
     def _poll_tick(self) -> bool:
-        """Read cookies once; the callback re-arms the poller unless the
-        session is complete. Return True to keep the timeout, False to stop."""
-        if self._capturing:
-            return False
-        self._read_cookies()
-        return False  # the callback re-arms polling
+        """Keep polling (return True) while the dialog is alive; read cookies."""
+        if not self._capturing:
+            self._read_cookies()
+        return True
 
     def _set_status(self, message: str, error: bool = False) -> None:
         self._status.set_text(("Error: " if error else "") + message)
@@ -137,19 +150,13 @@ class SteamLoginDialog(Gtk.Window):
     def _read_cookies(self) -> None:
         self._cookie_manager.get_all_cookies(None, self._on_cookies_read)
 
-    def _reschedule(self) -> None:
-        if not self._capturing:
-            self._poll_id = GLib.timeout_add(POLL_INTERVAL_MS, self._poll_tick)
-
     # -- session reset ----------------------------------------------------------
 
     def reset_session(self, _button: Gtk.Button | None = None) -> None:
         """Clear stored credentials and the browser's cookies, then reload."""
         self.store.clear()
         self._capturing = False
-        if self._poll_id is not None:
-            GLib.source_remove(self._poll_id)
-            self._poll_id = None
+        self._stop_polling()
         if self.store.cookie_file.exists():
             try:
                 self.store.cookie_file.unlink()
@@ -204,18 +211,14 @@ class SteamLoginDialog(Gtk.Window):
             cookies = cast_cookie_list(self._cookie_manager.get_all_cookies_finish(result))
         except Exception as exc:  # noqa: BLE001 - cookie read failed; keep polling
             logger.warning("Cookie read failed: %s", exc)
-            self._reschedule()
-            return
+            return  # the repeating poller keeps going
         if cookies.get("steamLoginSecure") and cookies.get("sessionid"):
             # Session cookies appeared (QR completed). Stop polling and validate.
-            if self._poll_id is not None:
-                GLib.source_remove(self._poll_id)
-                self._poll_id = None
+            self._stop_polling()
             self._capturing = True
             self._set_status("Steam detected your login — completing…")
             self._save_and_finish(cookies)
-            return
-        self._reschedule()
+        # else: keep polling (the repeating timeout stays live)
 
     def _save_and_finish(self, cookies: CookieJar) -> None:
         try:
@@ -241,6 +244,8 @@ class SteamLoginDialog(Gtk.Window):
         self._finish(True)
 
     def _finish(self, ok: bool) -> None:
+        self._stop_polling()
+        self._capturing = True
         if self._on_complete is not None:
             self._on_complete(ok)
         self.close()
