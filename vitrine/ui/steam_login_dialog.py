@@ -13,6 +13,7 @@ saved to the account's durable token store.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 
 import gi
@@ -33,6 +34,10 @@ LOGIN_URL = "https://store.steampowered.com/login/?redir=/about"
 
 #: How often the dialog polls the cookie manager for the session cookies.
 POLL_INTERVAL_MS = 800
+#: Token-exchange attempts and the pause between them (the token endpoint can
+#: be a moment behind the session cookies after a QR login).
+TOKEN_FETCH_ATTEMPTS = 3
+TOKEN_FETCH_RETRY_MS = 1200
 
 
 class SteamLoginDialog(Gtk.Window):
@@ -221,27 +226,33 @@ class SteamLoginDialog(Gtk.Window):
         # else: keep polling (the repeating timeout stays live)
 
     def _save_and_finish(self, cookies: CookieJar) -> None:
-        try:
-            self.store.set_credentials(cookies)
-            token = self.store.fetch_access_token()
-            if not token:
-                raise SteamAuthError("Login succeeded but no access token was returned")
-        except SteamAuthError as error:
-            # Do NOT close: keep the window open with a clear message so the
-            # user can reset and retry.
-            logger.warning("Steam login validation failed: %s", error)
-            self._set_status(str(error), error=True)
-            self._capturing = False
-            self._start_polling()
-            return
-        except Exception as exc:  # noqa: BLE001 - unexpected failure, stay open
-            logger.exception("Steam login validation failed: %s", exc)
-            self._set_status(f"Steam validation failed: {exc}", error=True)
-            self._capturing = False
-            self._start_polling()
-            return
-        self._set_status("")
-        self._finish(True)
+        # The token endpoint can lag a moment behind the session cookies, so
+        # retry a couple of times before showing a failure.
+        last_error: Exception | None = None
+        for attempt in range(TOKEN_FETCH_ATTEMPTS):
+            try:
+                self.store.set_credentials(cookies)
+                token = self.store.fetch_access_token()
+                if token:
+                    self._set_status("")
+                    self._finish(True)
+                    return
+                last_error = SteamAuthError("Login succeeded but no access token was returned")
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+            if attempt + 1 < TOKEN_FETCH_ATTEMPTS:
+                # Hold the GLib loop briefly, then retry with fresh timing.
+                deadline = time.monotonic() + TOKEN_FETCH_RETRY_MS / 1000
+                while time.monotonic() < deadline:
+                    while GLib.main_context_default().pending():
+                        GLib.main_context_default().iteration(False)
+
+        # Exhausted retries: keep the window open with a clear message so the
+        # user can reset and retry.
+        logger.warning("Steam token fetch failed after %d attempts: %s", TOKEN_FETCH_ATTEMPTS, last_error)
+        self._set_status(f"Steam validation failed: {last_error}", error=True)
+        self._capturing = False
+        self._start_polling()
 
     def _finish(self, ok: bool) -> None:
         self._stop_polling()

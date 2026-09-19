@@ -331,3 +331,26 @@ def test_cast_cookie_list_keeps_session_cookies() -> None:
     assert jar.expires("sessionid") is None
     assert jar.expires("steamLoginSecure") is not None
     assert jar.to_dict()[0]["domain"] == "store.steampowered.com"
+
+
+# -- access token extraction -------------------------------------------------
+
+def test_extract_webapi_token_family_shape() -> None:
+    from vitrine.sources.steam.auth import _extract_webapi_token
+
+    payload = {"success": True, "data": {"webapi_token": "abc"}}
+    assert _extract_webapi_token(payload) == "abc"
+
+
+def test_extract_webapi_token_top_level() -> None:
+    from vitrine.sources.steam.auth import _extract_webapi_token
+
+    assert _extract_webapi_token({"webapi_token": "top"}) == "top"
+
+
+def test_extract_webapi_token_missing() -> None:
+    from vitrine.sources.steam.auth import _extract_webapi_token
+
+    assert _extract_webapi_token({"success": False}) == ""
+    assert _extract_webapi_token(["not", "a", "dict"]) == ""
+    assert _extract_webapi_token({}) == ""

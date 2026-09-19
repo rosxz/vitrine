@@ -24,12 +24,15 @@ refresh credential itself is gone or rejected.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from pathlib import Path
 from typing import Any
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 #: Minimum remaining lifetime (seconds) for a cached token to be trusted
 #: without refreshing. Tokens are minted server-side; keeping a small margin
@@ -177,22 +180,48 @@ class SteamTokenStore:
 
         session = requests.Session()
         session.headers["User-Agent"] = USER_AGENT
+        # Steam's store AJAX endpoints expect a Referer from the same origin.
+        session.headers["Referer"] = "https://store.steampowered.com/"
+        session.headers["X-Requested-With"] = "XMLHttpRequest"
         response = session.get(
             ACCESS_TOKEN_URL,
             cookies=_cookies_for_requests(cookies),
             timeout=30,
         )
         response.raise_for_status()
-        payload = response.json()
-        token_data = payload.get("data") if isinstance(payload, dict) else None
-        if not isinstance(token_data, dict):
-            raise SteamAuthError("Unexpected access-token response")
-        token = token_data.get("webapi_token")
-        if not isinstance(token, str) or not token:
+        try:
+            payload = response.json()
+        except ValueError as exc:  # noqa: BLE001
+            logger.warning("Access-token endpoint returned non-JSON: %r", response.text[:200])
+            raise SteamAuthError(f"Steam did not return JSON ({response.status_code})") from exc
+
+        token = _extract_webapi_token(payload)
+        if not token:
+            logger.warning(
+                "Access-token response had no webapi_token: %s",
+                str(payload)[:300],
+            )
             raise SteamAuthError("No webapi_token in response")
 
         self.set_credentials(cookies, access_token=token)
         return token
+
+
+def _extract_webapi_token(payload: Any) -> str:
+    """Dig a ``webapi_token`` out of Steam's store-AJAX shapes.
+
+    Expected: ``{"success": true, "data": {"webapi_token": "..."}}`` (Lutris').
+    Tolerate the token at the top level or nested one level deeper.
+    """
+    if not isinstance(payload, dict):
+        return ""
+    data = payload.get("data")
+    for candidate in (data, payload):
+        if isinstance(candidate, dict):
+            token = candidate.get("webapi_token")
+            if isinstance(token, str) and token:
+                return token
+    return ""
 
 
 def _cookies_for_requests(jar: CookieJar) -> dict[str, str]:
