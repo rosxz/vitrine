@@ -398,3 +398,13 @@ def test_sync_requires_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lib
 
 def test_account_setting_key() -> None:
     assert ACCOUNT_SETTING == "epic_account_id"
+
+def test_legendary_binary_uses_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The flake wrapper sets VITRINE_LEGENDARY to an absolute path; the app
+    must honour it even when 'legendary' is not on PATH."""
+    from vitrine.sources.epic import legendary as lg
+
+    monkeypatch.setenv(lg.LEGENDARY_ENV, "/nix/store/legendary/bin/legendary")
+    monkeypatch.setattr(lg.shutil, "which", lambda _name: None)  # not on PATH
+    assert lg.legendary_binary() == "/nix/store/legendary/bin/legendary"
+    assert lg.is_installed() is True

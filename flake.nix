@@ -58,9 +58,9 @@
 
       # Run Vitrine from the source tree with the runtime environment set.
       vitrineApp = pkgs.writeShellScriptBin "vitrine" ''
-        # The packaged output is a symlinkJoin that also contains `legendary`;
-        # put its bin/ on PATH so Epic installs/launches always find it.
-        export PATH="$(dirname "$0"):$PATH"
+        # Give the app a definite path to the bundled legendary so Epic
+        # installs/launches always find it, independent of the caller's PATH.
+        export VITRINE_LEGENDARY="${pkgs.legendary-gl}/bin/legendary"
         export LD_LIBRARY_PATH="${runtimeEnv}:$LD_LIBRARY_PATH"
         export GI_TYPELIB_PATH="${typelibPath}:$GI_TYPELIB_PATH"
         export XDG_DATA_DIRS="${dataDirs}:$XDG_DATA_DIRS"

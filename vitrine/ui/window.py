@@ -855,6 +855,11 @@ class VitrineWindow(Adw.ApplicationWindow):
         if game.source in ("gog", "epic") and not game.installed:
             self.install_game(game)
             return
+        # Installed Epic games launch through legendary (the storeless client
+        # that manages the game's online session), not the generic Wine pipeline.
+        if game.source == "epic":
+            self._launch_epic_game(game)
+            return
         if game.id is None:
             return
         if self.runtime.running_game is game:
@@ -895,6 +900,27 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.toasts.add_toast(Adw.Toast(title=f"Could not launch {game.name} via Steam"))
             return
         self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name} via Steam"))
+
+    def _launch_epic_game(self, game: Game) -> None:
+        """Launch an installed Epic game through legendary."""
+        from ..sources.epic import legendary as lg
+
+        app = game.source_id or ""
+        if not app:
+            self.toasts.add_toast(Adw.Toast(title=f"No Epic app id for {game.name}"))
+            return
+        if not lg.is_installed():
+            self.toasts.add_toast(
+                Adw.Toast(title="Legendary is required to run Epic games. Install 'legendary' first.")
+            )
+            return
+        try:
+            lg.launch(app)
+        except Exception as error:  # noqa: BLE001
+            logger.warning("Failed to launch Epic game %s: %s", game.name, error)
+            self.toasts.add_toast(Adw.Toast(title=f"Could not launch {game.name} via legendary"))
+            return
+        self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name} via legendary"))
 
     def open_store_page(self, game: Game) -> None:
         """Open a store game's page in the system browser."""
