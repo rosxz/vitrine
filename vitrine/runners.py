@@ -111,6 +111,23 @@ def get_runner(runner_id: str | None, runners_store: dict[str, str] | None = Non
     return None
 
 
+def has_x11_driver(wine_binary: str) -> bool:
+    """Whether a Wine/Proton build can render via an X server.
+
+    A build ships ``winex11.drv`` (Windows-side) next to its wine binary's
+    lib dir. Wayland-only wine builds (e.g. NixOS's wine) lack it, so GUI/Unity
+    games fail even inside gamescope until you switch to a Proton build.
+    """
+    binary = Path(os.path.expanduser(wine_binary))
+    # Wine lib dir is a sibling of bin/ under the build, e.g.
+    #   <build>/bin/wine  ->  <build>/lib/wine  (or <build>/files/lib/wine)
+    candidates = [
+        binary.parent.parent / "lib" / "wine" / "x86_64-windows" / "winex11.drv",
+        binary.parent.parent / "files" / "lib" / "wine" / "x86_64-windows" / "winex11.drv",
+    ]
+    return any(p.is_file() for p in candidates)
+
+
 def _runner_from_path(runner_id: str, resolved: str) -> Runner:
     """Derive a runner's display name + kind from its binary path.
 

@@ -976,6 +976,17 @@ class VitrineWindow(Adw.ApplicationWindow):
         runner = get_runner(config.get("runner"), store)
         is_proton = runner is not None and runner.kind == "proton"
         from ..launch import wine_prefix_for
+        from ..runners import has_x11_driver
+
+        if not has_x11_driver(wine_bin) and os.environ.get("WAYLAND_DISPLAY"):
+            self.toasts.add_toast(
+                Adw.Toast(
+                    title=(
+                        f"{game.name}: the selected wine has no X11 driver (Wayland-only). "
+                        "Pick a Proton runner (e.g. Proton 11.0) from the per-game settings."
+                    )
+                )
+            )
 
         wine_prefix = str(wine_prefix_for(game))
 
@@ -1004,10 +1015,21 @@ class VitrineWindow(Adw.ApplicationWindow):
             log.append_line("$ " + shlex.join(command))
         else:
             log = None
-        job = run_download(command, env=env, on_line=log.append_line if log is not None else None)
+        job = run_download(
+            command,
+            env=env,
+            on_line=log.append_line if log is not None else None,
+            # The game is now running detached under the wrapper; clear the
+            # download/launch state once the process exits so a retry works.
+            done=lambda _rc, gid=game.id: GLib.idle_add(self._clear_launch_state, gid),
+        )
         if game.id is not None:
             self._downloads[game.id] = job
         self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name} via legendary"))
+
+    def _clear_launch_state(self, game_id: int | None) -> None:
+        if game_id is not None:
+            self._downloads.pop(game_id, None)
 
     def open_store_page(self, game: Game) -> None:
         """Open a store game's page in the system browser."""

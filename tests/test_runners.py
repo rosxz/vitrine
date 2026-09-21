@@ -209,3 +209,21 @@ def test_get_runner_finds_by_id_and_kind(tmp_path: Path, monkeypatch: pytest.Mon
     assert runner is not None and runner.kind == "proton"
     assert get_runner("missing", store) is None
     assert get_runner(None, store) is None
+
+
+def test_has_x11_driver(tmp_path: Path) -> None:
+    from vitrine.runners import has_x11_driver
+
+    loc = tmp_path / "build" / "bin" / "wine"
+    loc.parent.mkdir(parents=True)
+    loc.write_text("#")
+    (tmp_path / "build" / "lib" / "wine" / "x86_64-windows").mkdir(parents=True)
+    (tmp_path / "build" / "lib" / "wine" / "x86_64-windows" / "winex11.drv").write_text("#")
+    assert has_x11_driver(str(loc)) is True
+
+    # Wayland-only build has no winex11.drv.
+    no_x = tmp_path / "wonly" / "bin" / "wine"
+    no_x.parent.mkdir(parents=True)
+    no_x.write_text("#")
+    (tmp_path / "wonly" / "lib" / "wine" / "x86_64-windows").mkdir(parents=True)
+    assert has_x11_driver(str(no_x)) is False
