@@ -952,14 +952,26 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         from ..downloads import run_download
         from ..library import DEBUG_LOG_SETTING
+        from ..runners import load_runners_store, resolve_runner
         from .log_window import ExecutionLogWindow
+
+        # Resolve the game's configured Wine/Proton runner so legendary launches
+        # under the same one the rest of the app uses (avoids "Bad EXE format").
+        config = game.merged_config(self.library.global_config())
+        wine_bin = resolve_runner(
+            config.get("runner"), load_runners_store(self.library), config.get("wine_binary")
+        )
+        from ..launch import wine_prefix_for
+
+        wine_prefix = str(wine_prefix_for(game))
 
         if self.library.setting(DEBUG_LOG_SETTING, False):
             log = ExecutionLogWindow(f"Launching {game.name}", parent=self)
             log.present()
+            log.append_line(f"$ {lg.legendary_binary()} launch {app} --wine {wine_bin} --wine-prefix {wine_prefix}")
         else:
             log = None
-        command = [lg.legendary_binary(), *lg.launch_command(app)]
+        command = [lg.legendary_binary(), *lg.launch_command(app, wine_bin=wine_bin, wine_prefix=wine_prefix)]
         job = run_download(command, on_line=log.append_line if log is not None else None)
         if game.id is not None:
             self._downloads[game.id] = job

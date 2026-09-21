@@ -484,3 +484,6 @@ def test_launch_command_skips_version_check(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert lg.launch_command("an-app") == ["launch", "an-app", "--skip-version-check"]
     assert lg.launch_command("an-app", offline=True) == ["launch", "an-app", "--skip-version-check", "--offline"]
+    assert lg.launch_command("an-app", wine_bin="/opt/wine-ge/bin/wine", wine_prefix="/pfx/epic") == [
+        "launch", "an-app", "--skip-version-check", "--wine", "/opt/wine-ge/bin/wine", "--wine-prefix", "/pfx/epic",
+    ]

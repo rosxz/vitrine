@@ -35,13 +35,26 @@ PRESETS: dict[str, str] = {
     "wine-ge-custom": "wine-ge-custom",
 }
 
-#: Common locations scanned for Wine/Proton builds (Lutris-style).
-RUNNER_DIRS = (
+#: Common Wine-runner directories scanned directly (each subdir holds a Wine build).
+WINE_RUNNER_DIRS = (
     "~/.local/share/vitrine/runners",
     "~/.local/share/lutris/runners/wine",
+)
+
+#: Steam data dirs whose ``steamapps/common`` may hold Proton builds.
+STEAM_DATA_DIRS = (
+    "~/.local/share/Steam",
+    "~/.steam/steam",
+    "~/.local/share/steam",
+    "~/snap/steam/common/.local/share/Steam",
+    "~/.var/app/com.valvesoftware.Steam/.local/share/Steam",
+    "~/.var/app/com.valvesoftware.Steam/data/Steam",
+)
+
+#: Other locations scanned for Proton/Wine builds.
+EXTRA_RUNNER_DIRS = (
     "~/Games/proton",
-    "~/.steam/steam/steamapps/common/Proton",
-    "~/.local/share/Steam/steamapps/common/Proton",
+    "~/Games/Proton",
     "~/Games/heroic/tools/proton",
     "~/Games/Heroic/tools/proton",
 )
@@ -90,9 +103,18 @@ def list_runners(runners_store: dict[str, str] | None = None) -> list[Runner]:
 
 
 def _discover_on_disk() -> list[Runner]:
+    """Enumerate installed Wine/Proton builds, mirroring Lutris.
+
+    - Wine-runner dirs (``WINE_RUNNER_DIRS``): each subdirectory with a wine
+      binary is a Wine build.
+    - Steam ``common`` dirs: each subdirectory containing a ``proton`` script
+      is a Proton build (kind ``proton``, pointed at that script).
+    - Extra dirs: scanned the same way as the Steam common dirs.
+    """
     found: list[Runner] = []
     seen: set[str] = set()
-    for directory in RUNNER_DIRS:
+
+    for directory in WINE_RUNNER_DIRS:
         base = Path(os.path.expanduser(directory))
         if not base.is_dir():
             continue
@@ -102,13 +124,84 @@ def _discover_on_disk() -> list[Runner]:
             for rel in _WINE_BINS:
                 candidate = child / rel
                 if candidate.is_file() and os.access(candidate, os.X_OK):
-                    runner_id = _slug(child.name)
-                    if runner_id in seen:
-                        continue
-                    seen.add(runner_id)
-                    found.append(Runner(runner_id, child.name, str(candidate), kind=_kind_of(str(candidate))))
+                    _add_runner(found, seen, child.name, str(candidate), "wine")
+                    break
+
+    common_dirs = _steamapps_common_dirs()
+    for directory in (*common_dirs, *EXTRA_RUNNER_DIRS):
+        base = Path(os.path.expanduser(directory))
+        if not base.is_dir():
+            continue
+        for child in sorted(base.iterdir()):
+            if not child.is_dir():
+                continue
+            proton_script = child / "proton"
+            if proton_script.is_file() and os.access(proton_script, os.X_OK):
+                _add_runner(found, seen, child.name, str(proton_script), "proton")
+                continue
+            for rel in _WINE_BINS:
+                candidate = child / rel
+                if candidate.is_file() and os.access(candidate, os.X_OK):
+                    _add_runner(found, seen, child.name, str(candidate), "wine")
                     break
     return found
+
+
+def _add_runner(
+    found: list[Runner],
+    seen: set[str],
+    display: str,
+    path: str,
+    kind: str,
+) -> None:
+    runner_id = _slug(display)
+    if runner_id in seen:
+        return
+    seen.add(runner_id)
+    found.append(Runner(runner_id, display, path, kind=kind))
+
+
+def _steamapps_common_dirs() -> list[Path]:
+    """Every Steam ``steamapps/common`` directory (from libraryfolders too)."""
+    dirs: list[Path] = []
+    steam_root = _find_steam_root()
+    if steam_root is not None:
+        common = steam_root / "steamapps" / "common"
+        if common.is_dir():
+            dirs.append(common)
+        # Additional library folders from libraryfolders.vdf.
+        for extra_root in _library_folders(steam_root):
+            common = extra_root / "steamapps" / "common"
+            if common.is_dir() and common not in dirs:
+                dirs.append(common)
+    return dirs
+
+
+def _find_steam_root() -> Path | None:
+    for candidate in STEAM_DATA_DIRS:
+        path = Path(os.path.expanduser(candidate))
+        if path.is_dir() and (path / "steamapps").is_dir():
+            return path
+    return None
+
+
+def _library_folders(steam_root: Path) -> list[Path]:
+    """Parse ``steamapps/libraryfolders.vdf`` for extra library roots."""
+    root = steam_root / "steamapps" / "libraryfolders.vdf"
+    if not root.is_file():
+        return []
+    try:
+        from .sources.steam.vdf import parse_vdf_file
+
+        parsed = parse_vdf_file(str(root))
+    except Exception:  # noqa: BLE001 - a bad VDF must not break runner discovery
+        return []
+    entries = parsed.get("libraryfolders") or {}
+    out: list[Path] = []
+    for key, value in entries.items():
+        if str(key).isdigit() and isinstance(value, dict) and value.get("path"):
+            out.append(Path(str(value["path"])))
+    return out
 
 
 def _kind_of(path: str) -> str:

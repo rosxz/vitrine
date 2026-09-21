@@ -202,14 +202,29 @@ def install(app_name: str, base_path: str | None = None, *, skip_dlcs: bool = Tr
     _require_success(_run(install_command(app_name, base_path, skip_dlcs=skip_dlcs), timeout=LIST_TIMEOUT), "install")
 
 
-def launch_command(app_name: str, *, offline: bool = False) -> list[str]:
+def launch_command(
+    app_name: str,
+    *,
+    offline: bool = False,
+    wine_bin: str | None = None,
+    wine_prefix: str | None = None,
+    wrapper: str | None = None,
+) -> list[str]:
     """Build the ``legendary launch`` command line for ``app_name``.
 
     ``--skip-version-check`` skips the launcher-API asset/version check, which
     avoids a network round-trip that can fail (e.g. a DNS hiccup) for an
-    already-installed game.
+    already-installed game. ``--wine``/``--wine-prefix`` tell legendary which
+    Wine/Proton and prefix to use; without them legendary falls back to a bare
+    system wine that may fail with "Bad EXE format".
     """
     args: list[str] = ["launch", app_name, "--skip-version-check"]
+    if wine_bin:
+        args += ["--wine", wine_bin]
+    if wine_prefix:
+        args += ["--wine-prefix", wine_prefix]
+    if wrapper:
+        args += ["--wrapper", wrapper]
     if offline:
         args.append("--offline")
     return args
