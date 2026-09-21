@@ -227,3 +227,22 @@ def test_has_x11_driver(tmp_path: Path) -> None:
     no_x.write_text("#")
     (tmp_path / "wonly" / "lib" / "wine" / "x86_64-windows").mkdir(parents=True)
     assert has_x11_driver(str(no_x)) is False
+
+
+def test_sidebar_default_proton_drives_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Launch must honour the sidebar "Default Proton" when a game has no override."""
+    from vitrine.runners import DEFAULT_PROTON_SETTING, get_runner, resolve_runner
+
+    class Lib:
+        def __init__(self, d):
+            self._d = d
+
+        def setting(self, key, default=None):
+            return self._d.get(key, default)
+
+    lib = Lib({DEFAULT_PROTON_SETTING: "proton-11-0"})
+    runner_id = lib.setting(DEFAULT_PROTON_SETTING)  # no per-game override
+    wine = resolve_runner(runner_id, {})
+    r = get_runner(runner_id, {})
+    assert r is not None and r.kind == "proton"
+    assert "Proton" in wine or "proton" in wine

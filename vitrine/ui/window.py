@@ -965,15 +965,21 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         from ..downloads import run_download
         from ..library import DEBUG_LOG_SETTING
-        from ..runners import get_runner, load_runners_store, resolve_runner
+        from ..runners import DEFAULT_PROTON_SETTING, get_runner, load_runners_store, resolve_runner
         from .log_window import ExecutionLogWindow
 
-        # Resolve the game's configured Wine/Proton runner so legendary launches
-        # under the same one the rest of the app uses (avoids "Bad EXE format").
+        # Resolve the game's configured Wine/Proton runner: per-game override
+        # wins, otherwise the sidebar's "Default Proton" selection; last resort
+        # is the merged global config default.
         config = game.merged_config(self.library.global_config())
         store = load_runners_store(self.library)
-        wine_bin = resolve_runner(config.get("runner"), store, config.get("wine_binary"))
-        runner = get_runner(config.get("runner"), store)
+        runner_id = (
+            game.config.get("runner")
+            or self.library.setting(DEFAULT_PROTON_SETTING, None)
+            or config.get("runner")
+        )
+        wine_bin = resolve_runner(runner_id, store, config.get("wine_binary"))
+        runner = get_runner(runner_id, store)
         is_proton = runner is not None and runner.kind == "proton"
         from ..launch import wine_prefix_for
         from ..runners import has_x11_driver
