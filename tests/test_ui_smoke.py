@@ -183,3 +183,12 @@ def test_form_source_change_notifies_only_on_active() -> None:
     form.set_artwork_source("lutris")
     # Programmatic population must not fire the callback.
     assert seen[-1] == "provider"
+
+
+def test_gamescope_wrap_wraps_command() -> None:
+    from vitrine.ui.window import _gamescope_wrap
+
+    wrapped = _gamescope_wrap(["legendary", "launch", "x"])
+    assert wrapped[:3] == ["gamescope", "-W", "1280"]
+    assert wrapped[-1] == "x"
+    assert wrapped[-2] == "launch"

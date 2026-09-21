@@ -43,6 +43,17 @@ def _row_widget_shim(widget: Gtk.Widget) -> Gtk.Widget:
     return box
 
 
+def _gamescope_wrap(command: list[str], width: str = "1280", height: str = "720") -> list[str]:
+    """Prepend a gamescope session so wine has a real (virtualised) display.
+
+    On Wayland the platform wine/Proton has no usable X11 display for GUI/Unity
+    games (ShellExecuteEx fails with "Bad EXE format"). Gamescope provides a
+    nested virtual display + GPU context, which is the standard way to run
+    Windows games under Wayland.
+    """
+    return ["gamescope", "-W", width, "-H", height, "--", *command]
+
+
 def _tiles_for(library_view, game) -> list:
     """Find every GameTile widget in the grid representing ``game``."""
     from .library_view import GameTile
@@ -968,23 +979,24 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         wine_prefix = str(wine_prefix_for(game))
 
-        # Proton wine can't run standalone on NixOS; wrap the whole legendary
-        # launch in the Steam Linux Runtime (steam-run) and set Proton env.
+        # Assemble the wrapper chain. Outermost -> innermost:
+        #   steam-run (Steam runtime libs for Proton) -> gamescope (display/GPU,
+        #   required on Wayland) -> legendary launch --wine <wine> --wine-prefix.
         env = None
+        command = [lg.legendary_binary(), *lg.launch_command(app, wine_bin=wine_bin, wine_prefix=wine_prefix)]
+
+        # Gamescope gives wine a real (virtualized) GPU/display session, which is
+        # required to run games on a Wayland desktop. Enable it for Epic launches.
+        if not config.get("gamescope", False):
+            command = _gamescope_wrap(command)
         if is_proton:
             try:
-                command = [
-                    *lg.steam_run_command(
-                        [lg.legendary_binary(), *lg.launch_command(app, wine_bin=wine_bin, wine_prefix=wine_prefix)]
-                    )
-                ]
+                command = lg.steam_run_command(command)
             except lg.LegendaryError as exc:
                 self.toasts.add_toast(Adw.Toast(title=str(exc)))
                 return
             env = dict(os.environ)
             env.update({"WINEARCH": "win64", "WINEDLLOVERRIDES": "winemenubuilder.exe=d"})
-        else:
-            command = [lg.legendary_binary(), *lg.launch_command(app, wine_bin=wine_bin, wine_prefix=wine_prefix)]
 
         if self.library.setting(DEBUG_LOG_SETTING, False):
             log = ExecutionLogWindow(f"Launching {game.name}", parent=self)
