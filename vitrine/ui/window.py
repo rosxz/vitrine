@@ -959,7 +959,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             log.present()
         else:
             log = None
-        command = [lg.legendary_binary(), "-y", "launch", app]
+        command = [lg.legendary_binary(), *lg.launch_command(app)]
         job = run_download(command, on_line=log.append_line if log is not None else None)
         if game.id is not None:
             self._downloads[game.id] = job

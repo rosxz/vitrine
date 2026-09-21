@@ -202,14 +202,27 @@ def install(app_name: str, base_path: str | None = None, *, skip_dlcs: bool = Tr
     _require_success(_run(install_command(app_name, base_path, skip_dlcs=skip_dlcs), timeout=LIST_TIMEOUT), "install")
 
 
-def launch(app_name: str, *, no_wine: bool = False) -> None:
+def launch_command(app_name: str, *, offline: bool = False) -> list[str]:
+    """Build the ``legendary launch`` command line for ``app_name``.
+
+    ``--skip-version-check`` skips the launcher-API asset/version check, which
+    avoids a network round-trip that can fail (e.g. a DNS hiccup) for an
+    already-installed game.
+    """
+    args: list[str] = ["launch", app_name, "--skip-version-check"]
+    if offline:
+        args.append("--offline")
+    return args
+
+
+def launch(app_name: str, *, offline: bool = False, no_wine: bool = False) -> None:
     """Launch ``app_name`` through legendary in a new process.
 
     Launched detached so legendary's process (which supervises the game under
     wine) is not tied to Vitrine's lifetime; playtime is tracked via the
     ``Runtime`` only for native commands produced by ``dry_run_launch``.
     """
-    args: list[str] = ["launch", app_name]
+    args: list[str] = launch_command(app_name, offline=offline)
     if no_wine:
         args.append("--no-wine")
     binary = legendary_binary()

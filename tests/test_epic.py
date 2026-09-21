@@ -477,3 +477,10 @@ def test_read_credentials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert lg.read_credentials() == {}
     lg.set_credentials({"account_id": "acct-9", "access_token": "t"})
     assert lg.read_credentials()["account_id"] == "acct-9"
+
+
+def test_launch_command_skips_version_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vitrine.sources.epic import legendary as lg
+
+    assert lg.launch_command("an-app") == ["launch", "an-app", "--skip-version-check"]
+    assert lg.launch_command("an-app", offline=True) == ["launch", "an-app", "--skip-version-check", "--offline"]
