@@ -29,12 +29,15 @@ def runners_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     wine_exe = wine_base / "bin" / "wine"
     wine_exe.write_text("#!/bin/sh\n")
     wine_exe.chmod(0o755)
-    # A Proton build (proton script) in a steamapps/common-style dir.
+    # A Proton build (proton script + files/bin/wine) in a steamapps/common dir.
     proton_base = tmp_path / "common" / "proton-cachyos"
-    proton_base.mkdir(parents=True)
+    (proton_base / "files" / "bin").mkdir(parents=True)
     proton_script = proton_base / "proton"
     proton_script.write_text("#!/bin/sh\n")
     proton_script.chmod(0o755)
+    proton_wine = proton_base / "files" / "bin" / "wine"
+    proton_wine.write_text("#!/bin/sh\n")
+    proton_wine.chmod(0o755)
     monkeypatch.setattr(runners, "WINE_RUNNER_DIRS", (str(tmp_path / "wine_runners"),))
     monkeypatch.setattr(runners, "EXTRA_RUNNER_DIRS", (str(tmp_path / "common"),))
     return tmp_path
@@ -54,7 +57,8 @@ def test_discover_on_disk(runners_dir: Path) -> None:
     runs = {r.id: r for r in list_runners({})}
     assert runs["wine-ge-8-26"].kind == "wine"
     assert runs["proton-cachyos"].kind == "proton"
-    assert runs["proton-cachyos"].path.endswith("proton")
+    # The runner points at Proton's real wine binary, not the launcher script.
+    assert runs["proton-cachyos"].path.endswith("files/bin/wine")
 
 
 def test_store_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -167,3 +171,26 @@ def test_available_protons_parses_releases(monkeypatch: pytest.MonkeyPatch) -> N
     assert protons[0]["kind"] == "proton"
     assert protons[0]["url"].endswith("ge7.tar.gz")
     assert "no-assets" not in {p["name"] for p in protons}
+
+
+def test_runner_from_path_derives_name_and_kind(tmp_path: Path) -> None:
+    from vitrine.runners import _runner_from_path
+
+    # Proton build: …/Proton 11.0/files/bin/wine
+    proton_dir = tmp_path / "Proton 11.0" / "files"
+    (proton_dir / "bin").mkdir(parents=True)
+    (proton_dir / ".." / "proton").parent.joinpath("proton").write_text("#")
+    ultra_wine = proton_dir / "bin" / "wine"
+    ultra_wine.write_text("#")
+    runner = _runner_from_path("proton-11-0", str(proton_dir / "bin" / "wine"))
+    assert runner.name == "Proton 11.0"
+    assert runner.kind == "proton"
+
+    # Plain wine build: …/wine-ge/bin/wine
+    wine_dir = tmp_path / "wine-ge" / "bin"
+    wine_dir.mkdir(parents=True)
+    wine_exe = wine_dir / "wine"
+    wine_exe.write_text("#")
+    wr = _runner_from_path("wine-ge", str(wine_dir / "wine"))
+    assert wr.name in ("wine-ge", "bin")
+    assert wr.kind == "wine"

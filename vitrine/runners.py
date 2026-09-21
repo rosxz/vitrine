@@ -96,10 +96,47 @@ def list_runners(runners_store: dict[str, str] | None = None) -> list[Runner]:
         if runner_id in PRESETS:
             continue
         resolved = os.path.expanduser(path)
-        name = Path(resolved).name or runner_id
-        runners[runner_id] = Runner(runner_id, name, resolved, kind=_kind_of(resolved))
+        runners[runner_id] = _runner_from_path(runner_id, resolved)
 
     return list(runners.values())
+
+
+def _runner_from_path(runner_id: str, resolved: str) -> Runner:
+    """Derive a runner's display name + kind from its binary path.
+
+    The path is the actual binary (e.g. ``files/bin/wine`` or ``bin/wine``);
+    the human-facing name is its parent's directory name (the Proton/Wine
+    version, e.g. "Proton 11.0"), which preserves real identifiers instead of
+    showing a generic "wine"/"proton" label.
+    """
+    path = Path(resolved)
+    # Walk up from the binary to the version directory (the one holding the
+    # launcher script / version subdir), i.e. skip bin/, files/, dist/.
+    parent = path.parent
+    name = path.name
+    if parent.name in ("bin", "files", "dist"):
+        grandparent = parent.parent.parent if parent.parent.name in ("bin", "files", "dist") else parent.parent
+        name = grandparent.name
+        if name in ("files", "dist"):
+            name = grandparent.parent.name
+    kind = "proton" if _looks_like_proton(path) else "wine"
+    return Runner(runner_id, name or runner_id, resolved, kind=kind)
+
+
+def _looks_like_proton(binary_path: Path) -> bool:
+    """Heuristic: true if the binary lives under a Proton build dir.
+
+    A Proton build contains a ``proton`` launcher script a couple of levels up
+    from the wine binary (e.g. …/Proton 11.0/files/bin/wine). Falls back to
+    checking the path string for "proton".
+    """
+    parent = binary_path.parent  # .../bin
+    build_dir = parent.parent  # .../files or .../dist
+    if build_dir.name in ("files", "dist"):
+        build_dir = build_dir.parent  # .../Proton 11.0
+    if (build_dir / "proton").is_file():
+        return True
+    return "proton" in str(binary_path).lower()
 
 
 def _discover_on_disk() -> list[Runner]:
@@ -136,8 +173,16 @@ def _discover_on_disk() -> list[Runner]:
             if not child.is_dir():
                 continue
             proton_script = child / "proton"
-            if proton_script.is_file() and os.access(proton_script, os.X_OK):
-                _add_runner(found, seen, child.name, str(proton_script), "proton")
+            if proton_script.is_file():
+                # A Proton build: its real wine binary lives in files/bin or
+                # dist/bin, NOT the launcher script. Point the runner at that
+                # binary so legendary --wine (and the dropdown) use a working
+                # wine, not the python launcher.
+                wine_path = _proton_wine_binary(child)
+                if wine_path is not None:
+                    _add_runner(found, seen, child.name, str(wine_path), "proton")
+                else:
+                    _add_runner(found, seen, child.name, str(proton_script), "proton")
                 continue
             for rel in _WINE_BINS:
                 candidate = child / rel
@@ -145,6 +190,17 @@ def _discover_on_disk() -> list[Runner]:
                     _add_runner(found, seen, child.name, str(candidate), "wine")
                     break
     return found
+
+
+def _proton_wine_binary(proton_dir: Path) -> Path | None:
+    """Return a Proton build's bundled wine binary (files/bin or dist/bin)."""
+    for files_dir in ("files", "dist"):
+        base = proton_dir / files_dir / "bin"
+        for name in ("wine", "wine64", "wine32"):
+            candidate = base / name
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate
+    return None
 
 
 def _add_runner(
@@ -202,11 +258,6 @@ def _library_folders(steam_root: Path) -> list[Path]:
         if str(key).isdigit() and isinstance(value, dict) and value.get("path"):
             out.append(Path(str(value["path"])))
     return out
-
-
-def _kind_of(path: str) -> str:
-    lowered = (Path(path).name + os.pathsep + path).lower()
-    return "proton" if "proton" in lowered else "wine"
 
 
 def _slug(name: str) -> str:
