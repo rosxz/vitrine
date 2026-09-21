@@ -99,6 +99,29 @@ def auth(code: str, *, exchange: bool = False) -> None:
     _require_success(_run(["auth", flag, code], timeout=AUTH_TIMEOUT), "auth")
 
 
+def credentials_path() -> str:
+    """Absolute path to legendary's session file (``user.json``)."""
+    base = os.path.expanduser(LEGENDARY_CONFIG[0])
+    return os.path.join(base, "user.json")
+
+
+def set_credentials(token: dict) -> str:
+    """Write an Epic token response into legendary's session file.
+
+    Legendary's login reads ``user.json`` for ``refresh_token``/``access_token``
+    and refreshes from it. Writing the token we already obtained via OAuth lets
+    legendary authenticate without consuming the single-use login code a second
+    time. Returns the file path written.
+    """
+    path = credentials_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(dict(token), handle, indent=2)
+    os.replace(tmp, path)
+    return path
+
+
 def is_authenticated() -> bool:
     """Whether legendary has a valid Epic session (its own credential store)."""
     try:

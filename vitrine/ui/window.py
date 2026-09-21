@@ -657,10 +657,10 @@ class VitrineWindow(Adw.ApplicationWindow):
     def _start_download(self, game: Game, command: list[str], *, log: bool = True) -> object:
         """Run ``command`` as a tracked download job, optionally streamed to a log."""
         from ..downloads import run_download
-        from ..sources.epic_source import EPIC_SHOW_DEBUG_SETTING
+        from ..library import DEBUG_LOG_SETTING
         from .log_window import ExecutionLogWindow
 
-        if log and self.library.setting(EPIC_SHOW_DEBUG_SETTING, False):
+        if log and self.library.setting(DEBUG_LOG_SETTING, False):
             window = ExecutionLogWindow(f"Installing {game.name}", parent=self)
             window.present()
         else:
@@ -938,10 +938,10 @@ class VitrineWindow(Adw.ApplicationWindow):
             return
 
         from ..downloads import run_download
-        from ..sources.epic_source import EPIC_SHOW_DEBUG_SETTING
+        from ..library import DEBUG_LOG_SETTING
         from .log_window import ExecutionLogWindow
 
-        if self.library.setting(EPIC_SHOW_DEBUG_SETTING, False):
+        if self.library.setting(DEBUG_LOG_SETTING, False):
             log = ExecutionLogWindow(f"Launching {game.name}", parent=self)
             log.present()
         else:

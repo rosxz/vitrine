@@ -174,27 +174,33 @@ class EpicLoginDialog(Gtk.Window):
             token = obtain_token(code)
             account_id = self._resolve_account(token)
             self.store.set_credentials(code, token)
+            if lg.is_installed():
+                # Write the token into legendary's own session file so it can
+                # authenticate (and refresh) without us re-using the spent code.
+                try:
+                    lg.set_credentials(token)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Could not write legendary credentials: %s", exc)
         except Exception as exc:  # noqa: BLE001 - fall back to legendary
             logger.warning("Vitrine HTTP exchange failed: %s", exc)
             last_error = exc
 
-        # Path 2: let legendary (the battle-tested backend) import the code,
-        # which grants install/launch rights. Optional but recommended.
-        legendary_ok = False
-        try:
-            if lg.is_installed():
-                # Epic's embedded login delivers an authorization code; import
-                # it so legendary saves credentials under the right grant.
-                lg.auth(code)
-                legendary_ok = True
-            else:
-                logger.info("legendary not installed; skipping legendary import")
+        # Path 2: if our own exchange did not yield a token, let legendary
+        # import the login code itself.
+        legendary_ok = bool(token)
+        if not legendary_ok:
+            try:
+                if lg.is_installed():
+                    lg.auth(code)
+                    legendary_ok = True
+                else:
+                    logger.info("legendary not installed; skipping legendary import")
+                    if last_error is None:
+                        last_error = lg.LegendaryError("legendary is not installed")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("legendary auth failed: %s", exc)
                 if last_error is None:
-                    last_error = lg.LegendaryError("legendary is not installed")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("legendary auth failed: %s", exc)
-            if last_error is None:
-                last_error = exc
+                    last_error = exc
 
         # Resolve the account id from the stored token if we got none above.
         if not account_id:

@@ -12,8 +12,7 @@ from collections.abc import Callable
 
 from gi.repository import Adw, Gtk
 
-from ..library import Library
-from ..sources.epic_source import EPIC_SHOW_DEBUG_SETTING
+from ..library import DEBUG_LOG_SETTING, Library
 from ..sources.steam_source import FAMILY_SETTING
 from .theme import THEMES, ThemeManager
 
@@ -88,7 +87,16 @@ class SettingsWindow(Gtk.Window):
         theme_row.set_selected(theme_ids.index(current) if current in theme_ids else 0)
         theme_row.connect("notify::selected-item", self._on_theme_selected)
         group.add(theme_row)
+
+        debug_row = Adw.SwitchRow(title="Show debug log window")
+        debug_row.set_subtitle("Open the live log automatically for installs and launches (all sources)")
+        debug_row.set_active(bool(self.library.setting(DEBUG_LOG_SETTING, False)))
+        debug_row.connect("notify::active", self._on_debug_toggled)
+        group.add(debug_row)
         return group
+
+    def _on_debug_toggled(self, row: Adw.SwitchRow, _pspec: object) -> None:
+        self.library.set_setting(DEBUG_LOG_SETTING, row.get_active())
 
     def _build_steam_group(self) -> Adw.PreferencesGroup:
         group = Adw.PreferencesGroup(title=STEAM_SOURCE_NAME)
@@ -141,12 +149,6 @@ class SettingsWindow(Gtk.Window):
         login_button.set_margin_top(6)
         group.add(_row_widget(login_button))
 
-        debug_row = Adw.SwitchRow(title="Show debug log window")
-        debug_row.set_subtitle("Open the live log automatically for Epic installs / launches")
-        debug_row.set_active(bool(self.library.setting(EPIC_SHOW_DEBUG_SETTING, False)))
-        debug_row.connect("notify::active", self._on_epic_debug_toggled)
-        group.add(debug_row)
-
         reset_button = Gtk.Button(label="Reset Epic session…")
         reset_button.set_tooltip_text("Clear saved login, then sign in again")
         reset_button.add_css_class("destructive-action")
@@ -161,8 +163,7 @@ class SettingsWindow(Gtk.Window):
         group.add(_row_widget(hint))
         return group
 
-    def _on_epic_debug_toggled(self, row: Adw.SwitchRow, _pspec: object) -> None:
-        self.library.set_setting(EPIC_SHOW_DEBUG_SETTING, row.get_active())
+    
 
     # -- behaviour ------------------------------------------------------------
 

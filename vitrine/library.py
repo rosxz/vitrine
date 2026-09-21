@@ -13,6 +13,11 @@ from .util import now, slugify
 if TYPE_CHECKING:
     from .sources.base import SourceGame
 
+#: Setting key (boolean): open the live execution log window automatically for
+#: installs/launches across every source.
+DEBUG_LOG_SETTING = "auto_show_debug_log"
+
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "graphics": "x11",  # "x11" or "wayland"
     "gamemode": False,

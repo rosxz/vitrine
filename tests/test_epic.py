@@ -422,3 +422,19 @@ def test_legendary_binary_uses_env_override(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(lg.shutil, "which", lambda _name: None)  # not on PATH
     assert lg.legendary_binary() == "/nix/store/legendary/bin/legendary"
     assert lg.is_installed() is True
+
+
+def test_set_credentials_writes_user_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from vitrine.sources.epic import legendary as lg
+
+    configure_dir = tmp_path / "config" / "legendary"
+    configure_dir.mkdir(parents=True)
+    monkeypatch.setattr(lg, "LEGENDARY_CONFIG", (str(configure_dir),))
+    path = lg.set_credentials({"access_token": "tok", "refresh_token": "ref", "account_id": "acct"})
+    import json as _json
+
+    data = _json.load(open(path, encoding="utf-8"))
+    assert data["refresh_token"] == "ref"
+    assert data["account_id"] == "acct"
+    # Must land in the user.json legendary's login reads.
+    assert path == str(configure_dir / "user.json")

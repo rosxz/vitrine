@@ -28,8 +28,6 @@ logger = logging.getLogger(__name__)
 
 #: Setting key (string) holding the logged-in Epic account id.
 ACCOUNT_SETTING = "epic_account_id"
-#: Setting key (boolean): open the live debug log window for Epic operations.
-EPIC_SHOW_DEBUG_SETTING = "epic_show_debug_log"
 
 WITHOUT_LOGIN_HINT = "Sign in to Epic first (cog → Epic / Settings)"
 
