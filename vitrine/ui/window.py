@@ -574,6 +574,11 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.toasts.add_toast(Adw.Toast(title=f"{game.name} is already downloading"))
             return
 
+        if not lg.is_authenticated():
+            self.toasts.add_toast(
+                Adw.Toast(title=f"{game.name}: legendary is not signed in to Epic. Sign in via cog → Epic first.")
+            )
+            return
         command = [lg.legendary_binary(), *lg.install_command(app)]
         self._start_download(game, command)
         GLib.idle_add(self._set_downloading_ui, game, True)
@@ -649,9 +654,13 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     # -- download state ---------------------------------------------------------
 
-    def _start_download(self, game: Game, command: list[str]) -> None:
-        """Run ``command`` as a tracked download job for this game."""
+    def _start_download(self, game: Game, command: list[str]) -> object:
+        """Run ``command`` as a tracked download job, streamed to a log window."""
         from ..downloads import run_download
+        from .log_window import ExecutionLogWindow
+
+        log = ExecutionLogWindow(f"Installing {game.name}", parent=self)
+        log.present()
 
         def _on_progress(fraction: float) -> None:
             GLib.idle_add(self._update_download_progress, game, fraction)
@@ -659,9 +668,15 @@ class VitrineWindow(Adw.ApplicationWindow):
         def _on_done(returncode: int) -> None:
             GLib.idle_add(self._finish_download, game, returncode)
 
-        job = run_download(command, progress=_on_progress, done=_on_done)
+        job = run_download(
+            command,
+            progress=_on_progress,
+            done=_on_done,
+            on_line=log.append_line,
+        )
         if game.id is not None:
             self._downloads[game.id] = job
+        return job
 
     def _set_downloading_ui(self, game: Game, active: bool) -> None:
         """Reflect download state on the tile and detail bar."""
@@ -902,7 +917,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name} via Steam"))
 
     def _launch_epic_game(self, game: Game) -> None:
-        """Launch an installed Epic game through legendary."""
+        """Launch an installed Epic game through legendary, with a live log."""
         from ..sources.epic import legendary as lg
 
         app = game.source_id or ""
@@ -914,12 +929,19 @@ class VitrineWindow(Adw.ApplicationWindow):
                 Adw.Toast(title="Legendary is required to run Epic games. Install 'legendary' first.")
             )
             return
-        try:
-            lg.launch(app)
-        except Exception as error:  # noqa: BLE001
-            logger.warning("Failed to launch Epic game %s: %s", game.name, error)
-            self.toasts.add_toast(Adw.Toast(title=f"Could not launch {game.name} via legendary"))
+        if game.id is not None and game.id in self._downloads:
+            self.toasts.add_toast(Adw.Toast(title=f"{game.name} is already launching"))
             return
+
+        from ..downloads import run_download
+        from .log_window import ExecutionLogWindow
+
+        log = ExecutionLogWindow(f"Launching {game.name}", parent=self)
+        log.present()
+        command = [lg.legendary_binary(), "-y", "launch", app]
+        job = run_download(command, on_line=log.append_line)
+        if game.id is not None:
+            self._downloads[game.id] = job
         self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name} via legendary"))
 
     def open_store_page(self, game: Game) -> None:

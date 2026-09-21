@@ -57,3 +57,19 @@ def test_run_download_starts_and_finishes(tmp_path: Path) -> None:
     job.wait(timeout=10)
     assert done == [0]
     assert not job.is_running
+
+
+def test_job_captures_output_lines(tmp_path: Path) -> None:
+    script = tmp_path / "lines.py"
+    script.write_text("import sys\nprint('line one')\nprint('line two')\n")
+    lines: list[str] = []
+    done: list[int] = []
+    job = DownloadJob([sys.executable, str(script)], on_line=lines.append, done=done.append)
+    job.start()
+    job.wait(timeout=10)
+    assert done == [0]
+    assert any("line one" in line for line in lines)
+    assert any("line two" in line for line in lines)
+    # The accumulated buffer mirrors what the callback stream received.
+    assert len(job.line_buffer) == len(lines)
+    assert job.line_buffer == lines

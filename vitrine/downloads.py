@@ -36,11 +36,16 @@ class DownloadJob:
         env: dict[str, str] | None = None,
         progress: _on_progress | None = None,
         done: _on_done | None = None,
+        on_line: _on_line | None = None,
     ) -> None:
         self.command = list(command)
         self.env = env
         self.progress = progress
         self.done = done
+        self.on_line = on_line
+        #: Accumulated output (for a logs window). Thread-safe-ish: lines are
+        #: appended by the worker and read back by the UI via a callback.
+        self.line_buffer: list[str] = []
         self._process: subprocess.Popen | None = None
         self._finished = threading.Event()
         self._thread: threading.Thread | None = None
@@ -89,6 +94,9 @@ class DownloadJob:
         try:
             for raw in process.stdout:
                 line = raw.rstrip("\n")
+                self.line_buffer.append(line)
+                if self.on_line is not None:
+                    self.on_line(line)
                 percent = _extract_percent(line)
                 if percent is not None and self.progress is not None:
                     self.progress(percent)
@@ -116,8 +124,9 @@ def run_download(
     env: dict[str, str] | None = None,
     progress: _on_progress | None = None,
     done: _on_done | None = None,
+    on_line: _on_line | None = None,
 ) -> DownloadJob:
     """Convenience: build and start a :class:`DownloadJob`."""
-    job = DownloadJob(command, env=env, progress=progress, done=done)
+    job = DownloadJob(command, env=env, progress=progress, done=done, on_line=on_line)
     job.start()
     return job

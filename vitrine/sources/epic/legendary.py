@@ -98,6 +98,16 @@ def auth(code: str) -> None:
     _require_success(_run(["auth", "--token", code], timeout=AUTH_TIMEOUT), "auth")
 
 
+def is_authenticated() -> bool:
+    """Whether legendary has a valid Epic session (its own credential store)."""
+    try:
+        result = _run(["status", "--offline"], timeout=AUTH_TIMEOUT)
+    except LegendaryError:
+        return False
+    # status exits 0 only when a valid session is present.
+    return result.returncode == 0
+
+
 def list_games() -> list[dict]:
     """Return every owned, installable game as structured metadata.
 
@@ -140,8 +150,12 @@ def dry_run_launch(app_name: str) -> list[str]:
 
 
 def install_command(app_name: str, base_path: str | None = None, *, skip_dlcs: bool = True) -> list[str]:
-    """Build the ``legendary install`` command line for ``app_name``."""
-    args: list[str] = ["install", app_name]
+    """Build the ``legendary install`` command line for ``app_name``.
+
+    ``-y`` answers 'yes' to any prompt (e.g. accepting prerequisites) so the
+    install never stalls waiting for stdin inside the log window.
+    """
+    args: list[str] = ["-y", "install", app_name]
     if base_path:
         args += ["--base-path", base_path]
     if skip_dlcs:
