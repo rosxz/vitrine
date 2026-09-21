@@ -189,7 +189,7 @@ class VitrineWindow(Adw.ApplicationWindow):
 
 # Default Proton / Wine selector, pinned to the bottom.
         self._runner_ids: list[str] = []
-        self.default_runner_row = Gtk.ComboRow(title="Default Proton")
+        self.default_runner_row = Adw.ComboRow(title="Default Proton")
         self.default_runner_row.set_subtitle("Wine / Proton for new games")
         self.default_runner_row.set_margin_top(8)
         self.default_runner_row.set_margin_bottom(4)
@@ -285,7 +285,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.default_runner_row.set_selected(0)
         self.default_runner_row.connect("notify::selected-item", self._on_default_runner_selected)
 
-    def _on_default_runner_selected(self, row: Gtk.ComboRow, _pspec: object) -> None:
+    def _on_default_runner_selected(self, row: Adw.ComboRow, _pspec: object) -> None:
         from ..runners import DEFAULT_PROTON_SETTING
 
         index = row.get_selected()

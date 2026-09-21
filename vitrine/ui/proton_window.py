@@ -188,7 +188,7 @@ class ProtonWindow(Gtk.Window):
 
     # -- actions ---------------------------------------------------------------
 
-    def _on_default_selected(self, row: Gtk.ComboRow, _pspec: object) -> None:
+    def _on_default_selected(self, row: Adw.ComboRow, _pspec: object) -> None:
         index = row.get_selected()
         if 0 <= index < len(self._default_ids):
             self._default = self._default_ids[index]
