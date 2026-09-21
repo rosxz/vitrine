@@ -18,6 +18,7 @@ from .theme import THEMES, ThemeManager
 
 STEAM_SOURCE_NAME = "Steam"
 GOG_SOURCE_NAME = "GOG"
+EPIC_SOURCE_NAME = "Epic"
 
 
 class SettingsWindow(Gtk.Window):
@@ -32,6 +33,9 @@ class SettingsWindow(Gtk.Window):
         on_gog_login: Callable[[], None] | None = None,
         on_gog_refresh: Callable[[], None] | None = None,
         on_gog_reset: Callable[[], None] | None = None,
+        on_epic_login: Callable[[], None] | None = None,
+        on_epic_refresh: Callable[[], None] | None = None,
+        on_epic_reset: Callable[[], None] | None = None,
         parent: Gtk.Window | None = None,
     ) -> None:
         super().__init__(title="Settings")
@@ -44,6 +48,9 @@ class SettingsWindow(Gtk.Window):
         self._on_gog_login = on_gog_login or (lambda: None)
         self._on_gog_refresh = on_gog_refresh or (lambda: None)
         self._on_gog_reset = on_gog_reset or (lambda: None)
+        self._on_epic_login = on_epic_login or (lambda: None)
+        self._on_epic_refresh = on_epic_refresh or (lambda: None)
+        self._on_epic_reset = on_epic_reset or (lambda: None)
         self.add_css_class("vitrine-window")
         self.set_default_size(460, 460)
         if parent is not None:
@@ -53,6 +60,7 @@ class SettingsWindow(Gtk.Window):
         page.add(self._build_appearance_group())
         page.add(self._build_steam_group())
         page.add(self._build_gog_group())
+        page.add(self._build_epic_group())
 
         style = Gtk.ScrolledWindow()
         style.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -121,6 +129,29 @@ class SettingsWindow(Gtk.Window):
         reset_button.set_halign(Gtk.Align.FILL)
         reset_button.set_margin_top(6)
         group.add(_row_widget(reset_button))
+        return group
+
+    def _build_epic_group(self) -> Adw.PreferencesGroup:
+        group = Adw.PreferencesGroup(title=EPIC_SOURCE_NAME)
+
+        login_button = Gtk.Button(label="Sign in / refresh Epic")
+        login_button.connect("clicked", lambda _b: self._on_epic_login())
+        login_button.set_halign(Gtk.Align.FILL)
+        login_button.set_margin_top(6)
+        group.add(_row_widget(login_button))
+
+        reset_button = Gtk.Button(label="Reset Epic session…")
+        reset_button.set_tooltip_text("Clear saved login, then sign in again")
+        reset_button.add_css_class("destructive-action")
+        reset_button.connect("clicked", lambda _b: self._on_epic_reset())
+        reset_button.set_halign(Gtk.Align.FILL)
+        reset_button.set_margin_top(6)
+        group.add(_row_widget(reset_button))
+
+        hint = Gtk.Label(label="Requires the 'legendary' CLI on PATH. See the README.", wrap=True, xalign=0.0)
+        hint.add_css_class("dim-label")
+        hint.set_margin_top(4)
+        group.add(_row_widget(hint))
         return group
 
     # -- behaviour ------------------------------------------------------------

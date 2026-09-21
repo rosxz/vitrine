@@ -34,6 +34,11 @@ MIN_COLUMNS = 2
 MAX_COLUMNS = 9
 
 
+def _is_not_installed(game: Game) -> bool:
+    """Store-owned title that isn't installed locally (shown translucent)."""
+    return not game.installed and game.source in ("steam", "gog", "epic")
+
+
 class GameTile(Gtk.FlowBoxChild):
     """A single game: cover box, source badge, name."""
 
@@ -41,7 +46,8 @@ class GameTile(Gtk.FlowBoxChild):
         super().__init__()
         self.game = game
         self.add_css_class("vitrine-tile")
-        if not game.installed and game.source == "steam":
+        # Store-owned titles that aren't installed locally render translucent.
+        if _is_not_installed(game):
             self.add_css_class("not-installed")
         self._context_callback: Callable[[Game, float, float], None] | None = None
 
@@ -332,11 +338,12 @@ class LibraryView(Gtk.Stack):
     def _on_selection_changed(self, flow: Gtk.FlowBox) -> None:
         selected = _selected(flow)
         for child in _children(flow):
-            child.set_css_classes(
-                ["vitrine-tile", "selected"]
-                if child is selected
-                else ["vitrine-tile"]
-            )
+            classes = ["vitrine-tile"]
+            if isinstance(child, GameTile) and _is_not_installed(child.game):
+                classes.append("not-installed")
+            if child is selected:
+                classes.append("selected")
+            child.set_css_classes(classes)
         self.emit("selection-changed")
 
 

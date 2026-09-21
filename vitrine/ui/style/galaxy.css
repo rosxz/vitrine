@@ -62,8 +62,8 @@ window.vitrine-window {
 
 /* Owned but not installed (store) games: translucent, marked. */
 .vitrine-tile.not-installed {
-    opacity: 0.55;
-    filter: grayscale(0.3);
+    opacity: 0.5;
+    filter: grayscale(0.9);
 }
 
 .vitrine-tile.not-installed .vitrine-tile-name {

@@ -44,7 +44,8 @@ window.vitrine-window {
 
 /* Owned but not installed (store) games: translucent, marked. */
 .vitrine-tile.not-installed {
-    opacity: 0.6;
+    opacity: 0.45;
+    filter: grayscale(0.9);
 }
 
 .vitrine-tile-name.dim {

@@ -86,6 +86,22 @@ def test_tile_loads_cover_and_falls_back_when_absent() -> None:
     assert blank.cover.get_paintable() is None
 
 
+def test_store_not_installed_tiles_keep_translucent_class() -> None:
+    """Owned-but-not-installed Steam/GOG/Epic tiles stay greyed (translucent),
+    even after a selection change resets their css classes."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct tiles")
+    from vitrine.library import Game
+    from vitrine.ui.library_view import GameTile
+
+    for source in ("steam", "gog", "epic"):
+        tile = GameTile(Game(name="Owned", source=source, source_id="1", installed=False))
+        assert "not-installed" in tile.get_css_classes(), f"{source}: owns tile must be translucent"
+
+    installed = GameTile(Game(name="Installed", source="steam", source_id="2", installed=True))
+    assert "not-installed" not in installed.get_css_classes()
+
+
 def test_matrix_of_tiles_labels_game_tile_coverage() -> None:
     """Check each GameTile is created without loading its cover eagerly."""
     if not Gtk.init_check():

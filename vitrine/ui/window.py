@@ -13,6 +13,7 @@ from ..library import Game, Library
 from ..paths import secret_dir
 from ..running import GameAlreadyRunning, Runtime
 from ..sources import registry
+from ..sources.epic.auth import EpicTokenStore
 from ..sources.gog.auth import GogTokenStore
 from ..sources.steam.auth import SteamTokenStore
 from ..sources.steam_source import SteamAuthError, SteamSource
@@ -94,6 +95,13 @@ class VitrineWindow(Adw.ApplicationWindow):
         header.pack_end(eye_button)
         self.eye_button = eye_button
 
+        # Epic-store process controls, top-left (opposite the refresh/scan
+        # cluster on the right). Shown only when the Epic source is active.
+        self.store_buttons = self._build_store_buttons()
+        for button in self.store_buttons:
+            header.pack_start(button)
+        self._set_store_buttons_visible(False)
+
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(header)
         toolbar.set_content(self.toasts)
@@ -113,6 +121,26 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     # -- UI construction -------------------------------------------------------
 
+    def _build_store_buttons(self) -> list[Gtk.Button]:
+        """Launch / Focus / Kill buttons for the background Epic Games Store."""
+        specs = [
+            ("media-playback-start-symbolic", "Launch Epic Games Store", self.on_epic_store_launch),
+            ("video-display-symbolic", "Focus Epic Games Store", self.on_epic_store_focus),
+            ("process-stop-symbolic", "Kill Epic Games Store", self.on_epic_store_kill),
+        ]
+        buttons: list[Gtk.Button] = []
+        for icon, tooltip, handler in specs:
+            button = Gtk.Button(icon_name=icon)
+            button.set_tooltip_text(tooltip)
+            button.add_css_class("flat")
+            button.connect("clicked", handler)
+            buttons.append(button)
+        return buttons
+
+    def _set_store_buttons_visible(self, visible: bool) -> None:
+        for button in self.store_buttons:
+            button.set_visible(visible)
+
     def _build_sidebar(self) -> Gtk.Widget:
         sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         sidebar.add_css_class("sidebar")
@@ -131,8 +159,17 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         self.source_rows: dict[str, Gtk.ListBoxRow] = {}
         self._add_source_row(ALL_GAMES, "All games", "view-grid-symbolic")
+        # Store sources first, then "Local" at the bottom.
+        local_source = registry.get("local")
         for source in registry.all():
+            if source.id == "local":
+                continue
             self._add_source_row(source.id, source.name, source.icon or "application-x-executable-symbolic")
+        self._add_source_row(
+            "local",
+            (local_source.name if local_source else "Local"),
+            (local_source.icon if local_source else "folder-symbolic") or "folder-symbolic",
+        )
 
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -197,6 +234,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         else:
             self.add_button.set_visible(True)
             self.refresh_button.set_visible(False)
+        self._set_store_buttons_visible(self.current_source == "epic")
 
     def on_toggle_hidden(self, _button: Gtk.Button) -> None:
         """Toggle hiding owned-but-not-installed games."""
@@ -217,6 +255,9 @@ class VitrineWindow(Adw.ApplicationWindow):
             on_gog_login=self.on_gog_login,
             on_gog_refresh=self._run_gog_sync,
             on_gog_reset=self.on_gog_reset_session,
+            on_epic_login=self.on_epic_login,
+            on_epic_refresh=self._run_epic_sync,
+            on_epic_reset=self.on_epic_reset_session,
             parent=self,
         ).present()
 
@@ -228,6 +269,8 @@ class VitrineWindow(Adw.ApplicationWindow):
             self._run_steam_sync()
         elif self.current_source == "gog":
             self._run_gog_sync()
+        elif self.current_source == "epic":
+            self._run_epic_sync()
         else:
             self._run_steam_sync()
 
@@ -362,6 +405,98 @@ class VitrineWindow(Adw.ApplicationWindow):
             logger.exception("GOG sync failed")
             self.toasts.add_toast(Adw.Toast(title=f"GOG sync failed: {error}"))
 
+    # -- Epic -------------------------------------------------------------------
+
+    def on_epic_login(self) -> None:
+        """Open the Epic sign-in browser, then refresh the library."""
+        from ..sources.epic_source import ACCOUNT_SETTING, EpicSource
+        from .epic_login_dialog import EpicLoginDialog
+
+        source = EpicSource(self.library)
+
+        def on_complete(ok: bool, account_id: str | None = None, code: str = "") -> None:
+            if not ok:
+                self.toasts.add_toast(Adw.Toast(title="Epic sign-in failed"))
+                return
+            # The log-in dialog already imported the (single-use) exchange code
+            # into legendary and persisted the token; we only record the
+            # account and refresh the library here. Do NOT call legendary auth
+            # again with the same code -- it is consumed once.
+            if account_id:
+                self.library.set_setting(ACCOUNT_SETTING, account_id)
+            self.toasts.add_toast(Adw.Toast(title="Epic sign-in complete"))
+            self._run_epic_sync()
+
+        store = source.login_token_store()
+        dialog = EpicLoginDialog(store, on_complete=on_complete, parent=self)
+        dialog.present()
+
+    def on_epic_reset_session(self) -> None:
+        """Clear stored Epic credentials so the user can sign in afresh."""
+        from ..sources.epic_source import ACCOUNT_SETTING
+
+        cleared = 0
+        for path in glob.glob(str(secret_dir() / "epic" / "auth_*.json")):
+            account_id = path.rsplit("auth_", 1)[1].rsplit(".json", 1)[0]
+            EpicTokenStore(secret_dir(), account_id).clear()
+            cleared += 1
+        self.library.clear_source_games("epic")
+        self.library.set_setting(ACCOUNT_SETTING, None)
+        if self.current_source == "epic":
+            self.current_source = None
+        self.reload()
+        self.toasts.add_toast(
+            Adw.Toast(title="Epic session reset" if cleared else "No Epic credentials to reset")
+        )
+
+    def _run_epic_sync(self) -> None:
+        from ..sources.epic_source import EpicAuthError, EpicSource
+
+        try:
+            source = EpicSource(self.library)
+            if not source.is_authenticated():
+                self.toasts.add_toast(Adw.Toast(title="Sign in to Epic first (cog → Epic)"))
+                return
+            count = source.sync()
+            source.sync_installed()
+            self.current_source = "epic"
+            self.reload()
+            self.toasts.add_toast(Adw.Toast(title=f"Epic refreshed · {count} games"))
+            pending = source.games_needing_artwork()
+            if pending:
+                self._start_artwork_fetch(pending)
+        except EpicAuthError as error:
+            self.toasts.add_toast(Adw.Toast(title=str(error)))
+        except Exception as error:  # noqa: BLE001
+            logger.exception("Epic sync failed")
+            self.toasts.add_toast(Adw.Toast(title=f"Epic sync failed: {error}"))
+
+    # -- Epic Games Store process buttons ---------------------------------------
+
+    def on_epic_store_launch(self, _button: Gtk.Button | None = None) -> None:
+        from .epic_store_control import launch_store
+
+        try:
+            launch_store()
+        except Exception as error:  # noqa: BLE001
+            self.toasts.add_toast(Adw.Toast(title=f"Could not launch Epic store: {error}"))
+
+    def on_epic_store_focus(self, _button: Gtk.Button | None = None) -> None:
+        from .epic_store_control import focus_store
+
+        try:
+            focus_store()
+        except Exception as error:  # noqa: BLE001
+            self.toasts.add_toast(Adw.Toast(title=str(error)))
+
+    def on_epic_store_kill(self, _button: Gtk.Button | None = None) -> None:
+        from .epic_store_control import kill_store
+
+        try:
+            kill_store()
+        except Exception as error:  # noqa: BLE001
+            self.toasts.add_toast(Adw.Toast(title=str(error)))
+
     # -- asynchronous artwork -------------------------------------------------
 
     _ART_WORKERS = 8
@@ -485,7 +620,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.toasts.add_toast(Adw.Toast(title=f"Updated {game.name}"))
 
     def on_game_removed(self, game: Game) -> None:
-        if game.source in ("steam", "gog"):
+        if game.source in ("steam", "gog", "epic"):
             self.library.remove_source_game(game.source, game.source_id or "")
         else:
             self.library.remove(game.id) if game.id is not None else None
