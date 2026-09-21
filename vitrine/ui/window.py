@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import glob
 import logging
+import os
+import shlex
 import threading
 from collections.abc import Callable, Sequence
 
@@ -952,27 +954,45 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         from ..downloads import run_download
         from ..library import DEBUG_LOG_SETTING
-        from ..runners import load_runners_store, resolve_runner
+        from ..runners import get_runner, load_runners_store, resolve_runner
         from .log_window import ExecutionLogWindow
 
         # Resolve the game's configured Wine/Proton runner so legendary launches
         # under the same one the rest of the app uses (avoids "Bad EXE format").
         config = game.merged_config(self.library.global_config())
-        wine_bin = resolve_runner(
-            config.get("runner"), load_runners_store(self.library), config.get("wine_binary")
-        )
+        store = load_runners_store(self.library)
+        wine_bin = resolve_runner(config.get("runner"), store, config.get("wine_binary"))
+        runner = get_runner(config.get("runner"), store)
+        is_proton = runner is not None and runner.kind == "proton"
         from ..launch import wine_prefix_for
 
         wine_prefix = str(wine_prefix_for(game))
 
+        # Proton wine can't run standalone on NixOS; wrap the whole legendary
+        # launch in the Steam Linux Runtime (steam-run) and set Proton env.
+        env = None
+        if is_proton:
+            try:
+                command = [
+                    *lg.steam_run_command(
+                        [lg.legendary_binary(), *lg.launch_command(app, wine_bin=wine_bin, wine_prefix=wine_prefix)]
+                    )
+                ]
+            except lg.LegendaryError as exc:
+                self.toasts.add_toast(Adw.Toast(title=str(exc)))
+                return
+            env = dict(os.environ)
+            env.update({"WINEARCH": "win64", "WINEDLLOVERRIDES": "winemenubuilder.exe=d"})
+        else:
+            command = [lg.legendary_binary(), *lg.launch_command(app, wine_bin=wine_bin, wine_prefix=wine_prefix)]
+
         if self.library.setting(DEBUG_LOG_SETTING, False):
             log = ExecutionLogWindow(f"Launching {game.name}", parent=self)
             log.present()
-            log.append_line(f"$ {lg.legendary_binary()} launch {app} --wine {wine_bin} --wine-prefix {wine_prefix}")
+            log.append_line("$ " + shlex.join(command))
         else:
             log = None
-        command = [lg.legendary_binary(), *lg.launch_command(app, wine_bin=wine_bin, wine_prefix=wine_prefix)]
-        job = run_download(command, on_line=log.append_line if log is not None else None)
+        job = run_download(command, env=env, on_line=log.append_line if log is not None else None)
         if game.id is not None:
             self._downloads[game.id] = job
         self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name} via legendary"))

@@ -487,3 +487,18 @@ def test_launch_command_skips_version_check(monkeypatch: pytest.MonkeyPatch) -> 
     assert lg.launch_command("an-app", wine_bin="/opt/wine-ge/bin/wine", wine_prefix="/pfx/epic") == [
         "launch", "an-app", "--skip-version-check", "--wine", "/opt/wine-ge/bin/wine", "--wine-prefix", "/pfx/epic",
     ]
+
+
+def test_steam_run_command_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vitrine.sources.epic import legendary as lg
+
+    monkeypatch.setattr(lg.shutil, "which", lambda name: "/usr/bin/steam-run")
+    assert lg.steam_run_command(["legendary", "launch", "x"]) == ["steam-run", "legendary", "launch", "x"]
+
+
+def test_steam_run_command_missing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vitrine.sources.epic import legendary as lg
+
+    monkeypatch.setattr(lg.shutil, "which", lambda name: None)
+    with pytest.raises(lg.LegendaryError):
+        lg.steam_run_command(["legendary"])

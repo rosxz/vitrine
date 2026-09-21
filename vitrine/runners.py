@@ -101,6 +101,16 @@ def list_runners(runners_store: dict[str, str] | None = None) -> list[Runner]:
     return list(runners.values())
 
 
+def get_runner(runner_id: str | None, runners_store: dict[str, str] | None = None) -> Runner | None:
+    """Return the ``Runner`` matching ``runner_id``, or ``None``."""
+    if not runner_id:
+        return None
+    for runner in list_runners(runners_store):
+        if runner.id == runner_id:
+            return runner
+    return None
+
+
 def _runner_from_path(runner_id: str, resolved: str) -> Runner:
     """Derive a runner's display name + kind from its binary path.
 

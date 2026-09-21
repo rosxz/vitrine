@@ -142,6 +142,25 @@ def is_authenticated() -> bool:
     return result.returncode == 0
 
 
+STEAM_RUN = "steam-run"
+
+
+def steam_run_command(inner: Sequence[str]) -> list[str]:
+    """Prepend ``steam-run`` (the Steam Linux Runtime wrapper).
+
+    Proton builds can't run standalone on NixOS (their wine depends on the Steam
+    runtime's libstdc++/libc). Wrapping the whole legendary launch in ``steam-run``
+    provides that environment so Proton's ``files/bin/wine`` can run. Missing
+    steam-run raises :class:`LegendaryError`.
+    """
+    if shutil.which(STEAM_RUN) is None:
+        raise LegendaryError(
+            "Running this game with Proton requires 'steam-run' (the Steam Linux "
+            "Runtime). Install it (e.g. nixpkgs#steam-run) to launch Proton games."
+        )
+    return ["steam-run", *inner]
+
+
 def list_games() -> list[dict]:
     """Return every owned, installable game as structured metadata.
 

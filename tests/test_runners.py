@@ -194,3 +194,18 @@ def test_runner_from_path_derives_name_and_kind(tmp_path: Path) -> None:
     wr = _runner_from_path("wine-ge", str(wine_dir / "wine"))
     assert wr.name in ("wine-ge", "bin")
     assert wr.kind == "wine"
+
+
+def test_get_runner_finds_by_id_and_kind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from vitrine.runners import get_runner
+
+    proton_dir = tmp_path / "Proton 12.0" / "files"
+    (proton_dir / "bin").mkdir(parents=True)
+    (proton_dir / ".." / "proton").parent.joinpath("proton").write_text("#")
+    wine_path = proton_dir / "bin" / "wine"
+    wine_path.write_text("#")
+    store = {"proton-12": str(wine_path)}
+    runner = get_runner("proton-12", store)
+    assert runner is not None and runner.kind == "proton"
+    assert get_runner("missing", store) is None
+    assert get_runner(None, store) is None
