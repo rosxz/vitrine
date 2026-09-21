@@ -123,11 +123,18 @@ def open_winecfg_command(
     *,
     steam_run: bool = False,
 ) -> list[str]:
-    """Command to open the runner's Wine configuration (winecfg) for ``prefix``."""
+    """Command to open the runner's Wine configuration (winecfg) for ``prefix``.
+
+    Wine ships a built-in ``winecfg`` program run as ``wine winecfg``; there is
+    usually no standalone ``winecfg`` binary next to the wine executable (Proton
+    ships none). So invoke ``wine winecfg`` (or the standalone sibling if one
+    exists), wrapped in steam-run for Proton.
+    """
     winecfg = _siblings_binary(wine_binary, "winecfg")
-    if not winecfg:
-        winecfg = wine_binary  # fall back; `wine winecfg` also opens it
-    command = [winecfg]
+    if winecfg:
+        command = [winecfg]
+    else:
+        command = [wine_binary, "winecfg"]
     if steam_run and shutil.which("steam-run"):
         command = ["steam-run", *command]
     env = dict(os.environ)

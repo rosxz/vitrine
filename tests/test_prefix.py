@@ -76,9 +76,15 @@ def test_prepare_prefix_initialises_and_detects_mismatch(
 
 def test_open_winecfg_command(tmp_path: Path) -> None:
     wine = _fake_wine(tmp_path)
+    # The fake wine has a sibling winecfg -> uses it directly.
     cmd, env = open_winecfg_command(str(wine), "/home/x/pfx", steam_run=False)
     assert any("winecfg" in c for c in cmd)
     assert env["WINEPREFIX"] == "/home/x/pfx"
+
+    # No sibling winecfg (e.g. Proton) -> `wine winecfg`.
+    cmd2, _ = open_winecfg_command("/tmp/nosib/Proton/files/bin/wine", "/home/x/pfx", steam_run=True)
+    assert cmd2[:2] == ["steam-run", "/tmp/nosib/Proton/files/bin/wine"]
+    assert "winecfg" in cmd2
 
 
 def _proc(code):
