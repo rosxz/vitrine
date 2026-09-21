@@ -210,3 +210,47 @@ def test_exchange_code_requires_access_token(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(gog_auth.requests, "post", lambda *a, **k: _Resp())
     with pytest.raises(GogAuthError):
         gog_auth.exchange_code_for_token("mycode")
+
+def test_offline_installer_uses_windows_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from vitrine.sources.gog import installer as gog_installer
+
+    store = _store(tmp_path)
+    store.set_credentials(GogCookieJar([]), access_token="tok-gog")
+
+    gamedata = {
+        "data": {
+            "1207658691": {
+                "downloads": {
+                    "windows": [
+                        {"manualUrl": "/downlink/ut2k4/en1installer1",
+                         "type": "installer", "size": 100},
+                        {"manualUrl": "/downlink/ut2k4/en1installer2",
+                         "type": "installer", "size": 200},
+                        {"manualUrl": "/downlink/ut2k4/bonus", "type": "bonus", "size": 5},
+                    ]
+                }
+            }
+        }
+    }
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self):
+            return gamedata
+
+    monkeypatch.setattr(gog_installer.requests, "post", lambda *a, **k: _Resp())
+    url = gog_installer.offline_installer(store, "1207658691", "UT2004")
+    assert "/downlink/ut2k4/en1installer2" in url
+    assert "token=tok-gog" in url
+
+
+def test_offline_installer_requires_auth(tmp_path: Path) -> None:
+    from vitrine.sources.gog import installer as gog_installer
+
+    store = _store(tmp_path)  # no credentials
+    with pytest.raises(GogAuthError):
+        gog_installer.offline_installer(store, "1207658691", "Game")

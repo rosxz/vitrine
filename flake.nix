@@ -68,7 +68,7 @@
     {
       packages.${system}.default = pkgs.symlinkJoin {
         name = "vitrine";
-        paths = [ vitrineApp ];
+        paths = [ vitrineApp pkgs.legendary-gl ];
         passthru.python = runtime.python;
       };
 
@@ -102,6 +102,7 @@
           pkgs.xvfb
           pkgs.ruff
           pkgs.mypy
+          pkgs.legendary-gl
         ];
 
         shellHook = ''

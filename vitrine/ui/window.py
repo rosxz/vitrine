@@ -189,17 +189,23 @@ class VitrineWindow(Adw.ApplicationWindow):
 
 # Default Proton / Wine selector, pinned to the bottom.
         self._runner_ids: list[str] = []
-        self.default_runner_row = Adw.ComboRow(title="Default Proton")
-        self.default_runner_row.set_subtitle("Wine / Proton for new games")
-        self.default_runner_row.set_margin_top(8)
-        self.default_runner_row.set_margin_bottom(4)
+        runner_label = Gtk.Label(label="Default Proton", halign=Gtk.Align.START)
+        runner_label.add_css_class("caption")
+        runner_label.set_margin_start(12)
+        runner_label.set_margin_top(8)
+        self.default_runner_dropdown = Gtk.DropDown()
+        self.default_runner_dropdown.set_margin_top(2)
+        self.default_runner_dropdown.set_margin_start(12)
+        self.default_runner_dropdown.set_margin_end(12)
         manage = Gtk.Button(label="Manage Proton…")
         manage.connect("clicked", self.on_manage_proton)
         manage.set_halign(Gtk.Align.FILL)
         manage.set_margin_start(12)
         manage.set_margin_end(12)
+        manage.set_margin_top(4)
         manage.set_margin_bottom(8)
-        sidebar.append(self.default_runner_row)
+        sidebar.append(runner_label)
+        sidebar.append(self.default_runner_dropdown)
         sidebar.append(_row_widget_shim(manage))
         self._refresh_runner_dropdown()
 
@@ -277,18 +283,18 @@ class VitrineWindow(Adw.ApplicationWindow):
         runners = list_runners(load_runners_store(self.library))
         self._runner_ids = [r.id for r in runners]
         names = [r.name for r in runners]
-        self.default_runner_row.set_model(Gtk.StringList.new(names))
+        self.default_runner_dropdown.set_model(Gtk.StringList.new(names))
         current = str(self.library.setting(DEFAULT_PROTON_SETTING, "wine-64") or "wine-64")
         if current in self._runner_ids:
-            self.default_runner_row.set_selected(self._runner_ids.index(current))
+            self.default_runner_dropdown.set_selected(self._runner_ids.index(current))
         elif self._runner_ids:
-            self.default_runner_row.set_selected(0)
-        self.default_runner_row.connect("notify::selected-item", self._on_default_runner_selected)
+            self.default_runner_dropdown.set_selected(0)
+        self.default_runner_dropdown.connect("notify::selected", self._on_default_runner_selected)
 
-    def _on_default_runner_selected(self, row: Adw.ComboRow, _pspec: object) -> None:
+    def _on_default_runner_selected(self, dropdown: Gtk.DropDown, _pspec: object) -> None:
         from ..runners import DEFAULT_PROTON_SETTING
 
-        index = row.get_selected()
+        index = dropdown.get_selected()
         if 0 <= index < len(self._runner_ids):
             self.library.set_setting(DEFAULT_PROTON_SETTING, self._runner_ids[index])
 
@@ -554,6 +560,69 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.toasts.add_toast,
             Adw.Toast(title=f"Installed {name}"),
         )
+
+    def _install_gog_game(self, game: Game) -> None:
+        """Download the GOG offline installer and launch it under Wine."""
+        from ..sources.gog_source import GogSource
+
+        game_id = game.source_id or ""
+        if not game_id:
+            self.toasts.add_toast(Adw.Toast(title=f"No GOG id for {game.name}"))
+            return
+        source = GogSource(self.library)
+        if not source.is_authenticated():
+            self.toasts.add_toast(Adw.Toast(title="Sign in to GOG first (cog → GOG)"))
+            return
+        from ..runners import load_runners_store, resolve_runner
+
+        store = source.login_token_store()
+        config = game.merged_config(self.library.global_config())
+        wine_binary = resolve_runner(
+            config.get("runner"), load_runners_store(self.library), config.get("wine_binary")
+        )
+        from ..launch import wine_prefix_for
+
+        prefix = str(wine_prefix_for(game))
+        self.toasts.add_toast(Adw.Toast(title=f"Preparing {game.name} installer…"))
+        threading.Thread(
+            target=self._install_gog_worker,
+            args=(store, game_id, game.name, wine_binary, prefix),
+            daemon=True,
+        ).start()
+
+    def _install_gog_worker(self, store, game_id: str, name: str, wine_binary: str, prefix: str) -> None:
+        import os
+
+        from .. import paths
+        from ..sources.gog import installer as gog_installer
+
+        def _notify(title: str) -> None:
+            GLib.idle_add(self.toasts.add_toast, Adw.Toast(title=title))
+
+        installer_dir = paths.data_dir() / "installers"
+        installer_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            from ..util import slugify
+
+            url = gog_installer.offline_installer(store, game_id, name)
+            dest = installer_dir / f"{slugify(name)}.exe"
+            _notify(f"Downloading {name} installer…")
+            gog_installer.download_installer(url, str(dest))
+        except Exception as exc:  # noqa: BLE001
+            _notify(f"GOG installer download failed for {name}: {exc}")
+            return
+
+        # Launch the installer with the game's Wine/Proton prefix.
+        try:
+            import subprocess
+
+            env = dict(os.environ)
+            env["WINEPREFIX"] = prefix
+            os.makedirs(prefix, exist_ok=True)
+            _notify(f"Running {name} installer…")
+            subprocess.Popen([wine_binary, str(dest)], env=env)
+        except Exception as exc:  # noqa: BLE001
+            _notify(f"Could not run GOG installer for {name}: {exc}")
 
     # -- Epic Games Store process buttons ---------------------------------------
 
@@ -841,11 +910,11 @@ class VitrineWindow(Adw.ApplicationWindow):
         """Install an owned but not-yet-installed store game."""
         if game.source == "epic":
             self._install_epic_game(game)
+        elif game.source == "gog":
+            self._install_gog_game(game)
         else:
             self.open_store_page(game)
-            self.toasts.add_toast(
-                Adw.Toast(title="GOG install not yet automated — use the store or the GOG Galaxy client")
-            )
+            self.toasts.add_toast(Adw.Toast(title="No automated install for this source"))
 
     # -- runtime callbacks (come from a background thread) ----------------------
 

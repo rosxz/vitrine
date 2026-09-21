@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from gi.repository import Adw, Gtk
+from gi.repository import Gtk
 
 from ..library import Game
 from ..util import expand
@@ -95,13 +95,15 @@ class GameForm(Gtk.Box):
         self.lutris_slug = _LabeledEntry("Lutris slug (defaults to game name)")
 
         # Wine/Proton runner selector, with an explicit "use default" choice.
-        self.runner_row = Adw.ComboRow(title="Wine / Proton")
         runner_ids = ["__default__"]
         runner_names = ["Use default"]
         for rid, rname in self._runner_list:
             runner_ids.append(rid)
             runner_names.append(rname)
         self._runner_option_ids = runner_ids
+        runner_label = Gtk.Label(label="Wine / Proton", halign=Gtk.Align.START)
+        runner_label.add_css_class("caption")
+        self.runner_row = Gtk.DropDown()
         self.runner_row.set_model(Gtk.StringList.new(runner_names))
         self.runner_row.set_selected(0)
 
@@ -138,6 +140,7 @@ class GameForm(Gtk.Box):
         ):
             self.append(entry)
         self.append(art_sources)
+        self.append(runner_label)
         self.append(self.runner_row)
 
         self._fields: dict[str, _LabeledEntry] = {
