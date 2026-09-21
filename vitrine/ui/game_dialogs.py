@@ -79,6 +79,7 @@ class _GameWindow(Gtk.Window):
         parent: Gtk.Widget | None,
         on_remove: Callable[[Game], None] | None = None,
         on_refresh_artwork: Callable[[Game], None] | None = None,
+        on_wine_config: Callable[[Game], None] | None = None,
     ) -> None:
         super().__init__(title=title)
         self.library = library
@@ -86,6 +87,7 @@ class _GameWindow(Gtk.Window):
         self._save_callback: Callable[[Game], None] | None = None
         self._remove_callback = on_remove
         self._refresh_artwork_callback = on_refresh_artwork
+        self._wine_config_callback = on_wine_config
         self.add_css_class("vitrine-window")
         self.set_default_size(_FORM_WIDTH, _FORM_HEIGHT)
         parent_window = _parent_window(parent)
@@ -115,7 +117,11 @@ class _GameWindow(Gtk.Window):
 
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         content.append(body)
-        if on_remove is not None or self._refresh_artwork_callback is not None:
+        if (
+            on_remove is not None
+            or self._refresh_artwork_callback is not None
+            or self._wine_config_callback is not None
+        ):
             content.append(self._build_footer())
 
         self.set_titlebar(header)
@@ -141,7 +147,19 @@ class _GameWindow(Gtk.Window):
             refresh.set_tooltip_text("Re-download automatic artwork for this game")
             refresh.connect("clicked", self._on_refresh_artwork)
             footer.append(refresh)
+        if self._wine_config_callback is not None:
+            winecfg = Gtk.Button(label="Wine Configuration…")
+            winecfg.set_tooltip_text("Open winecfg for this game's prefix (deps, drives, environment)")
+            winecfg.connect("clicked", self._on_wine_config)
+            footer.append(winecfg)
         return footer
+
+    def _on_wine_config(self, _button: Gtk.Button) -> None:
+        if self._wine_config_callback is None:
+            return
+        game = self._remove_game()
+        if game is not None:
+            self._wine_config_callback(game)
 
     def _on_refresh_artwork(self, _button: Gtk.Button) -> None:
         if self._refresh_artwork_callback is None:
@@ -217,6 +235,7 @@ class GameSettingsWindow(_GameWindow):
         on_save: Callable[[Game], None],
         on_remove: Callable[[Game], None] | None = None,
         on_refresh_artwork: Callable[[Game], None] | None = None,
+        on_wine_config: Callable[[Game], None] | None = None,
         parent: Gtk.Widget | None = None,
     ) -> None:
         self._game = game
@@ -230,6 +249,7 @@ class GameSettingsWindow(_GameWindow):
             parent=parent,
             on_remove=on_remove,
             on_refresh_artwork=on_refresh_artwork,
+            on_wine_config=on_wine_config,
         )
         self._save_callback = on_save
 

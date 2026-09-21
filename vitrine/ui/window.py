@@ -852,6 +852,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             on_save=self.on_game_edited,
             on_remove=self.on_game_removed,
             on_refresh_artwork=self._on_refresh_artwork,
+            on_wine_config=self.open_wine_config,
             parent=self,
         ).present()
 
@@ -996,10 +997,23 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         wine_prefix = str(wine_prefix_for(game))
 
+        # Ensure the prefix is ready and its architecture matches the runner.
+        # A fresh/incompatible prefix is initialised (wineboot) in the background
+        # so the game launches on a valid, correctly-arched prefix.
+        from ..prefix import prepare_prefix
+
+        try:
+            prepare_prefix(wine_bin, wine_prefix, steam_run=is_proton)
+        except ValueError as exc:
+            self.toasts.add_toast(Adw.Toast(title=str(exc)))
+            return
+        env = dict(os.environ)
+        env["WINEARCH"] = "win64"
+        env["WINEDLLOVERRIDES"] = "winemenubuilder.exe=d"
+
         # Assemble the wrapper chain. Outermost -> innermost:
         #   steam-run (Steam runtime libs for Proton) -> gamescope (display/GPU,
         #   required on Wayland) -> legendary launch --wine <wine> --wine-prefix.
-        env = None
         command = [lg.legendary_binary(), *lg.launch_command(app, wine_bin=wine_bin, wine_prefix=wine_prefix)]
 
         # Gamescope gives wine a real (virtualized) GPU/display session, which is
@@ -1012,8 +1026,6 @@ class VitrineWindow(Adw.ApplicationWindow):
             except lg.LegendaryError as exc:
                 self.toasts.add_toast(Adw.Toast(title=str(exc)))
                 return
-            env = dict(os.environ)
-            env.update({"WINEARCH": "win64", "WINEDLLOVERRIDES": "winemenubuilder.exe=d"})
 
         if self.library.setting(DEBUG_LOG_SETTING, False):
             log = ExecutionLogWindow(f"Launching {game.name}", parent=self)
@@ -1036,6 +1048,37 @@ class VitrineWindow(Adw.ApplicationWindow):
     def _clear_launch_state(self, game_id: int | None) -> None:
         if game_id is not None:
             self._downloads.pop(game_id, None)
+
+    def open_wine_config(self, game: Game) -> None:
+        """Open winecfg for the game's prefix so deps/drives can be configured."""
+        import subprocess
+
+        from ..prefix import open_winecfg_command, prepare_prefix
+        from ..runners import DEFAULT_PROTON_SETTING, get_runner, load_runners_store, resolve_runner
+        config = game.merged_config(self.library.global_config())
+        store = load_runners_store(self.library)
+        runner_id = (
+            game.config.get("runner")
+            or self.library.setting(DEFAULT_PROTON_SETTING, None)
+            or config.get("runner")
+        )
+        wine_bin = resolve_runner(runner_id, store, config.get("wine_binary"))
+        runner = get_runner(runner_id, store)
+        is_proton = runner is not None and runner.kind == "proton"
+        from ..launch import wine_prefix_for
+
+        wine_prefix = str(wine_prefix_for(game))
+        try:
+            prepare_prefix(wine_bin, wine_prefix, steam_run=is_proton)
+        except ValueError as exc:
+            self.toasts.add_toast(Adw.Toast(title=str(exc)))
+            return
+        cmd, env = open_winecfg_command(wine_bin, wine_prefix, steam_run=is_proton)
+        self.toasts.add_toast(Adw.Toast(title=f"Opening Wine config for {game.name}"))
+        threading.Thread(
+            target=lambda: subprocess.Popen(cmd, env=env),
+            daemon=True,
+        ).start()
 
     def open_store_page(self, game: Game) -> None:
         """Open a store game's page in the system browser."""
@@ -1094,6 +1137,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         """
         items: list[tuple[str, Callable[[], None]]] = [
             ("Properties", lambda: self.on_edit_game(game)),
+            ("Wine Configuration…", lambda: self.open_wine_config(game)),
         ]
         if game.source == "steam" and not game.installed:
             items.append(("Open store page", lambda: self.open_store_page(game)))
