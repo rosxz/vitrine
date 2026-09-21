@@ -211,41 +211,58 @@ def test_exchange_code_requires_access_token(monkeypatch: pytest.MonkeyPatch) ->
     with pytest.raises(GogAuthError):
         gog_auth.exchange_code_for_token("mycode")
 
-def test_offline_installer_uses_windows_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_offline_installer_resolves_largest_windows_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from vitrine.sources.gog import installer as gog_installer
 
     store = _store(tmp_path)
     store.set_credentials(GogCookieJar([]), access_token="tok-gog")
 
-    gamedata = {
-        "data": {
-            "1207658691": {
-                "downloads": {
-                    "windows": [
-                        {"manualUrl": "/downlink/ut2k4/en1installer1",
-                         "type": "installer", "size": 100},
-                        {"manualUrl": "/downlink/ut2k4/en1installer2",
-                         "type": "installer", "size": 200},
-                        {"manualUrl": "/downlink/ut2k4/bonus", "type": "bonus", "size": 5},
-                    ]
-                }
-            }
-        }
+    product = {
+        "id": 1207658691,
+        "downloads": {
+            "installers": [
+                {
+                    "os": "windows",
+                    "files": [
+                        {"id": "en1", "size": 100,
+                         "downlink": "https://api.gog.com/products/1207658691/downlink/installer/en1"},
+                        {"id": "en2", "size": 200,
+                         "downlink": "https://api.gog.com/products/1207658691/downlink/installer/en2"},
+                    ],
+                },
+                {"os": "linux", "files": [
+                    {"id": "ln", "size": 999,
+                     "downlink": "https://api.gog.com/.../linux-big"},
+                ]},
+            ]
+        },
     }
+    resolve = {"downlink": "https://gog-cdn.example/ut2k4-setup.exe"}
 
-    class _Resp:
-        status_code = 200
+    calls: list[str] = []
 
-        def raise_for_status(self) -> None:
-            pass
+    def _fake_get(url, headers=None, timeout=None):  # noqa: ARG001
+        calls.append(url)
+        class _Resp:
+            status_code = 200
 
-        def json(self):
-            return gamedata
+            def raise_for_status(self) -> None:
+                pass
 
-    monkeypatch.setattr(gog_installer.requests, "post", lambda *a, **k: _Resp())
+            def json(self):
+                # Product fetch is a plain /products/<id> GET; anything else
+                # (the downlink resolver) returns the resolved file URL.
+                wrapped = "/products/1207658691/downlink/" in url
+                return product if not wrapped else resolve
+
+        return _Resp()
+
+    monkeypatch.setattr(gog_installer.requests, "get", _fake_get)
     url = gog_installer.offline_installer(store, "1207658691", "UT2004")
-    assert "/downlink/ut2k4/en1installer2" in url
-    assert "token=tok-gog" in url
+    assert url == "https://gog-cdn.example/ut2k4-setup.exe"
+    assert any("installer/en2" in c for c in calls), "must pick the largest windows file"
 
 
 def test_offline_installer_requires_auth(tmp_path: Path) -> None:
