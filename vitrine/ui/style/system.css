@@ -113,3 +113,17 @@ window.vitrine-window {
 .vitrine-play:hover {
     box-shadow: 0 2px 12px alpha(@accent_bg_color, 0.3);
 }
+
+/* Play button while the game is downloading: locked + distinct colour. */
+.vitrine-play.vitrine-downloading,
+.vitrine-play.vitrine-downloading:hover {
+    background-color: alpha(@window_bg_color, 0.4);
+    color: alpha(@window_fg_color, 0.55);
+}
+@keyframes vitrine-breathe {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 1.0; }
+}
+.vitrine-tile.downloading {
+    animation: vitrine-breathe 1.6s ease-in-out infinite;
+}

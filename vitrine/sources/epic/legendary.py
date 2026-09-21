@@ -139,14 +139,19 @@ def dry_run_launch(app_name: str) -> list[str]:
     return shlex.split(line)
 
 
-def install(app_name: str, base_path: str | None = None, *, skip_dlcs: bool = True) -> None:
-    """Install ``app_name`` via legendary. Blocks until the download finishes."""
+def install_command(app_name: str, base_path: str | None = None, *, skip_dlcs: bool = True) -> list[str]:
+    """Build the ``legendary install`` command line for ``app_name``."""
     args: list[str] = ["install", app_name]
     if base_path:
         args += ["--base-path", base_path]
     if skip_dlcs:
         args.append("--skip-dlcs")
-    _require_success(_run(args, timeout=LIST_TIMEOUT), "install")
+    return args
+
+
+def install(app_name: str, base_path: str | None = None, *, skip_dlcs: bool = True) -> None:
+    """Install ``app_name`` via legendary. Blocks until the download finishes."""
+    _require_success(_run(install_command(app_name, base_path, skip_dlcs=skip_dlcs), timeout=LIST_TIMEOUT), "install")
 
 
 def launch(app_name: str, *, no_wine: bool = False) -> None:

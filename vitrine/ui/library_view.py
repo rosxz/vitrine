@@ -144,6 +144,18 @@ class GameTile(Gtk.FlowBoxChild):
         # the tile scrolls into view. Empty/initial tiles stay cheap.
         self._cover_path = game.cover
         self._cover_loaded = False
+        self._downloading = False
+
+        # A progress bar over the cover, shown only while this game downloads.
+        self.download_bar = Gtk.ProgressBar()
+        self.download_bar.set_text("")
+        self.download_bar.set_show_text(False)
+        self.download_bar.set_valign(Gtk.Align.END)
+        self.download_bar.set_margin_start(4)
+        self.download_bar.set_margin_end(4)
+        self.download_bar.set_margin_bottom(4)
+        self.download_bar.set_visible(False)
+        overlay.add_overlay(self.download_bar)
 
     def load_cover(self) -> None:
         """Show this tile's cover artwork once, on first visibility."""
@@ -167,6 +179,24 @@ class GameTile(Gtk.FlowBoxChild):
             return
         self.running_label.set_text(human_playtime(elapsed_seconds / 3600.0))
         self.running_footer.set_visible(True)
+
+    def set_downloading(self, downloading: bool) -> None:
+        """Toggle the download state: breathing fade + progress bar."""
+        self._downloading = downloading
+        if downloading:
+            self.add_css_class("downloading")
+            self.download_bar.set_fraction(0.0)
+            self.download_bar.set_visible(True)
+        else:
+            self.remove_css_class("downloading")
+            self.download_bar.set_visible(False)
+            self.download_bar.set_fraction(0.0)
+
+    def set_download_progress(self, fraction: float) -> None:
+        """Update the in-tile progress bar (0.0..1.0)."""
+        if not self._downloading:
+            return
+        self.download_bar.set_fraction(max(0.0, min(fraction, 1.0)))
 
     def set_context_callback(self, callback: Callable[[Game, float, float], None]) -> None:
         """Call ``callback(game, x, y)`` on a right-click over this tile.

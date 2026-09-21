@@ -70,6 +70,15 @@ window.vitrine-window {
     color: #c8c2d6;
 }
 
+/* A game currently downloading: the tile "breathes" in and out. */
+@keyframes vitrine-breathe {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 1.0; }
+}
+.vitrine-tile.downloading {
+    animation: vitrine-breathe 1.6s ease-in-out infinite;
+}
+
 .vitrine-tile-name {
     color: #fffbff;
     font-weight: 600;
@@ -162,4 +171,11 @@ window.vitrine-window {
 
 .vitrine-play:active {
     background-color: #8d55e8;
+}
+
+/* Play button while the game is downloading: locked + distinct colour. */
+.vitrine-play.vitrine-downloading,
+.vitrine-play.vitrine-downloading:hover {
+    background-color: #5b4a68;
+    color: #b8b0c8;
 }

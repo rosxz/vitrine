@@ -210,6 +210,17 @@ class GameDetailBar(Gtk.Box):
     def set_settings_available(self, available: bool) -> None:
         self._settings_button.set_sensitive(available)
 
+    def set_downloading(self, downloading: bool) -> None:
+        """Lock and recolor the play button while this game is downloading."""
+        for widget in (self._play_button, self._settings_button):
+            widget.set_sensitive(not downloading)
+        if downloading:
+            self._play_button.set_label("Downloading…")
+            self._play_button.add_css_class("vitrine-downloading")
+        else:
+            self._play_button.set_label("Play")
+            self._play_button.remove_css_class("vitrine-downloading")
+
     # -- internals ------------------------------------------------------------
 
     def _refresh_meta(self) -> None:

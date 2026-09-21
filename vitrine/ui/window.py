@@ -41,6 +41,19 @@ def _row_widget_shim(widget: Gtk.Widget) -> Gtk.Widget:
     return box
 
 
+def _tiles_for(library_view, game) -> list:
+    """Find every GameTile widget in the grid representing ``game``."""
+    from .library_view import GameTile
+
+    tiles: list = []
+    child = library_view.flow.get_first_child()
+    while child is not None:
+        if isinstance(child, GameTile) and getattr(child, "game", None) is game:
+            tiles.append(child)
+        child = child.get_next_sibling()
+    return tiles
+
+
 class VitrineWindow(Adw.ApplicationWindow):
     def __init__(self, application: Adw.Application, library: Library) -> None:
         super().__init__(application=application, title="Vitrine")
@@ -126,6 +139,9 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         self._ticker: int | None = None
         self.setup_running_ticker()
+
+        # Active downloads keyed by game id (drives tile/detail download state).
+        self._downloads: dict[int, object] = {}
 
         self.reload()
 
@@ -267,6 +283,18 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.add_button.set_visible(True)
             self.refresh_button.set_visible(False)
         self._set_store_buttons_visible(self.current_source == "epic")
+        self._restore_download_state()
+
+    def _restore_download_state(self) -> None:
+        """Re-apply the "downloading" visuals to tiles after a rebuild."""
+        if not getattr(self, "_downloads", None):
+            return
+        by_id = {g.id: g for g in self.library.games() if g.id in self._downloads}
+        for game in by_id.values():
+            for tile in _tiles_for(self.library_view, game):
+                tile.set_downloading(True)
+            if hasattr(self, "detail_bar") and self.detail_bar.game() is game:
+                self.detail_bar.set_downloading(True)
 
     def on_toggle_hidden(self, _button: Gtk.Button) -> None:
         """Toggle hiding owned-but-not-installed games."""
@@ -530,7 +558,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.toasts.add_toast(Adw.Toast(title=f"Epic sync failed: {error}"))
 
     def _install_epic_game(self, game: Game) -> None:
-        """Install an Epic game through legendary (off the UI thread)."""
+        """Install an Epic game through legendary, tracked as a download."""
         from ..sources.epic import legendary as lg
 
         app = game.source_id or ""
@@ -542,27 +570,16 @@ class VitrineWindow(Adw.ApplicationWindow):
                 Adw.Toast(title="Legendary is required to install Epic games. Install 'legendary' first.")
             )
             return
-        self.toasts.add_toast(Adw.Toast(title=f"Installing {game.name}…"))
-        threading.Thread(target=self._install_epic_worker, args=(app, game.name), daemon=True).start()
-
-    def _install_epic_worker(self, app: str, name: str) -> None:
-        try:
-            from ..sources.epic import legendary as lg
-
-            lg.install(app)
-        except Exception as exc:  # noqa: BLE001
-            GLib.idle_add(
-                self.toasts.add_toast,
-                Adw.Toast(title=f"Install failed for {name}: {exc}"),
-            )
+        if game.id is not None and game.id in self._downloads:
+            self.toasts.add_toast(Adw.Toast(title=f"{game.name} is already downloading"))
             return
-        GLib.idle_add(
-            self.toasts.add_toast,
-            Adw.Toast(title=f"Installed {name}"),
-        )
+
+        command = [lg.legendary_binary(), *lg.install_command(app)]
+        self._start_download(game, command)
+        GLib.idle_add(self._set_downloading_ui, game, True)
 
     def _install_gog_game(self, game: Game) -> None:
-        """Download the GOG offline installer and launch it under Wine."""
+        """Download the GOG offline installer, tracked as a download."""
         from ..sources.gog_source import GogSource
 
         game_id = game.source_id or ""
@@ -573,9 +590,13 @@ class VitrineWindow(Adw.ApplicationWindow):
         if not source.is_authenticated():
             self.toasts.add_toast(Adw.Toast(title="Sign in to GOG first (cog → GOG)"))
             return
-        from ..runners import load_runners_store, resolve_runner
+        if game.id is not None and game.id in self._downloads:
+            self.toasts.add_toast(Adw.Toast(title=f"{game.name} is already downloading"))
+            return
 
         store = source.login_token_store()
+        from ..runners import load_runners_store, resolve_runner
+
         config = game.merged_config(self.library.global_config())
         wine_binary = resolve_runner(
             config.get("runner"), load_runners_store(self.library), config.get("wine_binary")
@@ -584,14 +605,16 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         prefix = str(wine_prefix_for(game))
         self.toasts.add_toast(Adw.Toast(title=f"Preparing {game.name} installer…"))
+        GLib.idle_add(self._set_downloading_ui, game, True)
         threading.Thread(
             target=self._install_gog_worker,
-            args=(store, game_id, game.name, wine_binary, prefix),
+            args=(store, game_id, game, wine_binary, prefix),
             daemon=True,
         ).start()
 
-    def _install_gog_worker(self, store, game_id: str, name: str, wine_binary: str, prefix: str) -> None:
+    def _install_gog_worker(self, store, game_id: str, game: Game, wine_binary: str, prefix: str) -> None:
         import os
+        import subprocess
 
         from .. import paths
         from ..sources.gog import installer as gog_installer
@@ -604,25 +627,63 @@ class VitrineWindow(Adw.ApplicationWindow):
         try:
             from ..util import slugify
 
-            url = gog_installer.offline_installer(store, game_id, name)
-            dest = installer_dir / f"{slugify(name)}.exe"
-            _notify(f"Downloading {name} installer…")
+            url = gog_installer.offline_installer(store, game_id, game.name)
+            dest = installer_dir / f"{slugify(game.name)}.exe"
+            _notify(f"Downloading {game.name} installer…")
             gog_installer.download_installer(url, str(dest))
         except Exception as exc:  # noqa: BLE001
-            _notify(f"GOG installer download failed for {name}: {exc}")
+            _notify(f"GOG installer download failed for {game.name}: {exc}")
+            GLib.idle_add(self._set_downloading_ui, game, False)
             return
 
-        # Launch the installer with the game's Wine/Proton prefix.
         try:
-            import subprocess
-
             env = dict(os.environ)
             env["WINEPREFIX"] = prefix
             os.makedirs(prefix, exist_ok=True)
-            _notify(f"Running {name} installer…")
+            _notify(f"Running {game.name} installer…")
             subprocess.Popen([wine_binary, str(dest)], env=env)
         except Exception as exc:  # noqa: BLE001
-            _notify(f"Could not run GOG installer for {name}: {exc}")
+            _notify(f"Could not run GOG installer for {game.name}: {exc}")
+        finally:
+            GLib.idle_add(self._set_downloading_ui, game, False)
+
+    # -- download state ---------------------------------------------------------
+
+    def _start_download(self, game: Game, command: list[str]) -> None:
+        """Run ``command`` as a tracked download job for this game."""
+        from ..downloads import run_download
+
+        def _on_progress(fraction: float) -> None:
+            GLib.idle_add(self._update_download_progress, game, fraction)
+
+        def _on_done(returncode: int) -> None:
+            GLib.idle_add(self._finish_download, game, returncode)
+
+        job = run_download(command, progress=_on_progress, done=_on_done)
+        if game.id is not None:
+            self._downloads[game.id] = job
+
+    def _set_downloading_ui(self, game: Game, active: bool) -> None:
+        """Reflect download state on the tile and detail bar."""
+        if game.id is not None and not active:
+            self._downloads.pop(game.id, None)
+        for tile in _tiles_for(self.library_view, game):
+            tile.set_downloading(active)
+        if self.detail_bar.game() is game:
+            self.detail_bar.set_downloading(active)
+
+    def _update_download_progress(self, game: Game, fraction: float) -> None:
+        for tile in _tiles_for(self.library_view, game):
+            tile.set_download_progress(fraction)
+
+    def _finish_download(self, game: Game, returncode: int) -> None:
+        """Install finished (or failed): clear download state and toast."""
+        self._set_downloading_ui(game, False)
+        if returncode == 0:
+            self.reload()
+            self.toasts.add_toast(Adw.Toast(title=f"Installed {game.name}"))
+        else:
+            self.toasts.add_toast(Adw.Toast(title=f"Install failed for {game.name} ({returncode})"))
 
     # -- Epic Games Store process buttons ---------------------------------------
 
