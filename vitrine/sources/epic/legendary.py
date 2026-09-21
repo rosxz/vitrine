@@ -105,6 +105,16 @@ def credentials_path() -> str:
     return os.path.join(base, "user.json")
 
 
+def read_credentials() -> dict:
+    """Return legendary's saved session dict (from ``user.json``), or ``{}``."""
+    try:
+        with open(credentials_path(), encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def set_credentials(token: dict) -> str:
     """Write an Epic token response into legendary's session file.
 

@@ -179,6 +179,33 @@ def test_login_succeeds_via_http_exchange_without_legendary(
     assert finished["account_id"] == "acct-real"
 
 
+def test_exchange_feeds_legendary_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When legendary is installed it must receive the code first (it spends it)."""
+    from vitrine.sources.epic import legendary as lg
+    from vitrine.sources.epic.auth import EpicTokenStore
+    from vitrine.ui.epic_login_dialog import EpicLoginDialog
+
+    calls: list[str] = []
+    monkeypatch.setattr(lg, "is_installed", lambda: True)
+    monkeypatch.setattr(lg, "auth", lambda code: calls.append("legendary"))
+    monkeypatch.setattr(
+        "vitrine.ui.epic_login_dialog.obtain_token",
+        lambda code: calls.append("http") or {"access_token": "t"},
+    )
+
+    finished: dict = {}
+    dialog = EpicLoginDialog(
+        EpicTokenStore(str(tmp_path), "abc"),
+        on_complete=lambda ok, acct, code: finished.update(ok=ok, acct=acct),
+    )
+    dialog._exchange_code("THE_CODE")
+    assert finished["ok"] is True
+    assert calls == ["legendary", "http"], calls
+    assert calls[0] == "legendary"
+
+
 def test_epic_login_dialog_extracts_auth_body() -> None:
     """The redirect page body's authorizationCode is read for the exchange."""
     from vitrine.ui.epic_login_dialog import _extract_code_from_body
@@ -438,3 +465,15 @@ def test_set_credentials_writes_user_json(tmp_path: Path, monkeypatch: pytest.Mo
     assert data["account_id"] == "acct"
     # Must land in the user.json legendary's login reads.
     assert path == str(configure_dir / "user.json")
+
+
+def test_read_credentials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from vitrine.sources.epic import legendary as lg
+
+    config_dir = tmp_path / "legendary"
+    config_dir.mkdir(parents=True)
+    monkeypatch.setattr(lg, "LEGENDARY_CONFIG", (str(config_dir),))
+    # no file yet
+    assert lg.read_credentials() == {}
+    lg.set_credentials({"account_id": "acct-9", "access_token": "t"})
+    assert lg.read_credentials()["account_id"] == "acct-9"

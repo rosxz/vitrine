@@ -167,44 +167,39 @@ class EpicLoginDialog(Gtk.Window):
     def _exchange_code(self, code: str) -> None:
         last_error: Exception | None = None
 
-        # Path 1: our own HTTP exchange -- works even without legendary installed.
+        # Path 1: let legendary consume the code FIRST and write its own
+        # user.json. The code is single-use, so it must not be spent by our own
+        # exchange before legendary has a chance to persist its session.
+        legendary_ok = False
+        if lg.is_installed():
+            try:
+                lg.auth(code)  # `legendary auth --code` -> writes user.json
+                legendary_ok = True
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("legendary auth failed: %s", exc)
+                last_error = exc
+        else:
+            logger.info("legendary not installed; skipping legendary import")
+
+        # Path 2: our own HTTP exchange, used for account-id resolution and when
+        # legendary is not installed. If legendary already spent the (single-use)
+        # code in Path 1 this may fail -- that is fine, legendary is authoritative.
         token: dict | None = None
         account_id = ""
         try:
             token = obtain_token(code)
             account_id = self._resolve_account(token)
             self.store.set_credentials(code, token)
-            if lg.is_installed():
-                # Write the token into legendary's own session file so it can
-                # authenticate (and refresh) without us re-using the spent code.
-                try:
-                    lg.set_credentials(token)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Could not write legendary credentials: %s", exc)
-        except Exception as exc:  # noqa: BLE001 - fall back to legendary
-            logger.warning("Vitrine HTTP exchange failed: %s", exc)
-            last_error = exc
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Vitrine HTTP exchange failed (non-fatal if legendary worked): %s", exc)
+            if last_error is None:
+                last_error = exc
 
-        # Path 2: if our own exchange did not yield a token, let legendary
-        # import the login code itself.
-        legendary_ok = bool(token)
-        if not legendary_ok:
-            try:
-                if lg.is_installed():
-                    lg.auth(code)
-                    legendary_ok = True
-                else:
-                    logger.info("legendary not installed; skipping legendary import")
-                    if last_error is None:
-                        last_error = lg.LegendaryError("legendary is not installed")
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("legendary auth failed: %s", exc)
-                if last_error is None:
-                    last_error = exc
-
-        # Resolve the account id from the stored token if we got none above.
+        # Resolve the account id from legendary's saved session or our store.
         if not account_id:
             account_id = self._resolve_account(self.store.load().get("token") or {})
+        if not account_id and lg.is_installed():
+            account_id = str(lg.read_credentials().get("account_id") or "")
 
         if token is not None or legendary_ok:
             self._set_status("")
