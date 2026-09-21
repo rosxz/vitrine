@@ -228,7 +228,9 @@ def test_list_games_parses_legendary_json(monkeypatch: pytest.MonkeyPatch) -> No
     assert games[0]["title"] == "HITMAN 3"
 
 
-def test_auth_passes_code(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auth_passes_authorization_code_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from vitrine.sources.epic import legendary as lg
 
     seen: list = []
@@ -236,7 +238,19 @@ def test_auth_passes_code(monkeypatch: pytest.MonkeyPatch) -> None:
         lg, "_run", lambda args, timeout: (seen.append(list(args)) or _ok_proc())
     )
     lg.auth("code999")
-    assert seen == [["auth", "--token", "code999"]]
+    # The embedded login hands over an authorization code -> --code.
+    assert seen == [["auth", "--code", "code999"]]
+
+
+def test_auth_exchange_uses_token_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vitrine.sources.epic import legendary as lg
+
+    seen: list = []
+    monkeypatch.setattr(
+        lg, "_run", lambda args, timeout: (seen.append(list(args)) or _ok_proc())
+    )
+    lg.auth("exch-1", exchange=True)
+    assert seen == [["auth", "--token", "exch-1"]]
 
 
 def _ok_proc() -> subprocess.CompletedProcess:

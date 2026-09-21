@@ -183,6 +183,8 @@ class EpicLoginDialog(Gtk.Window):
         legendary_ok = False
         try:
             if lg.is_installed():
+                # Epic's embedded login delivers an authorization code; import
+                # it so legendary saves credentials under the right grant.
                 lg.auth(code)
                 legendary_ok = True
             else:

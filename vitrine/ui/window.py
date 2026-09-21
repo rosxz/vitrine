@@ -654,13 +654,17 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     # -- download state ---------------------------------------------------------
 
-    def _start_download(self, game: Game, command: list[str]) -> object:
-        """Run ``command`` as a tracked download job, streamed to a log window."""
+    def _start_download(self, game: Game, command: list[str], *, log: bool = True) -> object:
+        """Run ``command`` as a tracked download job, optionally streamed to a log."""
         from ..downloads import run_download
+        from ..sources.epic_source import EPIC_SHOW_DEBUG_SETTING
         from .log_window import ExecutionLogWindow
 
-        log = ExecutionLogWindow(f"Installing {game.name}", parent=self)
-        log.present()
+        if log and self.library.setting(EPIC_SHOW_DEBUG_SETTING, False):
+            window = ExecutionLogWindow(f"Installing {game.name}", parent=self)
+            window.present()
+        else:
+            window = None
 
         def _on_progress(fraction: float) -> None:
             GLib.idle_add(self._update_download_progress, game, fraction)
@@ -672,7 +676,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             command,
             progress=_on_progress,
             done=_on_done,
-            on_line=log.append_line,
+            on_line=window.append_line if window is not None else None,
         )
         if game.id is not None:
             self._downloads[game.id] = job
@@ -934,12 +938,16 @@ class VitrineWindow(Adw.ApplicationWindow):
             return
 
         from ..downloads import run_download
+        from ..sources.epic_source import EPIC_SHOW_DEBUG_SETTING
         from .log_window import ExecutionLogWindow
 
-        log = ExecutionLogWindow(f"Launching {game.name}", parent=self)
-        log.present()
+        if self.library.setting(EPIC_SHOW_DEBUG_SETTING, False):
+            log = ExecutionLogWindow(f"Launching {game.name}", parent=self)
+            log.present()
+        else:
+            log = None
         command = [lg.legendary_binary(), "-y", "launch", app]
-        job = run_download(command, on_line=log.append_line)
+        job = run_download(command, on_line=log.append_line if log is not None else None)
         if game.id is not None:
             self._downloads[game.id] = job
         self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name} via legendary"))

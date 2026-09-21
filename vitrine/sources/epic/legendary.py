@@ -87,15 +87,16 @@ def _require_success(result: subprocess.CompletedProcess, action: str) -> None:
         raise LegendaryError(f"legendary {action} failed: {detail}")
 
 
-def auth(code: str) -> None:
-    """Import an OAuth **exchange** code into legendary's credential store.
+def auth(code: str, *, exchange: bool = False) -> None:
+    """Import a login code into legendary's credential store.
 
-    Legendary's ``auth`` command exposes two flags: ``--code`` (authorization
-    code) and ``--token`` (exchange token). Epic's web login delivers an
-    *exchange* code, so use ``--token`` -- that is the battle-tested path
-    legendary itself uses after a webview login.
+    Legendary's ``auth`` accepts either an **authorization code** (``--code``)
+    or an **exchange token** (``--token``). Epic's embedded login delivers an
+    authorization code, so that is the default; set ``exchange=True`` when the
+    value is an exchange token instead.
     """
-    _require_success(_run(["auth", "--token", code], timeout=AUTH_TIMEOUT), "auth")
+    flag = "--token" if exchange else "--code"
+    _require_success(_run(["auth", flag, code], timeout=AUTH_TIMEOUT), "auth")
 
 
 def is_authenticated() -> bool:
