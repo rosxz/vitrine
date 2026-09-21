@@ -1010,6 +1010,10 @@ class VitrineWindow(Adw.ApplicationWindow):
         env = dict(os.environ)
         env["WINEARCH"] = "win64"
         env["WINEDLLOVERRIDES"] = "winemenubuilder.exe=d"
+        if is_proton:
+            from ..prefix import _ensure_library_path
+
+            _ensure_library_path(env, ["/lib", "/lib64", "/usr/lib", "/usr/lib64"])
 
         # Assemble the wrapper chain. Outermost -> innermost:
         #   steam-run (Steam runtime libs for Proton) -> gamescope (display/GPU,

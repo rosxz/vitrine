@@ -65,13 +65,46 @@ def test_prepare_prefix_initialises_and_detects_mismatch(
     assert envs and envs[0].get("WINEARCH") == "win64"
     assert envs[0].get("WINEPREFIX") == prefix
 
-    # A 32-bit existing prefix cannot be used by our win64 runner.
+    # A 32-bit existing prefix cannot be used by our win64 runner. Give it a
+    # kernel32.dll marker so it looks fully bootstrapped (not split-init).
     calls.clear()
     p32 = tmp_path / "p32"
-    (p32 / "drive_c" / "windows" / "system32").mkdir(parents=True)
+    kern = p32 / "drive_c" / "windows" / "system32" / "kernel32.dll"
+    kern.parent.mkdir(parents=True)
+    kern.write_text("x")
     (p32 / "system.reg").write_text("x")
     with pytest.raises(ValueError, match="win32"):
         prepare_prefix(str(wine), str(p32), steam_run=False)
+
+
+def test_prepare_rebuilds_half_initialised_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A prefix with registry but no DLLs is rebuilt (kernel32 present)."""
+    wine = _fake_wine(tmp_path)
+    prefix = str(tmp_path / "broken")
+    root = Path(prefix)
+    (root / "drive_c" / "windows" / "system32").mkdir(parents=True)
+    (root / "system.reg").write_text("x")  # registry present, DLLs missing
+    (root / "useless.db").write_text("x")
+
+    import subprocess
+
+    calls: list[str] = []
+    envs: list[dict] = []
+
+    def _fake_run(*a, **k):
+        calls.append(" ".join(a[0]))
+        envs.append(k.get("env") or {})
+        return _proc(0)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    prepare_prefix(str(wine), prefix, steam_run=False)
+
+    # Whole dir was cleared, then wineboot ran fresh.
+    assert not (root / "useless.db").exists()
+    assert any("wineboot" in c for c in calls)
+    assert envs[0].get("WINEARCH") == "win64"
 
 
 def test_open_winecfg_command(tmp_path: Path) -> None:

@@ -68,6 +68,15 @@ def prepare_prefix(
     root = _prefix_root(prefix)
     root.mkdir(parents=True, exist_ok=True)
 
+    # A half-initialised prefix (registry present but DLLs missing) is the
+    # broken "could not load kernel32.dll" state. Wine refuses to finish
+    # bootstrapping an existing-but-incomplete prefix, so clear it completely
+    # and let it be recreated fresh. Handle this before the arch check -- a
+    # broken prefix may report a misleading architecture.
+    if _kernel32_missing(root):
+        logger.warning("Rebuilding incomplete prefix %s (clearing %s)", prefix, root)
+        del_existing(root)
+
     existing = detect_prefix_arch(prefix)
     required = desired_arch(wine_binary)
     if existing is not None and existing != required:
@@ -77,15 +86,33 @@ def prepare_prefix(
         )
 
     # If the prefix already exists and matches, nothing to do.
-    if existing == required and not _needs_boot(root):
+    if not _needs_boot(root):
         return
 
     _run_wineboot(wine_binary, prefix, steam_run=steam_run)
 
 
+def del_existing(root: Path) -> None:
+    """Remove all contents of the prefix dir, leaving an empty prefix dir."""
+    import shutil as _sh
+
+    for entry in list(root.iterdir()):
+        if entry.is_dir():
+            _sh.rmtree(entry, ignore_errors=True)
+        else:
+            entry.unlink(missing_ok=True)
+
+
 def _needs_boot(root: Path) -> bool:
     """True when the prefix is fresh (no wineboot output yet)."""
     return not (root / "drive_c" / "windows" / "system32").is_dir()
+
+
+def _kernel32_missing(root: Path) -> bool:
+    """True when the prefix is half-initialised (registry written but no DLLs)."""
+    return (root / "system.reg").is_file() and not (
+        root / "drive_c" / "windows" / "system32" / "kernel32.dll"
+    ).exists()
 
 
 def _run_wineboot(wine_binary: str, prefix: str, *, steam_run: bool) -> None:
@@ -140,4 +167,17 @@ def open_winecfg_command(
     env = dict(os.environ)
     env["WINEPREFIX"] = os.path.expanduser(prefix)
     env["WINEARCH"] = "win64"
+    _ensure_library_path(env, ["/lib", "/lib64", "/usr/lib", "/usr/lib64"])
     return command, env
+
+
+def _ensure_library_path(env: dict, dirs: list[str]) -> None:
+    """Prepend existing dirs to LD_LIBRARY_PATH so nested dls (wine's freetype)
+    resolve. steam-run's bwrap FHS mounts libraries under /lib but does not add
+    it to the loader search path, so Wine's own dlopen("libfreetype.so.*") fails
+    and GUIs render frames with no fonts.
+    """
+    existing = env.get("LD_LIBRARY_PATH")
+    present = [d for d in dirs if os.path.isdir(d)]
+    merged = present + ([existing] if existing else [])
+    env["LD_LIBRARY_PATH"] = ":".join(d for d in merged if d)
