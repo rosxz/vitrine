@@ -698,11 +698,24 @@ class VitrineWindow(Adw.ApplicationWindow):
     def _finish_download(self, game: Game, returncode: int) -> None:
         """Install finished (or failed): clear download state and toast."""
         self._set_downloading_ui(game, False)
-        if returncode == 0:
-            self.reload()
-            self.toasts.add_toast(Adw.Toast(title=f"Installed {game.name}"))
-        else:
+        if returncode != 0:
             self.toasts.add_toast(Adw.Toast(title=f"Install failed for {game.name} ({returncode})"))
+            return
+        # Re-sync installed state so legendary's (now-installed) games mark the
+        # library rows as installed and route to Launch instead of Install.
+        try:
+            if game.source == "epic":
+                from ..sources.epic_source import EpicSource
+
+                EpicSource(self.library).sync_installed()
+            elif game.source == "gog":
+                from ..sources.gog_source import GogSource
+
+                GogSource(self.library).sync_installed()
+        except Exception:  # noqa: BLE001
+            logger.exception("sync_installed after install failed")
+        self.reload()
+        self.toasts.add_toast(Adw.Toast(title=f"Installed {game.name}"))
 
     # -- Epic Games Store process buttons ---------------------------------------
 
