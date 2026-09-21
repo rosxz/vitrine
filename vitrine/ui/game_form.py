@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from gi.repository import Gtk
+from gi.repository import Adw, Gtk
 
 from ..library import Game
 from ..util import expand
@@ -73,12 +73,16 @@ class GameForm(Gtk.Box):
         on_browse: Callable[[str, _LabeledEntry], None] | None = None,
         *,
         allow_provider: bool = True,
+        runner_list: list[tuple[str, str]] | None = None,
+        default_runner: str = "wine-64",
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self._on_browse = on_browse or (lambda _kind, _entry: None)
         self._on_source_changed: Callable[[str], None] | None = None
         self._allow_provider = allow_provider
         self._loading = False
+        self._runner_list = runner_list or []
+        self._default_runner_id = default_runner
 
         self.name = _LabeledEntry("Name")
         self.executable = _LabeledEntry("Executable", browse=True)
@@ -89,6 +93,17 @@ class GameForm(Gtk.Box):
         self.banner = _LabeledEntry("Banner image (wide hero)", browse=True)
 
         self.lutris_slug = _LabeledEntry("Lutris slug (defaults to game name)")
+
+        # Wine/Proton runner selector, with an explicit "use default" choice.
+        self.runner_row = Adw.ComboRow(title="Wine / Proton")
+        runner_ids = ["__default__"]
+        runner_names = ["Use default"]
+        for rid, rname in self._runner_list:
+            runner_ids.append(rid)
+            runner_names.append(rname)
+        self._runner_option_ids = runner_ids
+        self.runner_row.set_model(Gtk.StringList.new(runner_names))
+        self.runner_row.set_selected(0)
 
         art_sources = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         self._source_label = Gtk.Label(label="Artwork:", halign=Gtk.Align.START)
@@ -123,6 +138,7 @@ class GameForm(Gtk.Box):
         ):
             self.append(entry)
         self.append(art_sources)
+        self.append(self.runner_row)
 
         self._fields: dict[str, _LabeledEntry] = {
             "executable": self.executable,
@@ -164,6 +180,22 @@ class GameForm(Gtk.Box):
         self.banner.set(expand(game.banner))
         self.lutris_slug.set(game.lutris_slug)
         self.set_artwork_source(game.artwork_source)
+        self.set_runner(game.config.get("runner"))
+
+    def set_runner(self, runner_id: str | None) -> None:
+        """Select the per-game runner override, or the default if unset."""
+        if not runner_id or runner_id in ("__default__", "", self._default_runner_id):
+            self.runner_row.set_selected(0)
+            return
+        ids = self._runner_option_ids
+        if runner_id in ids:
+            self.runner_row.set_selected(ids.index(runner_id))
+
+    def runner(self) -> str | None:
+        """The per-game runner override id, or ``None`` to use the default."""
+        selected = self.runner_row.get_selected()
+        option = self._runner_option_ids[selected] if 0 <= selected < len(self._runner_option_ids) else "__default__"
+        return None if option == "__default__" else option
 
     def set_artwork_source(self, source: str) -> None:
         source = source or "lutris"
@@ -188,6 +220,8 @@ class GameForm(Gtk.Box):
 
     def build_game(self) -> Game:
         v = self._values()
+        runner = self.runner()
+        config = {"runner": runner} if runner else {}
         return Game(
             name=v["name"],
             runner="wine",
@@ -199,6 +233,7 @@ class GameForm(Gtk.Box):
             banner=v["banner"],
             artwork_source=v["artwork_source"],
             lutris_slug=v["lutris_slug"],
+            config=config,
             source="local",
             installed=True,
         )
@@ -214,6 +249,11 @@ class GameForm(Gtk.Box):
         game.banner = v["banner"]
         game.artwork_source = v["artwork_source"]
         game.lutris_slug = v["lutris_slug"]
+        runner = self.runner()
+        if runner:
+            game.config["runner"] = runner
+        else:
+            game.config.pop("runner", None)
         return game
 
     def _values(self) -> dict:

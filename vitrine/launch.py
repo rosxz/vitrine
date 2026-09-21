@@ -15,6 +15,7 @@ from pathlib import Path
 
 from . import paths
 from .library import Game
+from .runners import resolve_runner
 from .util import expand
 
 
@@ -139,16 +140,25 @@ def build_command(game: Game, config: dict) -> list[str]:
     return command
 
 
-def build_launch_plan(game: Game, config: dict) -> LaunchPlan:
+def build_launch_plan(game: Game, config: dict, runners_store: dict[str, str] | None = None) -> LaunchPlan:
     """Resolve everything needed to start a game."""
     executable = expand(game.executable)
     working_dir = expand(game.working_dir)
     if not working_dir and executable:
         working_dir = str(Path(executable).parent)
 
+    # Resolve the selected runner (per-game or default) to a concrete wine
+    # binary so ``wine_command`` uses the right runner. Native games don't use
+    # wine, so leave their config untouched.
+    if not _is_native(game.runner):
+        resolved = resolve_runner(config.get("runner"), runners_store, config.get("wine_binary"))
+        effective = {**config, "wine_binary": resolved}
+    else:
+        effective = config
+
     return LaunchPlan(
-        command=build_command(game, config),
-        env=build_env(game, config),
+        command=build_command(game, effective),
+        env=build_env(game, effective),
         working_dir=working_dir,
         prefix=str(wine_prefix_for(game)),
     )

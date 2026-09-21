@@ -25,6 +25,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "gamescope_fsr_sharpness": "",
     "gamescope_force_grab_cursor": True,
     "gamescope_hdr": False,
+    #: Runner id (a preset like ``wine-64`` or a discovered Wine/Proton build).
+    "runner": "wine-64",
     "wine_binary": None,
     "dll_overrides": "",
     "dxvk": True,

@@ -189,7 +189,12 @@ class AddGameWindow(_GameWindow):
         on_add: Callable[[Game], None],
         parent: Gtk.Widget | None = None,
     ) -> None:
-        super().__init__(library, title="Add a game", form=GameForm(allow_provider=False), parent=parent)
+        super().__init__(
+            library,
+            title="Add a game",
+            form=GameForm(allow_provider=False, **_runner_form_args(library)),
+            parent=parent,
+        )
         self._save_callback = on_add
 
     def _save_label(self) -> str:
@@ -215,7 +220,7 @@ class GameSettingsWindow(_GameWindow):
         parent: Gtk.Widget | None = None,
     ) -> None:
         self._game = game
-        form = GameForm(allow_provider=game.source != "local")
+        form = GameForm(allow_provider=game.source != "local", **_runner_form_args(library))
         form.connect_source_changed(self._on_source_changed)
         form.populate(game)
         super().__init__(
@@ -251,3 +256,13 @@ class GameSettingsWindow(_GameWindow):
 # windows even when they were dialogs).
 AddGameDialog = AddGameWindow
 GameSettingsDialog = GameSettingsWindow
+
+
+def _runner_form_args(library: Library) -> dict:
+    """Build GameForm kwargs listing available runners + the global default."""
+    from ..runners import DEFAULT_PROTON_SETTING, list_runners, load_runners_store
+
+    store = load_runners_store(library)
+    default = str(library.setting(DEFAULT_PROTON_SETTING, "wine-64") or "wine-64")
+    runner_list = [(r.id, r.name) for r in list_runners(store)]
+    return {"runner_list": runner_list, "default_runner": default}

@@ -52,17 +52,19 @@ class Runtime:
         with self._lock:
             return self._game
 
-    def start(self, game: Game, config: dict) -> None:
+    def start(self, game: Game, config: dict, runners_store: dict[str, str] | None = None) -> None:
         """Launch ``game`` under ``config`` and begin watching it.
 
-        Raises :class:`GameAlreadyRunning` if another game is still running.
+        ``runners_store`` maps runner ids to their wine-binary paths so the
+        selected runner can be resolved. Raises :class:`GameAlreadyRunning` if
+        another game is still running.
         """
         with self._lock:
             if self._process is not None:
                 name = self._game.name if self._game else "another game"
                 raise GameAlreadyRunning(f"{name} is still running")
 
-            process = launch.launch(launch.build_launch_plan(game, config))
+            process = launch.launch(launch.build_launch_plan(game, config, runners_store))
             self._process = process
             self._game = game
             self._started_at = time.monotonic()

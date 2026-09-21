@@ -31,6 +31,16 @@ ALL_GAMES = "__all__"
 HIDE_NOT_INSTALLED = "hide_not_installed"
 
 
+def _row_widget_shim(widget: Gtk.Widget) -> Gtk.Widget:
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    box.set_margin_top(4)
+    box.set_margin_bottom(4)
+    box.set_margin_start(16)
+    box.set_margin_end(16)
+    box.append(widget)
+    return box
+
+
 class VitrineWindow(Adw.ApplicationWindow):
     def __init__(self, application: Adw.Application, library: Library) -> None:
         super().__init__(application=application, title="Vitrine")
@@ -177,6 +187,22 @@ class VitrineWindow(Adw.ApplicationWindow):
         scroller.set_vexpand(True)
         sidebar.append(scroller)
 
+# Default Proton / Wine selector, pinned to the bottom.
+        self._runner_ids: list[str] = []
+        self.default_runner_row = Gtk.ComboRow(title="Default Proton")
+        self.default_runner_row.set_subtitle("Wine / Proton for new games")
+        self.default_runner_row.set_margin_top(8)
+        self.default_runner_row.set_margin_bottom(4)
+        manage = Gtk.Button(label="Manage Proton…")
+        manage.connect("clicked", self.on_manage_proton)
+        manage.set_halign(Gtk.Align.FILL)
+        manage.set_margin_start(12)
+        manage.set_margin_end(12)
+        manage.set_margin_bottom(8)
+        sidebar.append(self.default_runner_row)
+        sidebar.append(_row_widget_shim(manage))
+        self._refresh_runner_dropdown()
+
         # Artwork-fetch progress, shown only while a background fetch runs.
         self.art_progress = Gtk.ProgressBar()
         self.art_progress.set_show_text(True)
@@ -244,6 +270,32 @@ class VitrineWindow(Adw.ApplicationWindow):
             "view-reveal-symbolic" if self.hide_not_installed else "view-conceal-symbolic"
         )
         self.reload()
+
+    def _refresh_runner_dropdown(self) -> None:
+        from ..runners import DEFAULT_PROTON_SETTING, list_runners, load_runners_store
+
+        runners = list_runners(load_runners_store(self.library))
+        self._runner_ids = [r.id for r in runners]
+        names = [r.name for r in runners]
+        self.default_runner_row.set_model(Gtk.StringList.new(names))
+        current = str(self.library.setting(DEFAULT_PROTON_SETTING, "wine-64") or "wine-64")
+        if current in self._runner_ids:
+            self.default_runner_row.set_selected(self._runner_ids.index(current))
+        elif self._runner_ids:
+            self.default_runner_row.set_selected(0)
+        self.default_runner_row.connect("notify::selected-item", self._on_default_runner_selected)
+
+    def _on_default_runner_selected(self, row: Gtk.ComboRow, _pspec: object) -> None:
+        from ..runners import DEFAULT_PROTON_SETTING
+
+        index = row.get_selected()
+        if 0 <= index < len(self._runner_ids):
+            self.library.set_setting(DEFAULT_PROTON_SETTING, self._runner_ids[index])
+
+    def on_manage_proton(self, _button: Gtk.Button) -> None:
+        from .proton_window import ProtonWindow
+
+        ProtonWindow(self.library, on_changed=self._refresh_runner_dropdown, parent=self).present()
 
     def on_settings_clicked(self, _button: Gtk.Button) -> None:
         SettingsDialog(
@@ -471,6 +523,38 @@ class VitrineWindow(Adw.ApplicationWindow):
             logger.exception("Epic sync failed")
             self.toasts.add_toast(Adw.Toast(title=f"Epic sync failed: {error}"))
 
+    def _install_epic_game(self, game: Game) -> None:
+        """Install an Epic game through legendary (off the UI thread)."""
+        from ..sources.epic import legendary as lg
+
+        app = game.source_id or ""
+        if not app:
+            self.toasts.add_toast(Adw.Toast(title=f"No Epic app id for {game.name}"))
+            return
+        if not lg.is_installed():
+            self.toasts.add_toast(
+                Adw.Toast(title="Legendary is required to install Epic games. Install 'legendary' first.")
+            )
+            return
+        self.toasts.add_toast(Adw.Toast(title=f"Installing {game.name}…"))
+        threading.Thread(target=self._install_epic_worker, args=(app, game.name), daemon=True).start()
+
+    def _install_epic_worker(self, app: str, name: str) -> None:
+        try:
+            from ..sources.epic import legendary as lg
+
+            lg.install(app)
+        except Exception as exc:  # noqa: BLE001
+            GLib.idle_add(
+                self.toasts.add_toast,
+                Adw.Toast(title=f"Install failed for {name}: {exc}"),
+            )
+            return
+        GLib.idle_add(
+            self.toasts.add_toast,
+            Adw.Toast(title=f"Installed {name}"),
+        )
+
     # -- Epic Games Store process buttons ---------------------------------------
 
     def on_epic_store_launch(self, _button: Gtk.Button | None = None) -> None:
@@ -636,6 +720,11 @@ class VitrineWindow(Adw.ApplicationWindow):
         if game.source == "steam":
             self._launch_steam_game(game)
             return
+        # Owned-but-not-installed GOG/Epic titles have no local executable; route
+        # to install/store rather than launching `wine` with an empty program.
+        if game.source in ("gog", "epic") and not game.installed:
+            self.install_game(game)
+            return
         if game.id is None:
             return
         if self.runtime.running_game is game:
@@ -643,7 +732,9 @@ class VitrineWindow(Adw.ApplicationWindow):
             return
         config = game.merged_config(self.library.global_config())
         try:
-            self.runtime.start(game, config)
+            from ..runners import load_runners_store
+
+            self.runtime.start(game, config, load_runners_store(self.library))
             self._running_started_monotonic = GLib.get_monotonic_time() / 1e6
         except GameAlreadyRunning as error:
             self.toasts.add_toast(Adw.Toast(title=str(error)))
@@ -737,12 +828,24 @@ class VitrineWindow(Adw.ApplicationWindow):
             items.append(("Open store page", lambda: self.open_store_page(game)))
             return items
         if game.source != "local" and not game.installed:
-            # Other store entries that aren't installed: store link only.
+            # Owned but not installed: offer install for Epic/GOG, store link else.
+            if game.source in ("epic", "gog"):
+                items.append(("Install…", lambda: self.install_game(game)))
             items.append(("Open store page", lambda: self.open_store_page(game)))
             return items
         # Locally installed (local games or installed store games): removable.
         items.append(("Remove from library", lambda: self.on_game_removed(game)))
         return items
+
+    def install_game(self, game: Game) -> None:
+        """Install an owned but not-yet-installed store game."""
+        if game.source == "epic":
+            self._install_epic_game(game)
+        else:
+            self.open_store_page(game)
+            self.toasts.add_toast(
+                Adw.Toast(title="GOG install not yet automated — use the store or the GOG Galaxy client")
+            )
 
     # -- runtime callbacks (come from a background thread) ----------------------
 
