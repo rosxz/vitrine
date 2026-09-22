@@ -7,9 +7,12 @@ proton-fixes that Vitrine previously hand-rolled (seeding default_pfx, creating
 dos drives, installing vkd3d/dxvk). It needs a Steam Runtime (steamrt4) fetched
 on first use.
 
-This module builds the umu command and the env vars it expects: ``PROTONPATH``
-(the Proton dist), ``GAMEID``, ``WINEPREFIX`` and the Steam compat env. Engine-
-side, GUI-free.
+On NixOS, umu's inner Steam Runtime (pressure-vessel) must run inside an FHS
+environment (``steam-run``) so it can build its sandbox (a working ``/usr`` and
+``ld.so.cache``). Running it with a polluted ``LD_LIBRARY_PATH`` (e.g. Nix store
+GTK/GL libs) breaks pressure-vessel with "pv-adverb: Cannot create temporary
+directory". So we launch it through ``steam-run`` with a clean, minimal
+environment, only carrying the display/auth vars the game needs.
 """
 
 from __future__ import annotations
@@ -19,6 +22,34 @@ import shutil
 
 #: Env override for the bundled umu-run (set by the flake, mirrors VITRINE_*).
 UMU_ENV = "VITRINE_UMU"
+
+#: Env vars passed through to the umu/Proton process (everything else is dropped
+#: so pressure-vessel gets a clean FHS environment inside steam-run).
+_UMP_PASSTHROUGH = (
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_RUNTIME_DIR",
+    "XAUTHORITY",
+    "LANG",
+    "LC_ALL",
+    "HOST_LC_ALL",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "XDG_SESSION_TYPE",
+    "XDG_CURRENT_DESKTOP",
+    "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "GST_PLUGIN_SYSTEM_PATH",
+    "GST_PLUGIN_SYSTEM_PATH_1_0",
+    "VK_ICD_FILENAMES",
+    "LIBGL_DRIVERS_PATH",
+    "MESA_DRIVER_PATH",
+    "UMU_LOG",
+    "PROTON_LOG",
+)
 
 
 class UmuError(Exception):
@@ -51,33 +82,49 @@ def umu_env(
     prefix: str,
     proton_path: str | None = None,
     game_id: str = "umu-default",
+    extra: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """Return the environment variables umu-run needs to launch a game.
+    """Return a clean environment for launching a game through umu.
 
-    ``proton_path`` is the Proton distribution directory (e.g.
-    ``.../Proton 11.0``). When omitted, umu uses its default/latest Proton.
+    Builds a minimal env (only the passthrough vars) so pressure-vessel inside
+    steam-run isn't polluted by the app's Nix ``LD_LIBRARY_PATH``. Always sets
+    ``GAMEID``, ``WINEPREFIX`` and ``PROTONPATH``; Steam compat vars are filled
+    by umu itself, but we provide the ones Vitrine knows.
     """
-    env = dict(os.environ)
-    if "GAMEID" not in env:
-        env["GAMEID"] = game_id
-    if "WINEPREFIX" not in env:
-        env["WINEPREFIX"] = os.path.expanduser(prefix)
-    if "PROTONPATH" not in env and proton_path:
+    env: dict[str, str] = {}
+    for key in _UMP_PASSTHROUGH:
+        if key in os.environ and os.environ[key] != "":
+            env[key] = os.environ[key]
+    # A safe, minimal PATH for the sandboxed FHS.
+    env.setdefault("PATH", "/usr/bin:/bin:/run/current-system/sw/bin")
+    env["GAMEID"] = game_id
+    env["WINEARCH"] = "win64"
+    env["PROTON_VERB"] = "waitforexitandrun"
+    env["WINEPREFIX"] = os.path.expanduser(prefix)
+    if proton_path:
         env["PROTONPATH"] = proton_path
-    # Steam compat env (some Proton versions/tools expect these).
-    env["STEAM_COMPAT_DATA_PATH"] = env.get("WINEPREFIX")
-    env.setdefault("STEAM_COMPAT_CLIENT_INSTALL_PATH", os.path.expanduser("~/.local/share/Steam"))
+    env["STEAM_COMPAT_DATA_PATH"] = env["WINEPREFIX"]
+    env["STEAM_COMPAT_INSTALL_PATH"] = os.path.expanduser("~/Games")
+    if extra:
+        # Never let extra override the core umu vars.
+        for key, value in extra.items():
+            if key not in env:
+                env[key] = value
     return env
 
 
-def umu_command(executable: str, args: list[str] | None = None) -> list[str]:
-    """Build the ``umu-run <executable> [args...]`` command line.
+def umu_command(executable: str, args: list[str] | None = None, *, fhs: bool = True) -> list[str]:
+    """Build the ``steam-run? umu-run <executable> [args...]`` command line.
 
-    The first non-option argument is the program to run under Proton/Wine; umu
-    passes any remaining arguments to it. ``executable`` should be an absolute
-    host path (self-mapped via Wine).
+    On NixOS the whole umu invocation is wrapped in ``steam-run`` (NixOS's FHS
+    bwrap) so Steam Runtime 4 / pressure-vessel can build its sandbox. The first
+    non-option argument is the program to run under Proton/Wine.
     """
-    command = [umu_binary(), executable]
+    command: list[str] = []
+    if fhs and shutil.which("steam-run"):
+        command.append("steam-run")
+    command.append(umu_binary())
+    command.append(executable)
     if args:
         command += list(args)
     return command

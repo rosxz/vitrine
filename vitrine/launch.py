@@ -84,6 +84,7 @@ def build_env(game: Game, config: dict) -> dict[str, str]:
     # Steam compat env. Set those so the generic wine path (local/GOG) also goes
     # through umu's proper prefix/runtime setup.
     wine_binary = str(config.get("wine_binary") or "wine")
+    isolate = False
     if _is_proton_path(wine_binary):
         from .wine import umu
 
@@ -92,7 +93,21 @@ def build_env(game: Game, config: dict) -> dict[str, str]:
             proton_path=_proton_dist_dir(wine_binary),
             game_id=game.slug or str(game.source_id or "game"),
         )
-    env = driver_env(env)
+        isolate = True
+    if not isolate:
+        env = driver_env(env)
+    else:
+        from .gpu import discover
+
+        # For umu/pressure-vessel we must NOT inject the app's Nix LD_LIBRARY_PATH
+        # (it breaks the Steam Runtime sandbox). Only surface the driver env vars
+        # that don't mutate the loader search path.
+        found = discover()
+        if found.icd_json:
+            env.setdefault("VK_ICD_FILENAMES", found.icd_json)
+        if found.dri_dir:
+            env.setdefault("LIBGL_DRIVERS_PATH", found.dri_dir)
+            env.setdefault("MESA_DRIVER_PATH", found.dri_dir)
 
     overrides: list[str] = []
     if not config.get("dxvk", True):
@@ -157,22 +172,29 @@ def wine_command(game: Game, config: dict) -> list[str]:
     Native Linux games are launched directly; everything else goes through the
     configured Wine/Proton runner (``config["wine_binary"]`` or ``wine`` on
     PATH). Proton builds launched through the unified launcher (umu-run) get the
-    executable passed straight to umu, which handles the prefix + runtime.
+    executable passed straight to umu, wrapped in ``steam-run`` so Steam Runtime
+    4 / pressure-vessel can build its sandbox, which handles prefix + runtime.
     """
-    command: list[str] = []
-    if not _is_native(game.runner):
-        wine_binary = str(config.get("wine_binary") or "wine")
-        if _is_proton_path(wine_binary):
-            from .wine import umu
-
-            command.append(umu.umu_binary())
-        else:
-            command.append(wine_binary)
     executable = expand(game.executable)
-    if executable:
-        command.append(executable)
+    args: list[str] = []
     if game.arguments:
-        command += shlex.split(game.arguments)
+        args += shlex.split(game.arguments)
+    if _is_native(game.runner):
+        command: list[str] = []
+        if executable:
+            command.append(executable)
+        return command + args
+
+    wine_binary = str(config.get("wine_binary") or "wine")
+    if _is_proton_path(wine_binary):
+        from .wine import umu
+
+        command = umu.umu_command(executable, args) if executable else []
+    else:
+        command = [wine_binary]
+        if executable:
+            command.append(executable)
+        command += args
     return command
 
 

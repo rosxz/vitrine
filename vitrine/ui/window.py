@@ -1165,7 +1165,16 @@ class VitrineWindow(Adw.ApplicationWindow):
                 or os.path.dirname(os.path.dirname(os.path.expanduser(wine_bin))),
                 game_id=app,
             )
-            env = apply_gpu_env(env)
+            # Do NOT apply driver_env here: its Nix LD_LIBRARY_PATH breaks
+            # pressure-vessel. Only surface non-loader driver vars.
+            from ..gpu import discover as _gpu_discover
+
+            _gpu = _gpu_discover()
+            if _gpu.icd_json:
+                env.setdefault("VK_ICD_FILENAMES", _gpu.icd_json)
+            if _gpu.dri_dir:
+                env.setdefault("LIBGL_DRIVERS_PATH", _gpu.dri_dir)
+                env.setdefault("MESA_DRIVER_PATH", _gpu.dri_dir)
             from ..launch import install_d3d_extras
 
             d3d = install_d3d_extras(wine_prefix)
@@ -1174,6 +1183,8 @@ class VitrineWindow(Adw.ApplicationWindow):
                 env["WINEDLLOVERRIDES"] = (
                     env["WINEDLLOVERRIDES"] + ";" if env["WINEDLLOVERRIDES"] else ""
                 ) + d3d
+            # pressure-vessel needs the FHS environment steam-run provides.
+            command = ["steam-run", *command]
         else:
             from ..prefix import prepare_prefix
 

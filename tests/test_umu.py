@@ -21,23 +21,46 @@ def test_umu_binary_missing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         umu.umu_binary()
 
 
-def test_umu_env_sets_protocol_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_umu_env_is_clean_and_sets_protocol_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Pollute like the app might; umu_env must NOT leak LD_LIBRARY_PATH.
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/nix/store/gtk/lib")
     env = umu.umu_env("/home/u/.local/share/vitrine/prefixes/game", proton_path="/proton", game_id="abc")
     assert env["GAMEID"] == "abc"
     assert env["WINEPREFIX"] == "/home/u/.local/share/vitrine/prefixes/game"
     assert env["PROTONPATH"] == "/proton"
+    assert env["WINEARCH"] == "win64"
+    assert "LD_LIBRARY_PATH" not in env
+    assert "STEAM_RUNTIME_LIBRARY_PATH" not in env
     assert env["STEAM_COMPAT_DATA_PATH"] == env["WINEPREFIX"]
-    assert env["STEAM_COMPAT_CLIENT_INSTALL_PATH"]
+    assert "/usr/bin:/bin" in env["PATH"]
 
 
-def test_umu_env_does_not_override_existing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GAMEID", "preset")
+def test_umu_env_always_sets_game_and_verb(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Whatever the caller passes, GAMEID and PROTON_VERB are fixed.
+    monkeypatch.delenv("GAMEID", raising=False)
     env = umu.umu_env("/p", proton_path="/proton", game_id="other")
-    # GAMEID from the environment is preserved (does not replace).
-    assert env["GAMEID"] == "preset"
+    assert env["GAMEID"] == "other"
+    assert env["PROTON_VERB"] == "waitforexitandrun"
 
 
-def test_umu_command_build(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_umu_env_extra_does_not_override_core(monkeypatch: pytest.MonkeyPatch) -> None:
+    env = umu.umu_env("/p", proton_path="/proton", game_id="abc", extra={"GAMEID": "evil", "FOO": "1"})
+    assert env["GAMEID"] == "abc"  # core wins
+    assert env["FOO"] == "1"
+
+
+def test_umu_command_wraps_in_steam_run(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(umu.UMU_ENV, "/opt/umu-run")
+
+    def _which(name):
+        return "/run/current-system/sw/bin/steam-run" if name == "steam-run" else None
+
+    monkeypatch.setattr(umu.shutil, "which", _which)
     cmd = umu.umu_command("/games/Game.exe", ["--fullscreen"])
-    assert cmd == ["/opt/umu-run", "/games/Game.exe", "--fullscreen"]
+    assert cmd == ["steam-run", "/opt/umu-run", "/games/Game.exe", "--fullscreen"]
+
+
+def test_umu_command_without_fhs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(umu.UMU_ENV, "/opt/umu-run")
+    cmd = umu.umu_command("/games/Game.exe", fhs=False)
+    assert cmd == ["/opt/umu-run", "/games/Game.exe"]

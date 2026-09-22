@@ -204,12 +204,18 @@ def test_wine_command_routes_proton_through_umu(
     tmp_path, monkeypatch
 ) -> None:
     from vitrine import launch
+    from vitrine.wine import umu
 
     root, wine = _fake_proton(tmp_path)
-    monkeypatch.setenv("VITRINE_UMU", "/opt/umu-run")
+    monkeypatch.setenv(umu.UMU_ENV, "/opt/umu-run")
+
+    def _which(_n):
+        return "/run/current-system/sw/bin/steam-run" if _n == "steam-run" else None
+
+    monkeypatch.setattr(umu.shutil, "which", _which)
     game = Game(name="G", runner="wine", executable="/games/G.exe")
     cmd = launch.wine_command(game, {"wine_binary": str(wine)})
-    assert cmd == ["/opt/umu-run", "/games/G.exe"]
+    assert cmd == ["steam-run", "/opt/umu-run", "/games/G.exe"]
 
 
 def test_build_env_sets_umu_vars_for_proton(tmp_path, monkeypatch) -> None:
