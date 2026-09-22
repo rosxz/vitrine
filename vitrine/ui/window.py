@@ -1148,17 +1148,21 @@ class VitrineWindow(Adw.ApplicationWindow):
             from ..wine import umu
 
             try:
-                umu_bin = umu.umu_binary()
+                umu.umu_binary()
             except umu.UmuError as exc:
                 self.toasts.add_toast(Adw.Toast(title=str(exc)))
                 return
-            # Legendary runs the game exe through the wrapper; --no-wine stops
-            # legendary from invoking wine itself (umu does that for us).
-            command = [
-                lg.legendary_binary(),
-                *lg.launch_command(app, wrapper=umu_bin),
-                "--no-wine",
-            ]
+            # For launching, legendary is only needed to resolve the installed
+            # executable; the game itself runs through umu-run (steam-run wrapped,
+            # clean env) which we've verified works on NixOS. Legendary's own
+            # --wrapper/--no-wine path doesn't spawn reliably under steam-run.
+            exe = lg.installed_executable(app)
+            if not exe:
+                self.toasts.add_toast(
+                    Adw.Toast(title=f"Could not find the installed executable for {game.name}")
+                )
+                return
+            command = umu.umu_command(exe)
             env = umu.umu_env(
                 wine_prefix,
                 proton_path=_proton_dist_dir(wine_bin)
@@ -1183,8 +1187,8 @@ class VitrineWindow(Adw.ApplicationWindow):
                 env["WINEDLLOVERRIDES"] = (
                     env["WINEDLLOVERRIDES"] + ";" if env["WINEDLLOVERRIDES"] else ""
                 ) + d3d
-            # pressure-vessel needs the FHS environment steam-run provides.
-            command = ["steam-run", *command]
+            # umu_command already wraps in steam-run so pressure-vessel can build
+            # its sandbox.
         else:
             from ..prefix import prepare_prefix
 

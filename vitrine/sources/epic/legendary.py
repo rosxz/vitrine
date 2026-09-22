@@ -189,6 +189,24 @@ def list_installed() -> list[dict]:
     return payload if isinstance(payload, list) else []
 
 
+def installed_executable(app_name: str) -> str | None:
+    """Return the absolute path to an installed app's Windows executable.
+
+    Legendary reports the install dir and the game's main executable name; the
+    game runs it through the configured runner (umu-run uses this path). Returns
+    ``None`` when the app isn't installed or the executable can't be resolved.
+    """
+    for game in list_installed():
+        if game.get("app_name") != app_name:
+            continue
+        install_path = game.get("install_path")
+        executable = game.get("executable")
+        if not install_path or not executable:
+            return None
+        return os.path.join(install_path, executable)
+    return None
+
+
 def dry_run_launch(app_name: str) -> list[str]:
     """Return the command line legendary would use to launch ``app_name``.
 

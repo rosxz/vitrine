@@ -533,3 +533,18 @@ def test_sync_accepts_legendary_app_title_field(
     names = {g.name for g in library.games(source="epic")}
     assert "3 out of 10 EP 1" in names
     assert "A Total War Saga: TROY" in names
+
+
+def test_installed_executable_resolves_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vitrine.sources.epic import legendary as lg
+
+    payload = [
+        {"app_name": "Buffalo", "title": "Super Meat Boy",
+         "install_path": "/home/crea/Games/SuperMeatBoy", "executable": "SuperMeatBoy.exe"},
+        {"app_name": "other", "install_path": "/x", "executable": "y.exe"},
+    ]
+    proc = subprocess.CompletedProcess(args=[], returncode=0, stdout=json.dumps(payload), stderr="")
+    monkeypatch.setattr(lg, "_run", lambda *a, **k: proc)
+
+    assert lg.installed_executable("Buffalo") == "/home/crea/Games/SuperMeatBoy/SuperMeatBoy.exe"
+    assert lg.installed_executable("missing") is None
