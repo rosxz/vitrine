@@ -125,3 +125,63 @@ def _proc(code):
         returncode = code
 
     return _P()
+
+
+def _fake_proton(tmp_path: Path) -> tuple[Path, Path]:
+    """A fake Proton dist: <root>/files/bin/wine + a seeded default_pfx with a
+    builtin-dll symlink pointing into <root>/files/lib/wine and a normal file."""
+    root = tmp_path / "Proton 11"
+    files = root / "files"
+    (files / "bin").mkdir(parents=True)
+    (files / "bin" / "wine").write_text("#!/bin/sh\n")
+    (files / "bin" / "wine").chmod(0o755)
+
+    libwin = files / "lib" / "wine" / "x86_64-windows"
+    libwin.mkdir(parents=True)
+    dll = libwin / "kernel32.dll"
+    dll.write_text("dll-data")
+
+    pfx = files / "share" / "default_pfx"
+    sys32 = pfx / "drive_c" / "windows" / "system32"
+    sys32.mkdir(parents=True)
+    (sys32 / "kernel32.dll").symlink_to("../../../../../lib/wine/x86_64-windows/kernel32.dll")
+    (sys32 / "depth.txt").write_text("real-file")
+    (pfx / "system.reg").write_text("reg")
+    inf = files / "share" / "wine" / "wine.inf"
+    inf.parent.mkdir(parents=True)
+    inf.write_text("inf")
+    return root, files / "bin" / "wine"
+
+
+def test_proton_default_pfx_located(tmp_path: Path) -> None:
+    from vitrine.prefix import _proton_default_pfx
+
+    root, wine = _fake_proton(tmp_path)
+    dp = _proton_default_pfx(str(wine))
+    assert dp == root / "files" / "share" / "default_pfx"
+
+
+def test_seed_from_proton_absolutizes_builtin_symlinks(tmp_path: Path) -> None:
+    from vitrine.prefix import _seed_from_proton
+
+    root, wine = _fake_proton(tmp_path)
+    target = tmp_path / "prefix"
+    assert _seed_from_proton(str(wine), target) is True
+
+    k = target / "drive_c" / "windows" / "system32" / "kernel32.dll"
+    assert k.is_symlink()
+    # Symlink now points at the real dist dll (not the broken relative path).
+    assert k.exists()
+    assert k.readlink().is_absolute()
+    assert str(k.readlink()).startswith(str(root))
+    # Ordinary files are copied.
+    assert (target / "drive_c" / "windows" / "system32" / "depth.txt").read_text() == "real-file"
+    # .update-timestamp is stamped with the wine.inf mtime.
+    assert (target / ".update-timestamp").exists()
+
+
+def test_seed_returns_false_without_proton_pfx(tmp_path: Path) -> None:
+    from vitrine.prefix import _seed_from_proton
+
+    wine = _fake_wine(tmp_path)  # plain wine layout, no default_pfx
+    assert _seed_from_proton(str(wine), tmp_path / "prefix") is False

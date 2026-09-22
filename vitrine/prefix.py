@@ -89,7 +89,93 @@ def prepare_prefix(
     if not _needs_boot(root):
         return
 
+    # Proton prefixes must be seeded from Proton's own ``default_pfx`` (a fully
+    # prepared prefix containing the D3D/vkd3d/dxvk runtime DLLs Wine doesn't
+    # install via wineboot). Bare wineboot yields a prefix missing those, and
+    # D3D9/11 games then fail with 'libvkd3d-1.dll not found'. Mirror Proton's
+    # first-run setup: copy default_pfx, preserving builtin DLL symlinks.
+    if _seed_from_proton(wine_binary, root):
+        logger.info("Seeded Proton prefix %s", prefix)
+        return
+
     _run_wineboot(wine_binary, prefix, steam_run=steam_run)
+
+
+def _proton_default_pfx(wine_binary: str) -> Path | None:
+    """The Proton distribution's ``share/default_pfx`` if ``wine_binary`` is a
+    Proton build that ships one, else ``None``.
+
+    Proton keeps a ready-made prefix at ``<dist>/files/share/default_pfx`` used
+    to seed a fresh game prefix on first run. The wine binary lives at
+    ``<dist>/files/bin/wine``.
+    """
+    binary = Path(os.path.expanduser(wine_binary))
+    candidates = (
+        binary.parent.parent / "share" / "default_pfx",
+        binary.parent.parent / "files" / "share" / "default_pfx",
+    )
+    for candidate in candidates:
+        if (candidate / "system.reg").is_file():
+            return candidate
+    return None
+
+
+def _seed_from_proton(wine_binary: str, root: Path) -> bool:
+    """Seed ``root`` from Proton's ``default_pfx`` if available.
+
+    Mirrors Proton's ``copy_pfx``: recursively copy every file, re-aiming Wine
+    builtin DLL symlinks at the Proton dist's ``lib/wine`` (absolute, so they
+    survive being moved out of the dist), and stamp ``.update-timestamp`` so
+    Wine doesn't try to re-update the prefix. Returns True when seeding worked.
+    """
+    default_pfx = _proton_default_pfx(wine_binary)
+    if default_pfx is None or not default_pfx.is_dir():
+        return False
+    # The Proton dist root = default_pfx/../.. (share/default_pfx -> <dist>/share/...)
+    dist = default_pfx.parent.parent
+    try:
+        _copy_tree_preserving_links(default_pfx, root, dist)
+        # Mirror Proton: stamp .update-timestamp from the installed wine.inf so
+        # Wine leaves the seeded prefix alone.
+        inf = default_pfx.parent / "wine" / "wine.inf"
+        mtime = int(inf.stat().st_mtime) if inf.is_file() else 0
+        (root / ".update-timestamp").write_text(str(mtime))
+        return True
+    except OSError as exc:  # noqa: BLE001 - fall back to wineboot on any failure
+        logger.warning("Could not seed Proton prefix from %s: %s", default_pfx, exc)
+        return False
+
+
+def _copy_tree_preserving_links(src: Path, dst: Path, dist: Path) -> None:
+    """Recursive copy where Wine builtin DLL symlinks are re-aimed at the dist.
+
+    Proton's ``default_pfx`` stores most system DLLs as *relative* symlinks into
+    ``<dist>/lib/wine/<arch>-windows/<name>.dll``. Simply recreating those links
+    elsewhere breaks them (they'd resolve against the new prefix location). Like
+    Proton's ``pfx_copy``, detect a builtin link and rewrite it as an *absolute*
+    path into the real dist ``lib/wine``. Ordinary files are copied literally.
+    """
+    import shutil as _sh
+
+    for entry in src.iterdir():
+        target = dst / entry.name
+        if entry.is_symlink():
+            contents = os.readlink(entry)
+            resolved = os.path.normpath(os.path.join(entry.parent, contents))
+            # A builtin DLL symlink points inside <dist>/lib/wine/*-windows/.
+            is_builtin = "/lib/wine/" in str(resolved)
+            if is_builtin and Path(resolved).is_relative_to(dist):
+                rel = Path(resolved).relative_to(dist / "lib" / "wine")
+                target.symlink_to(str(dist / "lib" / "wine" / rel))
+            else:
+                # Non-builtin symlink: preserve the relative target as-is.
+                target.symlink_to(contents)
+        elif entry.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            _copy_tree_preserving_links(entry, target, dist)
+        elif entry.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            _sh.copy2(entry, target)
 
 
 def del_existing(root: Path) -> None:
