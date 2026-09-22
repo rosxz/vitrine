@@ -1224,22 +1224,50 @@ class VitrineWindow(Adw.ApplicationWindow):
             log.append_line("$ " + shlex.join(command))
         else:
             log = None
-        job = run_download(
-            command,
-            env=env,
-            cwd=os.path.dirname(exe) if is_proton and exe else None,
-            on_line=log.append_line if log is not None else None,
-            # The game is now running detached under the wrapper; clear the
-            # download/launch state once the process exits so a retry works.
-            done=lambda _rc, gid=game.id: GLib.idle_add(self._clear_launch_state, gid),
-        )
-        if game.id is not None:
-            self._downloads[game.id] = job
-        self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name} via legendary"))
+        if is_proton:
+            # Launch Proton games the same way manual runs do -- a direct
+            # subprocess with inherited stdio (not a piped download job), the
+            # clean umu env, and the game directory as cwd. This is what
+            # reliably presents the game window on Wayland. Watch it in the
+            # background to clear the launch state on exit.
+            import subprocess
+
+            proc = subprocess.Popen(
+                command,
+                env=env,
+                cwd=os.path.dirname(exe) if exe else None,
+            )
+            if game.id is not None:
+                self._downloads[game.id] = proc
+            threading.Thread(target=self._watch_proton_proc, args=(proc, game), daemon=True).start()
+            self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name}"))
+        else:
+            job = run_download(
+                command,
+                env=env,
+                cwd=os.path.dirname(exe) if is_proton and exe else None,
+                on_line=log.append_line if log is not None else None,
+                # The game is now running detached under the wrapper; clear the
+                # download/launch state once the process exits so a retry works.
+                done=lambda _rc, gid=game.id: GLib.idle_add(self._clear_launch_state, gid),
+            )
+            if game.id is not None:
+                self._downloads[game.id] = job
+            self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name} via legendary"))
 
     def _clear_launch_state(self, game_id: int | None) -> None:
         if game_id is not None:
             self._downloads.pop(game_id, None)
+
+    def _watch_proton_proc(self, proc, game: Game) -> None:
+        """Wait for a detached Proton process and clear launch state on exit."""
+        proc.wait()
+        if game.id is not None and self._downloads.get(game.id) is proc:
+            GLib.idle_add(
+                lambda: (self._downloads.pop(game.id, None), self._set_downloading_ui(game, False))
+            )
+        # The game owning the window has quit; ensure the tile reflects it.
+        GLib.idle_add(self._set_downloading_ui, game, False)
 
     def open_wine_config(self, game: Game) -> None:
         """Open winecfg for the game's prefix so deps/drives can be configured."""
