@@ -175,7 +175,9 @@ class EpicSource(Source):
 
     def _from_legendary(self, item: dict) -> SourceGame | None:
         app_name = item.get("app_name") or item.get("appName")
-        title = item.get("title")
+        # legendary 0.21 lists owned games with app_title; older/newer builds may
+        # use plain 'title'. Accept either so listing never returns 0 games.
+        title = item.get("app_title") or item.get("title")
         if not app_name or not title:
             return None
         slug = item.get("slug") or slugify(str(title))

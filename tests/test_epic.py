@@ -502,3 +502,34 @@ def test_steam_run_command_missing_raises(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(lg.shutil, "which", lambda name: None)
     with pytest.raises(lg.LegendaryError):
         lg.steam_run_command(["legendary"])
+
+
+def test_sync_accepts_legendary_app_title_field(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, library: object
+) -> None:
+    """legendary 0.21 lists owned games with ``app_title`` (not ``title``)."""
+    from vitrine.sources import epic_source as epic_mod
+
+    monkeypatch.setattr(epic_mod.paths, "secret_dir", lambda: tmp_path)
+    store = EpicTokenStore(tmp_path, "abc123")
+    store.set_credentials("code-1", {"access_token": "tok-1"})
+    monkeypatch.setattr(library, "set_setting", lambda _k, _v: None)
+
+    monkeypatch.setattr(
+        epic_mod.lg,
+        "list_games",
+        lambda: [
+            {"app_name": "Flounder", "app_title": "3 out of 10 EP 1"},
+            {"app_name": "troy", "app_title": "A Total War Saga: TROY"},
+        ],
+    )
+    monkeypatch.setattr(epic_mod.lg, "list_installed", lambda: [])
+    monkeypatch.setattr(epic_mod.lg, "is_installed", lambda: True)
+
+    src = epic_mod.EpicSource(library)  # type: ignore[call-arg]
+    src.account_id = "abc123"
+    count = src.sync()
+    assert count == 2
+    names = {g.name for g in library.games(source="epic")}
+    assert "3 out of 10 EP 1" in names
+    assert "A Total War Saga: TROY" in names
