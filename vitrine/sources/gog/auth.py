@@ -42,6 +42,9 @@ AUTH_REDIRECT_URI = "https://embed.gog.com/on_login_success?origin=client"
 #: Minimum remaining lifetime (seconds) for the cached token to be trusted.
 TOKEN_GRACE_SECONDS = 60
 
+#: Assumed lifetime for tokens that lack an ``expires_in`` (legacy logins).
+DEFAULT_TOKEN_LIFETIME = 3600
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -163,6 +166,38 @@ class GogTokenStore:
     def is_authenticated(self) -> bool:
         return bool(self.access_token())
 
+    def needs_refresh(self) -> bool:
+        """True when the cached token is likely stale and a refresh is warranted.
+
+        GOG access tokens are short-lived. A token "needs refresh" when we have
+        a refresh_token to use and the current access token is older than its
+        expiry (minus a grace period), or has no recorded expiry and is older
+        than a conservative lifetime.
+        """
+        if not self.refresh_token():
+            return False  # nothing to refresh with; must re-login instead
+        fetched = self.fetched_at()
+        if not fetched:
+            return True
+        expires = self.expires_in()
+        life = expires if expires > 0 else DEFAULT_TOKEN_LIFETIME
+        return self.age_seconds() >= max(0, life - TOKEN_GRACE_SECONDS)
+
+    def apply_refreshed(self, payload: dict, *, fetched_at: int | None = None) -> None:
+        """Persist a refreshed token payload from GOG's refresh response."""
+        data = self.load()
+        data.update(
+            {
+                "access_token": str(payload.get("access_token") or data.get("access_token") or ""),
+                "refresh_token": str(payload.get("refresh_token") or data.get("refresh_token") or ""),
+                "expires_in": int(payload.get("expires_in") or 0),
+                "fetched_at": fetched_at if fetched_at is not None else int(time.time()),
+            }
+        )
+        # Refresh responses don't carry user_id/cookies; preserve the existing
+        # fields so the store stays well-formed.
+        self.save(data)
+
     def user_name(self) -> str:
         return self.load().get("user_name") or self.user_id or ""
 
@@ -186,6 +221,27 @@ def exchange_code_for_token(code: str) -> dict:
     payload = response.json()
     if not payload.get("access_token"):
         raise GogAuthError("No access_token in token response")
+    return payload
+
+
+def refresh_access_token(refresh_token: str) -> dict:
+    """Refresh a GOG bearer token using its ``refresh_token``.
+
+    Returns the new token payload (``access_token``/``refresh_token``/
+    ``expires_in``). Raises :class:`GogAuthError` if the refresh is rejected.
+    """
+    data = {
+        "client_id": GOG_CLIENT_ID,
+        "client_secret": GOG_CLIENT_SECRET,
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+    }
+    response = requests.post(TOKEN_URL, data=data, timeout=30)
+    if response.status_code >= 400:
+        raise GogAuthError("GOG token refresh rejected — sign in again")
+    payload = response.json()
+    if not payload.get("access_token"):
+        raise GogAuthError("No access_token in refresh response")
     return payload
 
 

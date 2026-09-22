@@ -40,6 +40,9 @@ class DownloadJob:
         on_line: _on_line | None = None,
         timeout: float | None = None,
     ) -> None:
+        """``timeout`` is an *idle* timeout: seconds without any output before the
+        job (and its subprocess) is killed. Not a total-duration limit, so slow
+        but healthy downloads are never cut off."""
         self.command = list(command)
         self.env = env
         self.progress = progress
@@ -96,10 +99,17 @@ class DownloadJob:
         self._process = process
         assert process.stdout is not None
 
+        #: Monotonic time of the most recent output line. Used to enforce an
+        #: *idle* timeout (kill only when a job stalls, not because it is a slow
+        #: but healthy download). Updated by the reader thread, read by the
+        #: monitor thread below.
+        last_output = [time.monotonic()]
+
         def _read_loop() -> None:
             try:
                 for raw in process.stdout:
                     line = raw.rstrip("\n")
+                    last_output[0] = time.monotonic()
                     self.line_buffer.append(line)
                     if self.on_line is not None:
                         self.on_line(line)
@@ -116,19 +126,24 @@ class DownloadJob:
         reader.start()
 
         try:
-            deadline = time.monotonic() + self.timeout if self.timeout is not None else None
             while True:
                 if process.poll() is not None:
                     break
-                if deadline is not None and time.monotonic() >= deadline:
-                    logger.warning("Download job timed out, terminating: %s", self.command[0])
-                    process.terminate()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                    break
-                time.sleep(0.05)
+                if self.timeout is not None:
+                    idle = time.monotonic() - last_output[0]
+                    if idle >= self.timeout:
+                        logger.warning(
+                            "Download job stalled (no output %ss), terminating: %s",
+                            self.timeout,
+                            self.command[0],
+                        )
+                        process.terminate()
+                        try:
+                            process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                        break
+                time.sleep(0.1)
         finally:
             reader.join(timeout=5)
             process.wait()

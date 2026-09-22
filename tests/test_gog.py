@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from pathlib import Path
 
 import pytest
@@ -354,7 +355,73 @@ def test_gogdl_executable_from_info(tmp_path: Path) -> None:
 
     (tmp_path / "HuniePop.exe").write_text("")
     exe = gogdl_mod.executable_from_info(
-        {"executable": "HuniePop.exe", "game_executable": "", "exe": ""}, str(tmp_path)
+        {"tasks": [{"category": "game", "path": "HuniePop.exe"}]}, str(tmp_path)
     )
     assert exe == str(tmp_path / "HuniePop.exe")
     assert gogdl_mod.executable_from_info({}, str(tmp_path)) is None
+
+
+def test_gogdl_find_game_dir_nested(tmp_path: Path) -> None:
+    from vitrine.sources.gog import gogdl as gogdl_mod
+
+    nested = tmp_path / "root" / "HuniePop"
+    nested.mkdir(parents=True)
+    (nested / "goggame-1443428641.info").write_text("{}")
+    assert gogdl_mod.install_is_valid("1443428641", str(tmp_path / "root"))
+    assert gogdl_mod.find_game_dir("1443428641", str(tmp_path / "root")) == str(nested)
+    assert gogdl_mod.install_is_valid("999", str(tmp_path / "root")) is False
+
+
+def test_token_needs_refresh_logic(tmp_path: Path) -> None:
+    store = GogTokenStore(tmp_path, "u")
+    # Fresh token with refresh_token -> no refresh needed.
+    store.set_credentials(GogCookieJar([]), access_token="at", refresh_token="rt", expires_in=3600,
+                          fetched_at=int(time.time()) - 100)
+    assert store.needs_refresh() is False
+    # Token near expiry -> needs refresh.
+    store.set_credentials(GogCookieJar([]), access_token="at", refresh_token="rt", expires_in=3600,
+                          fetched_at=int(time.time()) - 3590)
+    assert store.needs_refresh() is True
+
+
+def test_apply_refreshed_preserves_user_and_rotates(tmp_path: Path) -> None:
+    store = GogTokenStore(tmp_path, "u1")
+    store.set_credentials(GogCookieJar([]), access_token="old", refresh_token="oldrt", expires_in=100,
+                          fetched_at=1)
+    store.apply_refreshed({"access_token": "new", "refresh_token": "newrt", "expires_in": 2000})
+    assert store.access_token() == "new"
+    assert store.refresh_token() == "newrt"
+    assert store.expires_in() == 2000
+    assert store.load().get("user_id") == "u1"
+
+
+def test_refresh_access_token_posts_and_returns_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vitrine.sources.gog import auth as gog_auth
+
+    captured: dict = {}
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"access_token": "at2", "refresh_token": "rt2", "expires_in": 3600}
+
+    def _fake_post(url, data, timeout):
+        captured["data"] = data
+        return _Resp()
+
+    monkeypatch.setattr(gog_auth.requests, "post", _fake_post)
+    out = gog_auth.refresh_access_token("RT")
+    assert out["access_token"] == "at2"
+    assert captured["data"]["grant_type"] == "refresh_token"
+    assert captured["data"]["refresh_token"] == "RT"
+
+    class _Bad:
+        status_code = 400
+
+        def json(self):
+            return {"error": "invalid_grant"}
+
+    monkeypatch.setattr(gog_auth.requests, "post", lambda *a, **k: _Bad())
+    with pytest.raises(GogAuthError):
+        gog_auth.refresh_access_token("BAD")

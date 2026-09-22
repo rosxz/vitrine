@@ -127,10 +127,7 @@ class GogSource(Source):
     # -- game collection ------------------------------------------------------
 
     def _all_games(self) -> list[SourceGame]:
-        store = self._token_store()
-        token = store.access_token()
-        if not token:
-            raise GogAuthError(WITHOUT_LOGIN_HINT)
+        token = self.ensure_fresh_token()
         return self._owned_games(token)
 
     def _user_data(self, token: str) -> dict:
@@ -194,6 +191,28 @@ class GogSource(Source):
 
     def _token_store(self) -> GogTokenStore:
         return GogTokenStore(paths.secret_dir(), self.user_id or "0")
+
+    def ensure_fresh_token(self) -> str:
+        """Return a known-fresh GOG access token, refreshing if necessary.
+
+        If the cached token needs refresh (has a refresh_token and is near
+        expiry), refreshes and persists. If no refresh_token is available (e.g.
+        a stale pre-refresh login), clears credentials and raises
+        :class:`GogAuthError` so the UI prompts the user to sign in again.
+        """
+        from .gog.auth import refresh_access_token
+
+        store = self._token_store()
+        if store.needs_refresh():
+            try:
+                payload = refresh_access_token(store.refresh_token())
+            except GogAuthError:
+                store.clear()
+                raise
+            store.apply_refreshed(payload)
+        if not store.access_token():
+            raise GogAuthError(WITHOUT_LOGIN_HINT)
+        return store.access_token()
 
 
 registry.register(GogSource)

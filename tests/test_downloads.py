@@ -84,3 +84,20 @@ def test_job_timeout_terminates_stalled_process(tmp_path: Path) -> None:
     job.wait(timeout=10)
     assert len(done) == 1
     assert done[0] != 0  # terminated quickly, not rc 0
+
+
+def test_job_idle_timeout_resets_on_output(tmp_path: Path) -> None:
+    """A job emitting output regularly is NOT killed by the idle timeout."""
+    script = tmp_path / "steady.py"
+    script.write_text(
+        "import time\n"
+        "for i in range(8):\n"
+        "    print(f'progress {i}', flush=True)\n"
+        "    time.sleep(0.2)\n"
+        "print('done')\n"
+    )
+    done: list[int] = []
+    job = DownloadJob([sys.executable, str(script)], done=done.append, timeout=0.5)
+    job.start()
+    job.wait(timeout=10)
+    assert done == [0]  # completed naturally, not killed

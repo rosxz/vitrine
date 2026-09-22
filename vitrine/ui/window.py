@@ -32,9 +32,11 @@ ALL_GAMES = "__all__"
 
 #: Setting key (boolean) for the eye button: hide owned-but-not-installed games.
 HIDE_NOT_INSTALLED = "hide_not_installed"
-#: Seconds to allow a gogdl depot download to produce *any* output before we
-#: declare it stalled. gogdl can hang on some machines after manifest init
-#: (0 bytes, no progress); a short timeout lets us fall back instead of blocking.
+#: Idle timeout (seconds without any gogdl output) before we declare a depot
+#: download stalled and kill it. gogdl can hang after manifest init when handed
+#: a bad token (0 bytes, no output); a short *idle* timeout lets us fall back
+#: instead of blocking forever. Healthy downloads stream progress, so this never
+#: cuts a working download short.
 GOGDL_DOWNLOAD_TIMEOUT = 30.0
 
 
@@ -635,12 +637,22 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.toasts.add_toast(Adw.Toast(title=f"{game.name} is already downloading"))
             return
 
+        try:
+            # Refresh the GOG token before handing it to gogdl: gogdl hangs on
+            # an expired token (secure_link 401 -> infinite retry).
+            source.ensure_fresh_token()
+        except Exception as exc:  # noqa: BLE001
+            self.toasts.add_toast(Adw.Toast(title=f"GOG session expired — sign in again ({exc})"))
+            return
+
         store = source.login_token_store()
         from .. import paths
 
         try:
             auth_path = str(paths.cache_dir() / "gogdl-auth.json")
-            gogdl.write_auth_config(store, auth_path)
+            # Token was just refreshed by ensure_fresh_token; tell gogdl it is
+            # brand-new so its expiry check uses the current token.
+            gogdl.write_auth_config_now(store, auth_path)
             install_path = gogdl.install_dir(game.slug or slugify(game.name))
             command = gogdl.download_command(game_id, install_path, auth_path)
         except Exception as exc:  # noqa: BLE001
@@ -659,9 +671,9 @@ class VitrineWindow(Adw.ApplicationWindow):
     def _gog_finish_install(self, game: Game) -> None:
         """Mark a GOG game installed after a successful depot download.
 
-        gogdl can stall (0 bytes) on some machines — a known upstream bug. If no
-        game files actually landed, fall back to the interactive offline
-        installer, which is the proven path.
+        If gogdl produced no game files (e.g. it was handed a bad token and
+        stalled, or the depot had nothing to write), fall back to the
+        interactive offline installer.
         """
         from ..sources.gog import gogdl
         from ..util import slugify
@@ -670,7 +682,8 @@ class VitrineWindow(Adw.ApplicationWindow):
         install_dir = game.config.get("gog_install_dir")
         if not install_dir:
             install_dir = gogdl.install_dir(game.slug or slugify(game.name))
-        if game_id and not gogdl.install_is_valid(game_id, install_dir):
+        game_root = gogdl.find_game_dir(game_id, install_dir) if game_id else None
+        if not game_root:
             GLib.idle_add(self._set_downloading_ui, game, False)
             GLib.idle_add(
                 self.toasts.add_toast,
@@ -682,12 +695,11 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         # Best-effort: read the executable / info from the gogdl manifest.
         info = {}
-        if game_id:
-            try:
-                info = gogdl.import_info(game_id, install_dir, self._gog_auth_path())
-            except Exception:  # noqa: BLE001
-                info = {}
-        exe = gogdl.executable_from_info(info, install_dir)
+        try:
+            info = gogdl.import_info(game_id, game_root, self._gog_auth_path())
+        except Exception:  # noqa: BLE001
+            info = {}
+        exe = gogdl.executable_from_info(info, game_root)
         if exe:
             game.executable = exe
 

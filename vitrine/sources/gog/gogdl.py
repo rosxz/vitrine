@@ -54,22 +54,39 @@ def is_installed() -> bool:
 def write_auth_config(store: GogTokenStore, config_path: str) -> str:
     """Write Vitrine's GOG token into gogdl's expected auth-config format.
 
-    gogdl flags a credential expired when ``now >= loginTime + expires_in``.
-    Vitrine keeps its access token fresh by refreshing before it expires during
-    sync, so we give gogdl a generous validity window for the token we already
-    hold (it will simply be re-fetched next login). If Vitrine kept no expiry
-    (older logins), fall back to a 7-day window so gogdl uses the fresh
-    ``access_token`` directly rather than trying (and failing) to refresh.
+    gogdl flags a credential expired when ``now >= loginTime + expires_in``. The
+    caller (GogSource.ensure_fresh_token) must refresh the token first; here we
+    record ``loginTime`` as *now* with the token's actual lifetime so gogdl uses
+    the fresh access_token directly instead of attempting (and possibly failing)
+    its own refresh. Callers should pass a server-refreshed ``loginTime`` when
+    one is known.
     """
     fetched_at = store.fetched_at() or int(time.time())
     stored_expires = store.expires_in()
-    expires_in = stored_expires if stored_expires > 0 else 7 * 86400
+    expires_in = stored_expires if stored_expires > 0 else 3600
     payload = {
         GOG_CLIENT_ID: {
             "access_token": store.access_token(),
             "refresh_token": store.refresh_token(),
             "expires_in": expires_in,
             "loginTime": fetched_at,
+        }
+    }
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    with open(config_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+    return config_path
+
+
+def write_auth_config_now(store: GogTokenStore, config_path: str) -> str:
+    """Like :func:`write_auth_config` but resets ``loginTime`` to the current
+    time, so the freshly-refreshed token is treated as brand-new by gogdl."""
+    payload = {
+        GOG_CLIENT_ID: {
+            "access_token": store.access_token(),
+            "refresh_token": store.refresh_token(),
+            "expires_in": store.expires_in() or 3600,
+            "loginTime": int(time.time()),
         }
     }
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
@@ -149,10 +166,19 @@ def executable_from_info(info: dict, install_path: str) -> str | None:
 
     Returns an absolute host filesystem path to the game's main executable so
     Vitrine can hand it straight to Wine (which auto-mounts it via ``Z:``).
-    gogdl reports an executable relative to the install root; we join it to the
-    depot directory and return the real path.
+    gogdl reports its primary ``FileTask`` under ``tasks`` (e.g.
+    ``HuniePop.exe`` relative to the install root); we join it to the game dir
+    and return the real path.
     """
-    exe = info.get("executable") or info.get("game_executable") or info.get("exe")
+    exe = None
+    for task in info.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        if task.get("category") == "game" and task.get("path"):
+            exe = task["path"]
+            break
+    if not exe:
+        exe = info.get("executable") or info.get("game_executable") or info.get("exe")
     if not exe or not isinstance(exe, str):
         return None
     clean = exe.replace("\\\\", "/").replace("\\", "/")
@@ -167,13 +193,29 @@ def executable_from_info(info: dict, install_path: str) -> str | None:
 
 
 def install_is_valid(game_id: str, install_path: str) -> bool:
-    """True when ``install_path`` holds a valid goggame-*.info for ``game_id``."""
-    import glob
+    """True when ``install_path`` holds a valid goggame-*.info for ``game_id``.
+
+    gogdl writes the depot into ``<install_path>/<InstallDirectory>/`` (it
+    appends the game's install-dir name from the manifest), so the ``goggame``
+    marker may sit one level down.
+    """
+    return find_game_dir(game_id, install_path) is not None
+
+
+def find_game_dir(game_id: str, install_path: str) -> str | None:
+    """Locate the directory holding ``goggame-<game_id>.info`` under a depot
+    root. Returns ``None`` if no matching install marker is found."""
 
     if not os.path.isdir(install_path):
-        return False
-    marker = [os.path.basename(f) for f in glob.glob(os.path.join(install_path, "goggame-*.info"))]
-    return any(f.startswith(f"goggame-{game_id}") for f in marker)
+        return None
+    marker = f"goggame-{game_id}.info"
+    if os.path.isfile(os.path.join(install_path, marker)):
+        return install_path
+    for entry in sorted(os.listdir(install_path)):
+        sub = os.path.join(install_path, entry)
+        if os.path.isdir(sub) and os.path.isfile(os.path.join(sub, marker)):
+            return sub
+    return None
 
 
 def install_dir(slug: str) -> str:
