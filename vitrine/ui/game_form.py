@@ -143,6 +143,16 @@ class GameForm(Gtk.Box):
         self.append(runner_label)
         self.append(self.runner_row)
 
+        # Opt-in gamescope (nested display/GPU session) on the host compositor.
+        self.gamescope_row = Gtk.CheckButton(
+            label="Gamescope", active=False, halign=Gtk.Align.START
+        )
+        self.gamescope_row.set_tooltip_text(
+            "Run this game inside a gamescope window (virtualized display). "
+            "Recommended on Wayland for many Windows games. Disables MangoHud."
+        )
+        self.append(self.gamescope_row)
+
         self._fields: dict[str, _LabeledEntry] = {
             "executable": self.executable,
             "cover": self.cover,
@@ -184,6 +194,7 @@ class GameForm(Gtk.Box):
         self.lutris_slug.set(game.lutris_slug)
         self.set_artwork_source(game.artwork_source)
         self.set_runner(game.config.get("runner"))
+        self.gamescope_row.set_active(bool(game.config.get("gamescope", False)))
 
     def set_runner(self, runner_id: str | None) -> None:
         """Select the per-game runner override, or the default if unset."""
@@ -221,10 +232,16 @@ class GameForm(Gtk.Box):
             return "A name is required."
         return None
 
+    def gamescope(self) -> bool:
+        """Whether the per-game gamescope flag is enabled."""
+        return bool(self.gamescope_row.get_active())
+
     def build_game(self) -> Game:
         v = self._values()
         runner = self.runner()
-        config = {"runner": runner} if runner else {}
+        config: dict = {"gamescope": self.gamescope()}
+        if runner:
+            config["runner"] = runner
         return Game(
             name=v["name"],
             runner="wine",
@@ -257,6 +274,7 @@ class GameForm(Gtk.Box):
             game.config["runner"] = runner
         else:
             game.config.pop("runner", None)
+        game.config["gamescope"] = self.gamescope()
         return game
 
     def _values(self) -> dict:

@@ -188,7 +188,11 @@ def test_form_source_change_notifies_only_on_active() -> None:
 def test_gamescope_wrap_wraps_command() -> None:
     from vitrine.ui.window import _gamescope_wrap
 
-    wrapped = _gamescope_wrap(["legendary", "launch", "x"])
-    assert wrapped[:3] == ["gamescope", "-W", "1280"]
+    wrapped = _gamescope_wrap({}, ["legendary", "launch", "x"])
+    assert wrapped[0] == "gamescope"
     assert wrapped[-1] == "x"
     assert wrapped[-2] == "launch"
+    assert "--" in wrapped
+
+    sized = _gamescope_wrap({"gamescope_output_res": "1920x1080"}, ["g"])
+    assert sized[1:4] == ["-W", "1920", "-H"]

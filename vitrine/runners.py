@@ -128,6 +128,23 @@ def has_x11_driver(wine_binary: str) -> bool:
     return any(p.is_file() for p in candidates)
 
 
+def has_wayland_driver(wine_binary: str) -> bool:
+    """Whether a Wine/Proton build ships the native Wayland driver.
+
+    Only Wine-GE / GE-Proton forks bundle ``winewayland.drv`` (upstream Proton
+    builds do not). When present, Proton can draw straight to a Wayland
+    compositor via ``PROTON_ENABLE_WAYLAND=1``, avoiding XWayland/gamescope.
+    """
+    binary = Path(os.path.expanduser(wine_binary))
+    candidates = [
+        binary.parent.parent / "files" / "lib" / "wine" / "x86_64-windows" / "winewayland.drv",
+        binary.parent.parent / "files" / "lib" / "wine" / "i386-windows" / "winewayland.drv",
+        binary.parent.parent / "lib" / "wine" / "x86_64-windows" / "winewayland.drv",
+        binary.parent.parent / "lib" / "wine" / "i386-windows" / "winewayland.drv",
+    ]
+    return any(p.is_file() for p in candidates)
+
+
 def _runner_from_path(runner_id: str, resolved: str) -> Runner:
     """Derive a runner's display name + kind from its binary path.
 

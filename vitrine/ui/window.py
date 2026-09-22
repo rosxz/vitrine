@@ -44,15 +44,21 @@ def _row_widget_shim(widget: Gtk.Widget) -> Gtk.Widget:
     return box
 
 
-def _gamescope_wrap(command: list[str], width: str = "1280", height: str = "720") -> list[str]:
-    """Prepend a gamescope session so wine has a real (virtualised) display.
+def _gamescope_wrap(config: dict, command: list[str]) -> list[str]:
+    """Prepend a gamescope session running on the HOST display.
 
-    On Wayland the platform wine/Proton has no usable X11 display for GUI/Unity
-    games (ShellExecuteEx fails with "Bad EXE format"). Gamescope provides a
-    nested virtual display + GPU context, which is the standard way to run
-    Windows games under Wayland.
+    Gamescope provides a nested virtual display + GPU context, the standard way
+    to run Windows games under Wayland. It must run on the host compositor (not
+    inside a bwrap) so its output window is actually visible. Options come from
+    the per-game/global ``config``; only enabled gamescope is passed here.
     """
-    return ["gamescope", "-W", width, "-H", height, "--", *command]
+    args: list[str] = ["gamescope"]
+    if config.get("gamescope_output_res"):
+        width, height = str(config["gamescope_output_res"]).split("x")
+        args += ["-W", width, "-H", height]
+    if config.get("gamescope_fps_limiter"):
+        args += ["-r", str(config["gamescope_fps_limiter"])]
+    return args + ["--", *command]
 
 
 def _tiles_for(library_view, game) -> list:
@@ -984,7 +990,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         runner = get_runner(runner_id, store)
         is_proton = runner is not None and runner.kind == "proton"
         from ..launch import wine_prefix_for
-        from ..runners import has_x11_driver
+        from ..runners import has_wayland_driver, has_x11_driver
 
         if not has_x11_driver(wine_bin) and os.environ.get("WAYLAND_DISPLAY"):
             self.toasts.add_toast(
@@ -1017,21 +1023,32 @@ class VitrineWindow(Adw.ApplicationWindow):
 
             _ensure_library_path(env, ["/lib", "/lib64", "/usr/lib", "/usr/lib64"])
 
-        # Assemble the wrapper chain. Outermost -> innermost:
-        #   steam-run (Steam runtime libs for Proton) -> gamescope (display/GPU,
-        #   required on Wayland) -> legendary launch --wine <wine> --wine-prefix.
+        # Assemble the wrapper chain, Lutris-style, outermost -> innermost:
+        #   [gamescope (HOST display, opt-in)] -> [steam-run (Proton runtime)]
+        #                                      -> legendary launch --wine --wine-prefix
+        #
+        # gamescope must run on the HOST (not inside a bwrap) so its compositor can
+        # bind a real Wayland/XWayland window; only the inner Proton wine needs the
+        # steam-run runtime. This mirrors how Lutris launches games.
         command = [lg.legendary_binary(), *lg.launch_command(app, wine_bin=wine_bin, wine_prefix=wine_prefix)]
 
-        # Gamescope gives wine a real (virtualized) GPU/display session, which is
-        # required to run games on a Wayland desktop. Enable it for Epic launches.
-        if not config.get("gamescope", False):
-            command = _gamescope_wrap(command)
+        # Proton id: wrap only the inner launch in the Steam runtime.
         if is_proton:
             try:
                 command = lg.steam_run_command(command)
             except lg.LegendaryError as exc:
                 self.toasts.add_toast(Adw.Toast(title=str(exc)))
                 return
+
+        # Opt-in gamescope on the host: gives wine a virtualized display/GPU and
+        # is required for many Windows games on Wayland. Off by default (per-game
+        # toggle); when off, Proton presents over XWayland via legendary.
+        if config.get("gamescope", False):
+            command = _gamescope_wrap(config, command)
+        elif is_proton and has_wayland_driver(wine_bin):
+            # Native Wayland path for Wine-GE/GE-Proton (ships winewayland.drv):
+            # lets Proton draw straight to the Wayland compositor, no gamescope.
+            env["PROTON_ENABLE_WAYLAND"] = "1"
 
         if self.library.setting(DEBUG_LOG_SETTING, False):
             log = ExecutionLogWindow(f"Launching {game.name}", parent=self)

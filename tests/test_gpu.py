@@ -97,3 +97,13 @@ def test_apply_gpu_env_is_driver_env(monkeypatch):
     """apply_gpu_env is an alias so callers get the same behaviour."""
     _reset_cache(monkeypatch)
     assert gpu.apply_gpu_env is gpu.driver_env
+
+
+def test_env_preloads_freetype(monkeypatch):
+    """Wine's wineloader needs freetype via LD_PRELOAD, preserved with existing."""
+    _reset_cache(monkeypatch)
+    ft = "/nix/store/zzz-freetype-2.13.3/lib/libfreetype.so.6"
+    fake = gpu.NixosDriverEnv(freetype_so=ft)
+    monkeypatch.setattr(gpu, "discover", lambda: fake)
+    assert gpu.driver_env({})["LD_PRELOAD"] == ft
+    assert gpu.driver_env({"LD_PRELOAD": "/old.so"})["LD_PRELOAD"] == f"{ft}:/old.so"
