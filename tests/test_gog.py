@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -291,3 +293,68 @@ def test_game_from_product_preserves_installed_state(
     library.add(Game(name="Hunie Pop", source="gog", source_id="1", installed=True))
     again = src._game_from_product({"id": "1", "title": "Hunie Pop", "slug": "hunie_pop"})
     assert again is not None and again.installed is True
+
+
+# -- gogdl bridge -------------------------------------------------------------
+
+
+def test_gogdl_binary_uses_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vitrine.sources.gog import gogdl as gogdl_mod
+
+    monkeypatch.setenv(gogdl_mod.GOGDL_ENV, "/opt/gogdl")
+    assert gogdl_mod.gogdl_binary() == "/opt/gogdl"
+    assert gogdl_mod.is_installed()
+
+
+def test_gogdl_missing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vitrine.sources.gog import gogdl as gogdl_mod
+
+    monkeypatch.delenv(gogdl_mod.GOGDL_ENV, raising=False)
+    monkeypatch.setattr(shutil, "which", lambda _n: None)
+    with pytest.raises(gogdl_mod.GogdlError):
+        gogdl_mod.gogdl_binary()
+
+
+def test_gogdl_write_auth_config(tmp_path: Path) -> None:
+    from vitrine.sources.gog import gogdl as gogdl_mod
+    from vitrine.sources.gog.auth import GOG_CLIENT_ID
+
+    store = GogTokenStore(tmp_path, "u")
+    store.set_credentials(
+        GogCookieJar([]),
+        access_token="at",
+        refresh_token="rt",
+        expires_in=3600,
+        fetched_at=1000,
+    )
+    out = tmp_path / "auth.json"
+    gogdl_mod.write_auth_config(store, str(out))
+    data = json.loads(out.read_text())
+    cred = data[GOG_CLIENT_ID]
+    assert cred["access_token"] == "at"
+    assert cred["refresh_token"] == "rt"
+    assert cred["expires_in"] == 3600
+    assert cred["loginTime"] == 1000
+
+
+def test_gogdl_download_command_and_install_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from vitrine.sources.gog import gogdl as gogdl_mod
+
+    monkeypatch.setenv(gogdl_mod.GOGDL_ENV, "/opt/gogdl")
+    cmd = gogdl_mod.download_command("1443428641", "/tmp/inst", "/tmp/auth.json", lang="en-US")
+    assert cmd[0] == "/opt/gogdl"
+    assert "--auth-config-path" in cmd and "/tmp/auth.json" in cmd
+    assert "download" in cmd and "1443428641" in cmd
+    assert "--path" in cmd and "/tmp/inst" in cmd
+    assert "--skip-dlcs" in cmd
+
+
+def test_gogdl_executable_from_info(tmp_path: Path) -> None:
+    from vitrine.sources.gog import gogdl as gogdl_mod
+
+    (tmp_path / "HuniePop.exe").write_text("")
+    exe = gogdl_mod.executable_from_info(
+        {"executable": "HuniePop.exe", "game_executable": "", "exe": ""}, str(tmp_path)
+    )
+    assert exe == str(tmp_path / "HuniePop.exe")
+    assert gogdl_mod.executable_from_info({}, str(tmp_path)) is None

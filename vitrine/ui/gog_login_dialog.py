@@ -185,6 +185,8 @@ class GogLoginDialog(Gtk.Window):
                 real_store.set_credentials(
                     GogCookieJar([]),
                     access_token=token_data.get("access_token", ""),
+                    refresh_token=token_data.get("refresh_token", ""),
+                    expires_in=int(token_data.get("expires_in") or 0),
                 )
                 self.store = real_store
                 self._set_status("")

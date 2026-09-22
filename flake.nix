@@ -61,6 +61,9 @@
         # Give the app a definite path to the bundled legendary so Epic
         # installs/launches always find it, independent of the caller's PATH.
         export VITRINE_LEGENDARY="${pkgs.legendary-gl}/bin/legendary"
+        # Likewise pin gogdl (Heroic's GOG depot downloader) for non-interactive
+        # GOG installs.
+        export VITRINE_GOGDL="${pkgs.gogdl}/bin/gogdl"
         export LD_LIBRARY_PATH="${runtimeEnv}:$LD_LIBRARY_PATH"
         export GI_TYPELIB_PATH="${typelibPath}:$GI_TYPELIB_PATH"
         export XDG_DATA_DIRS="${dataDirs}:$XDG_DATA_DIRS"
@@ -71,7 +74,7 @@
     {
       packages.${system}.default = pkgs.symlinkJoin {
         name = "vitrine";
-        paths = [ vitrineApp pkgs.legendary-gl ];
+        paths = [ vitrineApp pkgs.legendary-gl pkgs.gogdl ];
         passthru.python = runtime.python;
       };
 
@@ -106,6 +109,7 @@
           pkgs.ruff
           pkgs.mypy
           pkgs.legendary-gl
+          pkgs.gogdl
         ];
 
         shellHook = ''

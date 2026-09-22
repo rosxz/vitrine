@@ -604,12 +604,24 @@ class VitrineWindow(Adw.ApplicationWindow):
         GLib.idle_add(self._set_downloading_ui, game, True)
 
     def _install_gog_game(self, game: Game) -> None:
-        """Download the GOG offline installer, tracked as a download."""
+        """Install a GOG game via its depot (gogdl), tracked as a download.
+
+        Mirrors Lutris/Heroic: download the game files directly from the GOG
+        CDN/depot manifest into a known directory, then mark it installed. This
+        is non-interactive (unlike the offline installer) and reliable.
+        """
+        from ..sources.gog import gogdl
         from ..sources.gog_source import GogSource
+        from ..util import slugify
 
         game_id = game.source_id or ""
         if not game_id:
             self.toasts.add_toast(Adw.Toast(title=f"No GOG id for {game.name}"))
+            return
+        if not gogdl.is_installed():
+            self.toasts.add_toast(
+                Adw.Toast(title="gogdl is required to install GOG games. Install 'gogdl' first.")
+            )
             return
         source = GogSource(self.library)
         if not source.is_authenticated():
@@ -620,71 +632,48 @@ class VitrineWindow(Adw.ApplicationWindow):
             return
 
         store = source.login_token_store()
-        from ..runners import load_runners_store, resolve_runner
-
-        config = game.merged_config(self.library.global_config())
-        wine_binary = resolve_runner(
-            config.get("runner"), load_runners_store(self.library), config.get("wine_binary")
-        )
-        from ..launch import wine_prefix_for
-
-        prefix = str(wine_prefix_for(game))
-        self.toasts.add_toast(Adw.Toast(title=f"Preparing {game.name} installer…"))
-        GLib.idle_add(self._set_downloading_ui, game, True)
-        threading.Thread(
-            target=self._install_gog_worker,
-            args=(store, game_id, game, wine_binary, prefix),
-            daemon=True,
-        ).start()
-
-    def _install_gog_worker(self, store, game_id: str, game: Game, wine_binary: str, prefix: str) -> None:
-        import os
-        import subprocess
-
         from .. import paths
-        from ..sources.gog import installer as gog_installer
-
-        def _notify(title: str) -> None:
-            GLib.idle_add(self.toasts.add_toast, Adw.Toast(title=title))
-
-        installer_dir = paths.data_dir() / "installers"
-        installer_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            from ..util import slugify
-
-            url = gog_installer.offline_installer(store, game_id, game.name)
-            dest = installer_dir / f"{slugify(game.name)}.exe"
-            _notify(f"Downloading {game.name} installer…")
-            gog_installer.download_installer(url, str(dest))
-        except Exception as exc:  # noqa: BLE001
-            _notify(f"GOG installer download failed for {game.name}: {exc}")
-            GLib.idle_add(self._set_downloading_ui, game, False)
-            return
 
         try:
-            env = dict(os.environ)
-            env["WINEPREFIX"] = prefix
-            os.makedirs(prefix, exist_ok=True)
-            _notify(f"Running {game.name} installer…")
-            proc = subprocess.Popen([wine_binary, str(dest)], env=env)
+            auth_path = str(paths.cache_dir() / "gogdl-auth.json")
+            gogdl.write_auth_config(store, auth_path)
+            install_path = gogdl.install_dir(game.slug or slugify(game.name))
+            command = gogdl.download_command(game_id, install_path, auth_path)
         except Exception as exc:  # noqa: BLE001
-            _notify(f"Could not run GOG installer for {game.name}: {exc}")
-            GLib.idle_add(self._set_downloading_ui, game, False)
+            self.toasts.add_toast(Adw.Toast(title=f"Could not start GOG install for {game.name}: {exc}"))
             return
+        os.makedirs(install_path, exist_ok=True)
+        # Remember where this game's files land so launch/_finish know it.
+        game.config["gog_install_dir"] = install_path
+        game.config["gog_id"] = game_id
+        if game.id is not None:
+            self.library.update(game)
+        self._start_download(game, command, log=False)
+        GLib.idle_add(self._set_downloading_ui, game, True)
+        self.toasts.add_toast(Adw.Toast(title=f"Downloading {game.name}…"))
 
-        # Run the interactive installer in the foreground thread of the worker,
-        # then mark the game installed and auto-detect its executable.
-        proc.wait()
-        self._gog_finish_install(game, prefix)
+    def _gog_finish_install(self, game: Game) -> None:
+        """Mark a GOG game installed after a successful depot download."""
+        from ..sources.gog import gogdl
+        from ..util import slugify
 
-    def _gog_finish_install(self, game: Game, prefix: str) -> None:
-        """Mark a GOG game installed after its installer exits."""
-        from ..launch import detect_gog_executable
-
+        game_id = game.config.get("gog_id") or game.source_id or ""
+        install_dir = game.config.get("gog_install_dir")
+        if not install_dir:
+            install_dir = gogdl.install_dir(game.slug or slugify(game.name))
         game.installed = True
-        exe = detect_gog_executable(prefix)
+
+        # Best-effort: read the executable / info from the gogdl manifest.
+        info = {}
+        if game_id:
+            try:
+                info = gogdl.import_info(game_id, install_dir, self._gog_auth_path())
+            except Exception:  # noqa: BLE001
+                info = {}
+        exe = gogdl.executable_from_info(info, install_dir)
         if exe:
             game.executable = exe
+
         if game.id is not None:
             self.library.update(game)
         GLib.idle_add(self._set_downloading_ui, game, False)
@@ -696,6 +685,12 @@ class VitrineWindow(Adw.ApplicationWindow):
                 + ("" if exe else " — set the executable in Properties")
             ),
         )
+
+    def _gog_auth_path(self) -> str:
+        """The gogdl auth-config path used by GOG installs."""
+        from .. import paths
+
+        return str(paths.cache_dir() / "gogdl-auth.json")
 
     # -- download state ---------------------------------------------------------
 
@@ -748,19 +743,20 @@ class VitrineWindow(Adw.ApplicationWindow):
             return
         # Re-sync installed state so legendary's (now-installed) games mark the
         # library rows as installed and route to Launch instead of Install.
+        is_gog = game.source == "gog"
         try:
             if game.source == "epic":
                 from ..sources.epic_source import EpicSource
 
                 EpicSource(self.library).sync_installed()
-            elif game.source == "gog":
-                from ..sources.gog_source import GogSource
-
-                GogSource(self.library).sync_installed()
+            elif is_gog:
+                self._gog_finish_install(game)
         except Exception:  # noqa: BLE001
             logger.exception("sync_installed after install failed")
-        self.reload()
-        self.toasts.add_toast(Adw.Toast(title=f"Installed {game.name}"))
+        if not is_gog:
+            # GOG's own completion shows its toast/reload.
+            self.reload()
+            self.toasts.add_toast(Adw.Toast(title=f"Installed {game.name}"))
 
     # -- Epic Games Store process buttons ---------------------------------------
 

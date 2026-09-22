@@ -116,12 +116,22 @@ class GogTokenStore:
 
     # -- state accessors ------------------------------------------------------
 
-    def set_credentials(self, cookies: GogCookieJar, access_token: str = "", fetched_at: int | None = None) -> None:
+    def set_credentials(
+        self,
+        cookies: GogCookieJar,
+        access_token: str = "",
+        *,
+        refresh_token: str = "",
+        expires_in: int = 0,
+        fetched_at: int | None = None,
+    ) -> None:
         self.save(
             {
                 "user_id": self.user_id,
                 "cookies": cookies.to_dict(),
                 "access_token": access_token,
+                "refresh_token": refresh_token,
+                "expires_in": expires_in,
                 "fetched_at": fetched_at if fetched_at is not None else int(time.time()),
             }
         )
@@ -131,6 +141,15 @@ class GogTokenStore:
 
     def access_token(self) -> str:
         return str(self.load().get("access_token") or "")
+
+    def refresh_token(self) -> str:
+        return str(self.load().get("refresh_token") or "")
+
+    def expires_in(self) -> int:
+        try:
+            return int(self.load().get("expires_in") or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def fetched_at(self) -> int:
         try:
