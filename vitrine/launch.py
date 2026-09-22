@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import paths
+from .gpu import driver_env
 from .library import Game
 from .runners import resolve_runner
 from .util import expand
@@ -45,6 +46,7 @@ def build_env(game: Game, config: dict) -> dict[str, str]:
     """Environment for the game: prefix, DLL overrides, sync, user variables."""
     env = dict(os.environ)
     env["WINEPREFIX"] = str(wine_prefix_for(game))
+    env = driver_env(env)
 
     overrides: list[str] = []
     if not config.get("dxvk", True):

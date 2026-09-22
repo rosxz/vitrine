@@ -11,6 +11,7 @@ from collections.abc import Callable, Sequence
 
 from gi.repository import Adw, GLib, Gtk
 
+from ..gpu import apply_gpu_env
 from ..library import Game, Library
 from ..paths import secret_dir
 from ..running import GameAlreadyRunning, Runtime
@@ -1010,6 +1011,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         env = dict(os.environ)
         env["WINEARCH"] = "win64"
         env["WINEDLLOVERRIDES"] = "winemenubuilder.exe=d"
+        env = apply_gpu_env(env)
         if is_proton:
             from ..prefix import _ensure_library_path
 
@@ -1078,6 +1080,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.toasts.add_toast(Adw.Toast(title=str(exc)))
             return
         cmd, env = open_winecfg_command(wine_bin, wine_prefix, steam_run=is_proton)
+        env = apply_gpu_env(env)
         self.toasts.add_toast(Adw.Toast(title=f"Opening Wine config for {game.name}"))
         threading.Thread(
             target=lambda: subprocess.Popen(cmd, env=env),

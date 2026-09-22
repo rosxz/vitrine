@@ -117,10 +117,13 @@ def _kernel32_missing(root: Path) -> bool:
 
 def _run_wineboot(wine_binary: str, prefix: str, *, steam_run: bool) -> None:
     """Run ``wineboot`` on the (fresh) prefix to initialise it."""
+    from .gpu import driver_env
+
     env = dict(os.environ)
     env["WINEPREFIX"] = os.path.expanduser(prefix)
     env["WINEARCH"] = "win64"
     env["WINEDLLOVERRIDES"] = "winemenubuilder.exe=d"
+    env = driver_env(env)
     wineserver = _siblings_binary(wine_binary, "wineserver")
     command = [wine_binary, "wineboot", "-i"]
     if steam_run and shutil.which("steam-run"):
@@ -168,6 +171,9 @@ def open_winecfg_command(
     env["WINEPREFIX"] = os.path.expanduser(prefix)
     env["WINEARCH"] = "win64"
     _ensure_library_path(env, ["/lib", "/lib64", "/usr/lib", "/usr/lib64"])
+    from .gpu import driver_env
+
+    env = driver_env(env)
     return command, env
 
 
