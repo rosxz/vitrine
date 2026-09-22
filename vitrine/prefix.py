@@ -125,8 +125,10 @@ def _seed_from_proton(wine_binary: str, root: Path) -> bool:
 
     Mirrors Proton's ``copy_pfx``: recursively copy every file, re-aiming Wine
     builtin DLL symlinks at the Proton dist's ``lib/wine`` (absolute, so they
-    survive being moved out of the dist), and stamp ``.update-timestamp`` so
-    Wine doesn't try to re-update the prefix. Returns True when seeding worked.
+    survive being moved out of the dist), create the DOS drive mappings
+    (``c:`` -> ``drive_c``, ``z:`` -> ``/`` ; default_pfx ships an empty
+    ``dosdevices/``), and stamp ``.update-timestamp`` so Wine doesn't try to
+    re-update the prefix. Returns True when seeding worked.
     """
     default_pfx = _proton_default_pfx(wine_binary)
     if default_pfx is None or not default_pfx.is_dir():
@@ -135,6 +137,7 @@ def _seed_from_proton(wine_binary: str, root: Path) -> bool:
     dist = default_pfx.parent.parent
     try:
         _copy_tree_preserving_links(default_pfx, root, dist)
+        _create_dos_drives(root)
         # Mirror Proton: stamp .update-timestamp from the installed wine.inf so
         # Wine leaves the seeded prefix alone.
         inf = default_pfx.parent / "wine" / "wine.inf"
@@ -144,6 +147,23 @@ def _seed_from_proton(wine_binary: str, root: Path) -> bool:
     except OSError as exc:  # noqa: BLE001 - fall back to wineboot on any failure
         logger.warning("Could not seed Proton prefix from %s: %s", default_pfx, exc)
         return False
+
+
+def _create_dos_drives(root: Path) -> None:
+    """Create the DOS drive mappings Wine needs under ``dosdevices/``.
+
+    A fresh (or default_pfx-seeded) prefix has an empty ``dosdevices/``; without
+    ``c:`` (-> drive_c) and ``z:`` (-> /) Wine cannot map paths or load system
+    DLLs. Mirrors Proton's own first-run setup.
+    """
+    dos = root / "dosdevices"
+    dos.mkdir(parents=True, exist_ok=True)
+    c_link = dos / "c:"
+    if not c_link.exists() and not c_link.is_symlink():
+        c_link.symlink_to("../drive_c")
+    z_link = dos / "z:"
+    if not z_link.exists() and not z_link.is_symlink():
+        z_link.symlink_to("/")
 
 
 def _copy_tree_preserving_links(src: Path, dst: Path, dist: Path) -> None:

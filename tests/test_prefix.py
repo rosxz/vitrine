@@ -178,6 +178,9 @@ def test_seed_from_proton_absolutizes_builtin_symlinks(tmp_path: Path) -> None:
     assert (target / "drive_c" / "windows" / "system32" / "depth.txt").read_text() == "real-file"
     # .update-timestamp is stamped with the wine.inf mtime.
     assert (target / ".update-timestamp").exists()
+    # DOS drive mappings are created so Wine can resolve paths / load DLLs.
+    assert (target / "dosdevices" / "z:").is_symlink()
+    assert (target / "dosdevices" / "c:").is_symlink()
 
 
 def test_seed_returns_false_without_proton_pfx(tmp_path: Path) -> None:
