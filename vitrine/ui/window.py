@@ -1233,6 +1233,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             # background to clear the launch state on exit.
             import subprocess
 
+            self._dump_launch(command, env)
             proc = subprocess.Popen(
                 command,
                 env=env,
@@ -1269,6 +1270,21 @@ class VitrineWindow(Adw.ApplicationWindow):
             )
         # The game owning the window has quit; ensure the tile reflects it.
         GLib.idle_add(self._set_downloading_ui, game, False)
+
+    def _dump_launch(self, command: list[str], env: dict) -> None:
+        """Write the exact Proton launch command + environment to a log file for
+        debugging window-presentation issues."""
+        try:
+            from .. import paths
+
+            dest = paths.cache_dir() / "proton-launch.env"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            lines = [f"# {shlex.join(command)}", ""]
+            for key in sorted(env):
+                lines.append(f"{key}={env[key]}")
+            dest.write_text("\n".join(lines) + "\n")
+        except Exception:  # noqa: BLE001 - diagnostics must never crash
+            logger.exception("could not dump proton launch env")
 
     def open_wine_config(self, game: Game) -> None:
         """Open winecfg for the game's prefix so deps/drives can be configured."""
