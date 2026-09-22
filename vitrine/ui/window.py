@@ -1212,15 +1212,17 @@ class VitrineWindow(Adw.ApplicationWindow):
 
             command = [lg.legendary_binary(), *lg.launch_command(app, wine_bin=wine_bin, wine_prefix=wine_prefix)]
 
-        # Opt-in gamescope on the host: gives wine a virtualized display/GPU and
-        # is required for many Windows games on Wayland. Off by default (per-game
-        # toggle); when off, Proton presents via umu's own display handling.
-        if config.get("gamescope", False):
+        # Proton games on Wayland present through umu, but a raw fullscreen X11 window
+        # often isn't visible/foregrounded on a Wayland compositor. Wrap Proton
+        # (umu) launches in the host gamescope by default so the game's window
+        # always shows; set the per-game "Gamescope" option to disable it.
+        if is_proton:
+            if config.get("gamescope", True) is not False:
+                command = _gamescope_wrap(config, command)
+            elif has_wayland_driver(wine_bin):
+                env["PROTON_ENABLE_WAYLAND"] = "1"
+        elif config.get("gamescope", False):
             command = _gamescope_wrap(config, command)
-        elif is_proton and has_wayland_driver(wine_bin):
-            # Native Wayland path for Wine-GE/GE-Proton (ships winewayland.drv):
-            # lets Proton draw straight to the Wayland compositor, no gamescope.
-            env["PROTON_ENABLE_WAYLAND"] = "1"
 
         if self.library.setting(DEBUG_LOG_SETTING, False):
             log = ExecutionLogWindow(f"Launching {game.name}", parent=self)
