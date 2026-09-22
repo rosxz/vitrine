@@ -123,7 +123,7 @@ def install_to_prefix(prefix: str) -> set[str]:
         if src64.is_file():
             system32.mkdir(parents=True, exist_ok=True)
             dst = system32 / dll_file
-            if not dst.exists():
+            if _needs_install(dst):
                 _copy_file(src64, dst)
             installed.add(dll)
         # 32-bit DLL -> syswow64
@@ -131,10 +131,25 @@ def install_to_prefix(prefix: str) -> set[str]:
         if src32.is_file():
             syswow64.mkdir(parents=True, exist_ok=True)
             dst = syswow64 / dll_file
-            if not dst.exists():
+            if _needs_install(dst):
                 _copy_file(src32, dst)
             installed.add(dll)
     return installed
+
+
+def _needs_install(dst: Path) -> bool:
+    """Whether ``dst`` should be (re)installed with the real d3d_extras DLL.
+
+    A missing file always needs installing. A *symlink* on a Proton-seeded
+    prefix points at Proton's Wine builtin stub, which is *not* a working D3D
+    runtime DLL -- replace it. A regular real file is already a healthy install,
+    so leave it (keeps the operation idempotent on re-runs).
+    """
+    if not dst.exists() and not dst.is_symlink():
+        return True
+    if dst.is_symlink():
+        return True
+    return False
 
 
 def dll_overrides(enabled: set[str] | None = None) -> str:
@@ -148,9 +163,17 @@ def dll_overrides(enabled: set[str] | None = None) -> str:
 
 
 def _copy_file(src: Path, dst: Path) -> None:
-    # Prefer a symlink when the source lives under the (immutable) nix store;
-    # fall back to a real copy if the engine can't create links.
+    # Replace any existing file/symlink, then link (or copy) the real DLL.
+    # The source lives under the immutable nix store; a symlink is cheap and
+    # always points at the current bundled DLL.
     try:
+        if dst.exists() or dst.is_symlink():
+            dst.unlink()
         os.symlink(str(src), str(dst))
     except OSError:  # pragma: no cover - e.g. cross-device/permission issues
+        try:
+            if dst.exists() or dst.is_symlink():
+                dst.unlink()
+        except OSError:
+            pass
         shutil.copy2(src, dst)

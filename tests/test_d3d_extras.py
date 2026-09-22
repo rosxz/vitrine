@@ -61,3 +61,32 @@ def test_dll_overrides_fragment() -> None:
     assert "d3dcompiler_43=n" in frag
     # Sorted + semicolon joined.
     assert frag.count(";") == 1
+
+def test_install_replaces_proton_builtin_symlink(tmp_path: Path, extras: Path) -> None:
+    """A Proton-seeded prefix has builtin symlink stubs; d3d_extras must replace
+    them with the real Microsoft DLL so the game can actually load it."""
+    prefix = tmp_path / "pfx"
+    sys32 = prefix / "drive_c" / "windows" / "system32"
+    sys32.mkdir(parents=True)
+    # Mimic a Proton builtin stub symlink pointing into a wine lib dir.
+    (sys32 / "d3dx9_43.dll").symlink_to("/proton/files/lib/wine/x86_64-windows/d3dx9_43.dll")
+
+    d3d_extras.install_to_prefix(str(prefix))
+
+    target = (sys32 / "d3dx9_43.dll").readlink()
+    # Now points at the real d3d_extras DLL (under the extras root), not the stub.
+    assert str(target) == str(extras / "x64" / "d3dx9_43.dll")
+
+
+def test_install_leaves_existing_real_file_alone(tmp_path: Path, extras: Path) -> None:
+    """A real (previously installed) DLL is not clobbered -- idempotent."""
+    prefix = tmp_path / "pfx"
+    sys32 = prefix / "drive_c" / "windows" / "system32"
+    sys32.mkdir(parents=True)
+    real = sys32 / "d3dx9_43.dll"
+    real.write_text("already-installed")
+
+    d3d_extras.install_to_prefix(str(prefix))
+    # Still a regular file with the same content (not replaced).
+    assert not real.is_symlink()
+    assert real.read_text() == "already-installed"
