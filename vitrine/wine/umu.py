@@ -83,13 +83,15 @@ def umu_env(
     proton_path: str | None = None,
     game_id: str = "umu-default",
     extra: dict[str, str] | None = None,
+    install_path: str | None = None,
 ) -> dict[str, str]:
     """Return a clean environment for launching a game through umu.
 
     Builds a minimal env (only the passthrough vars) so pressure-vessel inside
     steam-run isn't polluted by the app's Nix ``LD_LIBRARY_PATH``. Always sets
-    ``GAMEID``, ``WINEPREFIX`` and ``PROTONPATH``; Steam compat vars are filled
-    by umu itself, but we provide the ones Vitrine knows.
+    ``GAMEID``, ``WINEPREFIX`` and ``PROTONPATH``. ``install_path`` is the game's
+    directory and is also added to ``STEAM_COMPAT_INSTALL_PATH`` +
+    ``STEAM_COMPAT_MOUNTS`` so Proton maps the game drive correctly.
     """
     env: dict[str, str] = {}
     for key in _UMP_PASSTHROUGH:
@@ -104,7 +106,8 @@ def umu_env(
     if proton_path:
         env["PROTONPATH"] = proton_path
     env["STEAM_COMPAT_DATA_PATH"] = env["WINEPREFIX"]
-    env["STEAM_COMPAT_INSTALL_PATH"] = os.path.expanduser("~/Games")
+    env["STEAM_COMPAT_INSTALL_PATH"] = os.path.expanduser(install_path or "~/Games")
+    env["STEAM_COMPAT_MOUNTS"] = env["STEAM_COMPAT_INSTALL_PATH"]
     if extra:
         # Never let extra override the core umu vars.
         for key, value in extra.items():

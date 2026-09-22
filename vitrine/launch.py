@@ -92,6 +92,7 @@ def build_env(game: Game, config: dict) -> dict[str, str]:
             env["WINEPREFIX"],
             proton_path=_proton_dist_dir(wine_binary),
             game_id=game.slug or str(game.source_id or "game"),
+            install_path=os.path.dirname(expand(game.executable)) if game.executable else None,
         )
         isolate = True
     if not isolate:

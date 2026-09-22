@@ -1170,6 +1170,7 @@ class VitrineWindow(Adw.ApplicationWindow):
                 proton_path=_proton_dist_dir(wine_bin)
                 or os.path.dirname(os.path.dirname(os.path.expanduser(wine_bin))),
                 game_id=app,
+                install_path=os.path.dirname(exe),
             )
             # Do NOT apply driver_env here: its Nix LD_LIBRARY_PATH breaks
             # pressure-vessel. Only surface non-loader driver vars.
