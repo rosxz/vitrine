@@ -71,3 +71,44 @@ def test_umu_command_without_fhs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(umu.UMU_ENV, "/opt/umu-run")
     cmd = umu.umu_command("/games/Game.exe", fhs=False)
     assert cmd == ["/opt/umu-run", "/games/Game.exe"]
+
+def test_umu_env_discovers_xauthority_when_missing(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """GUI-launched Vitrine may not export XAUTHORITY; discover it so the X11
+    game window can authenticate to Xwayland."""
+
+    auth = tmp_path / "xauth"
+    auth.write_text("auth")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.delenv("XAUTHORITY", raising=False)
+    monkeypatch.setattr(umu, "_discover_xauthority", lambda: str(auth))
+    env = umu.umu_env("/p", proton_path="/proton", game_id="abc")
+    assert env["XAUTHORITY"] == str(auth)
+
+
+def test_umu_env_keeps_existing_xauthority(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setenv("XAUTHORITY", "/custom/auth")
+
+    def _discover():
+        return "/should/not/override"
+
+    monkeypatch.setattr(umu, "_discover_xauthority", _discover)
+    env = umu.umu_env("/p", proton_path="/proton", game_id="abc")
+    assert env["XAUTHORITY"] == "/custom/auth"
+
+
+def test_umu_env_no_display_does_not_add_xauthority(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No DISPLAY and no XAUTHORITY in env: nothing should be synthesized.
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("XAUTHORITY", raising=False)
+    monkeypatch.setattr(umu, "_discover_xauthority", lambda: "/x")
+    env = umu.umu_env("/p", proton_path="/proton", game_id="abc", install_path="/g")
+    assert "XAUTHORITY" not in env
+
+
+def test_discover_xauthority_finds_mutter_file(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    auth = tmp_path / ".mutter-Xwaylandauth.ABC"
+    auth.write_text("auth")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    assert umu._discover_xauthority() == str(auth)

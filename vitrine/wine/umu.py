@@ -97,6 +97,15 @@ def umu_env(
     for key in _UMP_PASSTHROUGH:
         if key in os.environ and os.environ[key] != "":
             env[key] = os.environ[key]
+    # Wine presents a fullscreen X11 window for the game. Under a Wayland desktop
+    # (GNOME/Mutter) an X11 window needs the Xwayland auth token, but GUI-launched
+    # apps often don't export XAUTHORITY (only shells do). Discover it from the
+    # runtime dir / home so the window actually maps when Vitrine is launched from
+    # the desktop rather than a shell.
+    if env.get("DISPLAY") and not env.get("XAUTHORITY"):
+        discovered = _discover_xauthority()
+        if discovered:
+            env["XAUTHORITY"] = discovered
     # A safe, minimal PATH for the sandboxed FHS.
     env.setdefault("PATH", "/usr/bin:/bin:/run/current-system/sw/bin")
     env["GAMEID"] = game_id
@@ -114,6 +123,26 @@ def umu_env(
             if key not in env:
                 env[key] = value
     return env
+
+
+def _discover_xauthority() -> str | None:
+    """Locate the Xwayland/X11 authority token for the current session.
+
+    When XAUTHORITY isn't exported (common for desktop-launched apps on Wayland),
+    look for Mutter's Xwayland auth file in ``$XDG_RUNTIME_DIR`` and the usual
+    X defaults, preferring permissions of the running user.
+    """
+    candidates: list[str] = []
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime:
+        import glob
+
+        candidates += sorted(glob.glob(os.path.join(runtime, ".mutter-Xwaylandauth.*")))
+    candidates += [os.path.join(os.path.expanduser("~"), ".Xauthority")]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.R_OK):
+            return candidate
+    return None
 
 
 def umu_command(executable: str, args: list[str] | None = None, *, fhs: bool = True) -> list[str]:
