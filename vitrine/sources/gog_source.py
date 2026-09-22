@@ -171,12 +171,19 @@ class GogSource(Source):
         if not game_id or not title:
             return None
         slug = product.get("slug") or slugify(title)
+        # GOG's catalogue API does not report local install state. Keep whatever
+        # Vitrine already decided (e.g. after running an offline installer) so a
+        # library refresh doesn't silently flip an installed game back to owned-
+        # but-not-installed.
+        prior = self.library.game_by_source_id(self.id, str(game_id))
+        installed = bool(prior and prior.installed)
         return SourceGame(
             source=self.id,
             appid=str(game_id),
             name=str(title),
             slug=slug,
             catalog_slug=slug,
+            installed=installed,
             details={
                 "store_url": f"https://www.gog.com/game/{slug}",
                 "year": product.get("releaseTimestamp") if "releaseTimestamp" in product else None,

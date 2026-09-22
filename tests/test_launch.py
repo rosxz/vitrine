@@ -141,3 +141,31 @@ def test_empty_config_values_do_not_wrap(value) -> None:
     command = launch.build_command(game(), {"gamescope": value, "mangohud": value, "gamemode": value})
 
     assert command == ["wine", "/games/Game.exe"]
+
+
+def test_detect_gog_executable_skips_installers(tmp_path) -> None:
+    from vitrine.launch import detect_gog_executable
+
+    root = tmp_path / "p"
+    (root / "drive_c" / "Program Files").mkdir(parents=True)
+    (root / "drive_c" / "Program Files" / "setup.exe").write_text("")
+    (root / "drive_c" / "Program Files" / "GameLauncher.exe").write_text("")
+    exe = detect_gog_executable(root)
+    assert exe == "C:\\\\Program Files\\\\GameLauncher.exe"
+    assert "setup" not in exe.lower()
+
+
+def test_detect_gog_executable_prefers_gog_games_dir(tmp_path) -> None:
+    from vitrine.launch import detect_gog_executable
+
+    root = tmp_path / "p"
+    (root / "drive_c" / "GOG Games" / "HuniePop").mkdir(parents=True)
+    (root / "drive_c" / "GOG Games" / "HuniePop" / "HuniePop.exe").write_text("")
+    (root / "drive_c" / "GOG Games" / "HuniePop" / "unins000.exe").write_text("")
+    assert detect_gog_executable(root) == "C:\\\\GOG Games\\\\HuniePop\\\\HuniePop.exe"
+
+
+def test_detect_gog_executable_none_when_empty(tmp_path) -> None:
+    from vitrine.launch import detect_gog_executable
+
+    assert detect_gog_executable(tmp_path / "missing") is None

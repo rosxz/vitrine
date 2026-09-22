@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from vitrine.library import Game
 from vitrine.sources.gog.auth import GogAuthError, GogCookieJar, GogTokenStore
 from vitrine.sources.gog_source import USER_SETTING, GogSource
 
@@ -271,3 +272,22 @@ def test_offline_installer_requires_auth(tmp_path: Path) -> None:
     store = _store(tmp_path)  # no credentials
     with pytest.raises(GogAuthError):
         gog_installer.offline_installer(store, "1207658691", "Game")
+
+
+def test_game_from_product_preserves_installed_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, library: object
+) -> None:
+    """GOG's API reports no local install state; Vitrine's persisted flag wins."""
+    from vitrine.sources import gog_source as gog_mod
+
+    monkeypatch.setattr(gog_mod.paths, "secret_dir", lambda: tmp_path)
+    src = GogSource(library)  # type: ignore[call-arg]
+    src.user_id = "u"
+
+    # Previously installed via offline installer -> stays installed on refresh.
+    game = src._game_from_product({"id": "1", "title": "Hunie Pop", "slug": "hunie_pop"})
+    assert game is not None and game.installed is False
+
+    library.add(Game(name="Hunie Pop", source="gog", source_id="1", installed=True))
+    again = src._game_from_product({"id": "1", "title": "Hunie Pop", "slug": "hunie_pop"})
+    assert again is not None and again.installed is True

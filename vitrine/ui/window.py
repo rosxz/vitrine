@@ -666,11 +666,36 @@ class VitrineWindow(Adw.ApplicationWindow):
             env["WINEPREFIX"] = prefix
             os.makedirs(prefix, exist_ok=True)
             _notify(f"Running {game.name} installer…")
-            subprocess.Popen([wine_binary, str(dest)], env=env)
+            proc = subprocess.Popen([wine_binary, str(dest)], env=env)
         except Exception as exc:  # noqa: BLE001
             _notify(f"Could not run GOG installer for {game.name}: {exc}")
-        finally:
             GLib.idle_add(self._set_downloading_ui, game, False)
+            return
+
+        # Run the interactive installer in the foreground thread of the worker,
+        # then mark the game installed and auto-detect its executable.
+        proc.wait()
+        self._gog_finish_install(game, prefix)
+
+    def _gog_finish_install(self, game: Game, prefix: str) -> None:
+        """Mark a GOG game installed after its installer exits."""
+        from ..launch import detect_gog_executable
+
+        game.installed = True
+        exe = detect_gog_executable(prefix)
+        if exe:
+            game.executable = exe
+        if game.id is not None:
+            self.library.update(game)
+        GLib.idle_add(self._set_downloading_ui, game, False)
+        GLib.idle_add(self.reload)
+        GLib.idle_add(
+            self.toasts.add_toast,
+            Adw.Toast(
+                title=f"Installed {game.name}"
+                + ("" if exe else " — set the executable in Properties")
+            ),
+        )
 
     # -- download state ---------------------------------------------------------
 

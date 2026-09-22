@@ -42,6 +42,39 @@ def wine_prefix_for(game: Game) -> Path:
     return paths.prefixes_dir() / (game.slug or "game")
 
 
+def detect_gog_executable(prefix: str | Path) -> str | None:
+    """Locate the most likely game executable inside a GOG-installed prefix.
+
+    GOG offline installers extract into the game's wine prefix but Vitrine never
+    learns where the main executable landed. Heuristic, in order of preference:
+    a ``.exe`` directly under ``<prefix>/drive_c/GOG Games``, then the newest
+    ``.exe`` under the drive root, skipping installers and support tools.
+    Returns an absolute ``C:``-style Windows path usable by Wine.
+    """
+    prefix_path = Path(prefix)
+    root = prefix_path / "drive_c"
+    if not root.is_dir():
+        return None
+
+    def _win_path(p: Path) -> str:
+        rel = p.relative_to(root).as_posix()
+        return "C:\\\\" + rel.replace("/", "\\\\")
+
+    best: list[str] = []
+    target = root / "GOG Games"
+    candidates = []
+    if target.is_dir():
+        candidates += sorted(target.rglob("*.exe"))
+    else:
+        candidates += sorted(root.rglob("*.exe"))
+    for exe in candidates:
+        name = exe.stem.lower()
+        if any(skip in name for skip in ("setup", "install", "unins", "redist", "_commonredist")):
+            continue
+        best.append(_win_path(exe))
+    return best[0] if best else None
+
+
 def build_env(game: Game, config: dict) -> dict[str, str]:
     """Environment for the game: prefix, DLL overrides, sync, user variables."""
     env = dict(os.environ)
