@@ -1125,7 +1125,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         runner = get_runner(runner_id, store)
         is_proton = runner is not None and runner.kind == "proton"
         from ..launch import wine_prefix_for
-        from ..runners import has_wayland_driver, has_x11_driver
+        from ..runners import has_x11_driver
 
         if not has_x11_driver(wine_bin) and os.environ.get("WAYLAND_DISPLAY"):
             self.toasts.add_toast(
@@ -1212,16 +1212,10 @@ class VitrineWindow(Adw.ApplicationWindow):
 
             command = [lg.legendary_binary(), *lg.launch_command(app, wine_bin=wine_bin, wine_prefix=wine_prefix)]
 
-        # Proton games on Wayland present through umu, but a raw fullscreen X11 window
-        # often isn't visible/foregrounded on a Wayland compositor. Wrap Proton
-        # (umu) launches in the host gamescope by default so the game's window
-        # always shows; set the per-game "Gamescope" option to disable it.
-        if is_proton:
-            if config.get("gamescope", True) is not False:
-                command = _gamescope_wrap(config, command)
-            elif has_wayland_driver(wine_bin):
-                env["PROTON_ENABLE_WAYLAND"] = "1"
-        elif config.get("gamescope", False):
+        # Gamescope is opt-in per game. The launch command form that actually
+        # presents the window on Wayland is 'steam-run umu-run <exe>' with a clean
+        # env and the game's cwd; wrapping umu in gamescope breaks it.
+        if config.get("gamescope", False):
             command = _gamescope_wrap(config, command)
 
         if self.library.setting(DEBUG_LOG_SETTING, False):
