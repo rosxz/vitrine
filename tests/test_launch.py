@@ -169,3 +169,55 @@ def test_detect_gog_executable_none_when_empty(tmp_path) -> None:
     from vitrine.launch import detect_gog_executable
 
     assert detect_gog_executable(tmp_path / "missing") is None
+
+
+def _fake_proton(tmp_path):
+    """A fake Proton dist: <root>/files/bin/wine + toolmanifest.vdf."""
+    root = tmp_path / "Proton 11"
+    files = root / "files"
+    (files / "bin").mkdir(parents=True)
+    (files / "bin" / "wine").write_text("#!/bin/sh\n")
+    (files / "bin" / "wine").chmod(0o755)
+    (root / "toolmanifest.vdf").write_text("{}")
+    return root, files / "bin" / "wine"
+
+
+def test_is_proton_path_detects_proton(tmp_path) -> None:
+    from vitrine.launch import _is_proton_path
+
+    root, wine = _fake_proton(tmp_path)
+    assert _is_proton_path(str(wine)) is True
+    plain = tmp_path / "wine64"
+    plain.write_text("#!/bin/sh\n")
+    plain.chmod(0o755)
+    assert _is_proton_path(str(plain)) is False
+
+
+def test_proton_dist_dir_resolves(tmp_path) -> None:
+    from vitrine.launch import _proton_dist_dir
+
+    root, wine = _fake_proton(tmp_path)
+    assert _proton_dist_dir(str(wine)) == str(root)
+
+
+def test_wine_command_routes_proton_through_umu(
+    tmp_path, monkeypatch
+) -> None:
+    from vitrine import launch
+
+    root, wine = _fake_proton(tmp_path)
+    monkeypatch.setenv("VITRINE_UMU", "/opt/umu-run")
+    game = Game(name="G", runner="wine", executable="/games/G.exe")
+    cmd = launch.wine_command(game, {"wine_binary": str(wine)})
+    assert cmd == ["/opt/umu-run", "/games/G.exe"]
+
+
+def test_build_env_sets_umu_vars_for_proton(tmp_path, monkeypatch) -> None:
+    from vitrine import launch
+
+    root, wine = _fake_proton(tmp_path)
+    game = Game(name="G", runner="wine", slug="g-slug", executable="/games/G.exe")
+    env = launch.build_env(game, {"wine_binary": str(wine)})
+    assert env["PROTONPATH"] == str(root)
+    assert env["GAMEID"] == "g-slug"
+    assert env["STEAM_COMPAT_DATA_PATH"]

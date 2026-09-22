@@ -1140,50 +1140,64 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         # Ensure the prefix is ready and its architecture matches the runner.
         # A fresh/incompatible prefix is initialised (wineboot) in the background
-        # so the game launches on a valid, correctly-arched prefix.
-        from ..prefix import prepare_prefix
-
-        try:
-            prepare_prefix(wine_bin, wine_prefix, steam_run=is_proton)
-        except ValueError as exc:
-            self.toasts.add_toast(Adw.Toast(title=str(exc)))
-            return
-        env = dict(os.environ)
-        env["WINEARCH"] = "win64"
-        env["WINEDLLOVERRIDES"] = "winemenubuilder.exe=d"
-        env = apply_gpu_env(env)
-        # DirectX 9/10/11 runtime DLLs (d3dx9_43, d3dcompiler_43, ...) so old
-        # games work under Proton; adds "name=n" overrides to WINEDLLOVERRIDES.
-        from ..launch import install_d3d_extras
-
-        d3d_overrides = install_d3d_extras(wine_prefix)
-        if d3d_overrides:
-            env["WINEDLLOVERRIDES"] += ";" + d3d_overrides
+        # so the game launches on a valid, correctly-arched prefix. For Proton
+        # games we now hand the prefix to umu-run, which performs its own full
+        # setup, so a manual wineboot is unnecessary (and would fight umu).
         if is_proton:
-            from ..prefix import _ensure_library_path
+            from ..launch import _proton_dist_dir
+            from ..wine import umu
 
-            _ensure_library_path(env, ["/lib", "/lib64", "/usr/lib", "/usr/lib64"])
-
-        # Assemble the wrapper chain, Lutris-style, outermost -> innermost:
-        #   [gamescope (HOST display, opt-in)] -> [steam-run (Proton runtime)]
-        #                                      -> legendary launch --wine --wine-prefix
-        #
-        # gamescope must run on the HOST (not inside a bwrap) so its compositor can
-        # bind a real Wayland/XWayland window; only the inner Proton wine needs the
-        # steam-run runtime. This mirrors how Lutris launches games.
-        command = [lg.legendary_binary(), *lg.launch_command(app, wine_bin=wine_bin, wine_prefix=wine_prefix)]
-
-        # Proton id: wrap only the inner launch in the Steam runtime.
-        if is_proton:
             try:
-                command = lg.steam_run_command(command)
-            except lg.LegendaryError as exc:
+                umu_bin = umu.umu_binary()
+            except umu.UmuError as exc:
                 self.toasts.add_toast(Adw.Toast(title=str(exc)))
                 return
+            # Legendary runs the game exe through the wrapper; --no-wine stops
+            # legendary from invoking wine itself (umu does that for us).
+            command = [
+                lg.legendary_binary(),
+                *lg.launch_command(app, wrapper=umu_bin),
+                "--no-wine",
+            ]
+            env = umu.umu_env(
+                wine_prefix,
+                proton_path=_proton_dist_dir(wine_bin)
+                or os.path.dirname(os.path.dirname(os.path.expanduser(wine_bin))),
+                game_id=app,
+            )
+            env = apply_gpu_env(env)
+            from ..launch import install_d3d_extras
+
+            d3d = install_d3d_extras(wine_prefix)
+            if d3d:
+                env.setdefault("WINEDLLOVERRIDES", "")
+                env["WINEDLLOVERRIDES"] = (
+                    env["WINEDLLOVERRIDES"] + ";" if env["WINEDLLOVERRIDES"] else ""
+                ) + d3d
+        else:
+            from ..prefix import prepare_prefix
+
+            try:
+                prepare_prefix(wine_bin, wine_prefix, steam_run=False)
+            except ValueError as exc:
+                self.toasts.add_toast(Adw.Toast(title=str(exc)))
+                return
+            env = dict(os.environ)
+            env["WINEARCH"] = "win64"
+            env["WINEDLLOVERRIDES"] = "winemenubuilder.exe=d"
+            env = apply_gpu_env(env)
+            # DirectX 9/10/11 runtime DLLs so old games work under Wine.
+            from ..launch import install_d3d_extras
+
+            d3d_overrides = install_d3d_extras(wine_prefix)
+            if d3d_overrides:
+                env["WINEDLLOVERRIDES"] += ";" + d3d_overrides
+
+            command = [lg.legendary_binary(), *lg.launch_command(app, wine_bin=wine_bin, wine_prefix=wine_prefix)]
 
         # Opt-in gamescope on the host: gives wine a virtualized display/GPU and
         # is required for many Windows games on Wayland. Off by default (per-game
-        # toggle); when off, Proton presents over XWayland via legendary.
+        # toggle); when off, Proton presents via umu's own display handling.
         if config.get("gamescope", False):
             command = _gamescope_wrap(config, command)
         elif is_proton and has_wayland_driver(wine_bin):

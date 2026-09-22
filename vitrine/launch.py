@@ -79,6 +79,19 @@ def build_env(game: Game, config: dict) -> dict[str, str]:
     """Environment for the game: prefix, DLL overrides, sync, user variables."""
     env = dict(os.environ)
     env["WINEPREFIX"] = str(wine_prefix_for(game))
+
+    # Proton builds use the umu launcher, which expects PROTONPATH/GAMEID and the
+    # Steam compat env. Set those so the generic wine path (local/GOG) also goes
+    # through umu's proper prefix/runtime setup.
+    wine_binary = str(config.get("wine_binary") or "wine")
+    if _is_proton_path(wine_binary):
+        from .wine import umu
+
+        env = umu.umu_env(
+            env["WINEPREFIX"],
+            proton_path=_proton_dist_dir(wine_binary),
+            game_id=game.slug or str(game.source_id or "game"),
+        )
     env = driver_env(env)
 
     overrides: list[str] = []
@@ -143,17 +156,56 @@ def wine_command(game: Game, config: dict) -> list[str]:
 
     Native Linux games are launched directly; everything else goes through the
     configured Wine/Proton runner (``config["wine_binary"]`` or ``wine`` on
-    PATH).
+    PATH). Proton builds launched through the unified launcher (umu-run) get the
+    executable passed straight to umu, which handles the prefix + runtime.
     """
     command: list[str] = []
     if not _is_native(game.runner):
-        command.append(str(config.get("wine_binary") or "wine"))
+        wine_binary = str(config.get("wine_binary") or "wine")
+        if _is_proton_path(wine_binary):
+            from .wine import umu
+
+            command.append(umu.umu_binary())
+        else:
+            command.append(wine_binary)
     executable = expand(game.executable)
     if executable:
         command.append(executable)
     if game.arguments:
         command += shlex.split(game.arguments)
     return command
+
+
+def _is_proton_path(wine_binary: str) -> bool:
+    """True when ``wine_binary`` lives inside a Proton distribution.
+
+    Proton dists sit under ``.../<Name>/files/bin/wine`` (older: ``.../<Name>/bin/
+    wine``) and contain a ``proton`` script and ``toolmanifest.vdf`` at their
+    root. Safe heuristic that also covers GE-Proton.
+    """
+    return _proton_dist_dir(wine_binary) is not None
+
+
+def _proton_dist_dir(wine_binary: str) -> str | None:
+    """The Proton distribution directory (umu PROTONPATH), or ``None`` if the
+    wine binary is not inside a Proton build.
+
+    Resolves ``<dist>/files/bin/wine`` (or ``<dist>/bin/wine``) to ``<dist>`` and
+    confirms it by the presence of ``proton``/``toolmanifest.vdf``.
+    """
+    from pathlib import Path as _P
+
+    wine_path = _P(os.path.expanduser(wine_binary))
+    bin_dir = wine_path.parent
+    if bin_dir.name == "bin" and bin_dir.parent.name == "files":
+        dist = bin_dir.parent.parent
+    elif bin_dir.name == "bin":
+        dist = bin_dir.parent
+    else:
+        return None
+    if dist.is_dir() and ((dist / "toolmanifest.vdf").is_file() or (dist / "proton").is_file()):
+        return str(dist)
+    return None
 
 
 def _is_native(runner: str | None) -> bool:

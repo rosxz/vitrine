@@ -84,6 +84,10 @@
         # Point at the bundled D3D runtime DLLs (DirectX 9/10/11 helpers) used to
         # populate Wine prefixes so old games launch.
         export VITRINE_D3D_EXTRAS="${d3dExtras}"
+        # Unified launcher for Proton/GE-Proton (umu-run). It handles Proton
+        # prefix setup (runtime DLLs, drives) and path mapping that we no longer
+        # need to hand-roll.
+        export VITRINE_UMU="${pkgs.umu-launcher}/bin/umu-run"
         export LD_LIBRARY_PATH="${runtimeEnv}:$LD_LIBRARY_PATH"
         export GI_TYPELIB_PATH="${typelibPath}:$GI_TYPELIB_PATH"
         export XDG_DATA_DIRS="${dataDirs}:$XDG_DATA_DIRS"
@@ -94,7 +98,7 @@
     {
       packages.${system}.default = pkgs.symlinkJoin {
         name = "vitrine";
-        paths = [ vitrineApp pkgs.legendary-gl pkgs.gogdl d3dExtras ];
+        paths = [ vitrineApp pkgs.legendary-gl pkgs.gogdl pkgs.umu-launcher d3dExtras ];
         passthru.python = runtime.python;
       };
 
@@ -130,6 +134,7 @@
           pkgs.mypy
           pkgs.legendary-gl
           pkgs.gogdl
+          pkgs.umu-launcher
           d3dExtras
         ];
 
@@ -139,6 +144,7 @@
           export GI_TYPELIB_PATH="${typelibPath}:$GI_TYPELIB_PATH"
           export XDG_DATA_DIRS="${dataDirs}:$XDG_DATA_DIRS"
           export GST_PLUGIN_SYSTEM_PATH="${gstPluginPath}:$GST_PLUGIN_SYSTEM_PATH"
+          export VITRINE_UMU="${pkgs.umu-launcher}/bin/umu-run"
           export VITRINE_D3D_EXTRAS="${d3dExtras}"
           export VITRINE_DEV=1
         '';
