@@ -39,12 +39,15 @@ class DownloadJob:
         done: _on_done | None = None,
         on_line: _on_line | None = None,
         timeout: float | None = None,
+        cwd: str | None = None,
     ) -> None:
         """``timeout`` is an *idle* timeout: seconds without any output before the
         job (and its subprocess) is killed. Not a total-duration limit, so slow
-        but healthy downloads are never cut off."""
+        but healthy downloads are never cut off. ``cwd`` is the working directory
+        for the spawned command (required for game launches to present correctly)."""
         self.command = list(command)
         self.env = env
+        self.cwd = cwd
         self.progress = progress
         self.done = done
         self.on_line = on_line
@@ -88,6 +91,7 @@ class DownloadJob:
                 stdin=subprocess.DEVNULL,
                 text=True,
                 env=self.env,
+                cwd=self.cwd,
             )
         except OSError as exc:
             logger.error("Could not start download %s: %s", self.command[0], exc)
@@ -171,8 +175,9 @@ def run_download(
     done: _on_done | None = None,
     on_line: _on_line | None = None,
     timeout: float | None = None,
+    cwd: str | None = None,
 ) -> DownloadJob:
     """Convenience: build and start a :class:`DownloadJob`."""
-    job = DownloadJob(command, env=env, progress=progress, done=done, on_line=on_line, timeout=timeout)
+    job = DownloadJob(command, env=env, progress=progress, done=done, on_line=on_line, timeout=timeout, cwd=cwd)
     job.start()
     return job

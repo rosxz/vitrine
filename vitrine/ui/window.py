@@ -805,7 +805,7 @@ class VitrineWindow(Adw.ApplicationWindow):
     # -- download state ---------------------------------------------------------
 
     def _start_download(
-        self, game: Game, command: list[str], *, log: bool = True, timeout: float | None = None
+        self, game: Game, command: list[str], *, log: bool = True, timeout: float | None = None, cwd: str | None = None
     ) -> object:
         """Run ``command`` as a tracked download job, optionally streamed to a log."""
         from ..downloads import run_download
@@ -830,6 +830,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             done=_on_done,
             on_line=window.append_line if window is not None else None,
             timeout=timeout,
+            cwd=cwd,
         )
         if game.id is not None:
             self._downloads[game.id] = job
@@ -1137,6 +1138,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             )
 
         wine_prefix = str(wine_prefix_for(game))
+        exe: str | None = None
 
         # Ensure the prefix is ready and its architecture matches the runner.
         # A fresh/incompatible prefix is initialised (wineboot) in the background
@@ -1229,6 +1231,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         job = run_download(
             command,
             env=env,
+            cwd=os.path.dirname(exe) if is_proton and exe else None,
             on_line=log.append_line if log is not None else None,
             # The game is now running detached under the wrapper; clear the
             # download/launch state once the process exits so a retry works.

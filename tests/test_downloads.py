@@ -101,3 +101,14 @@ def test_job_idle_timeout_resets_on_output(tmp_path: Path) -> None:
     job.start()
     job.wait(timeout=10)
     assert done == [0]  # completed naturally, not killed
+
+
+def test_job_runs_with_cwd(tmp_path: Path) -> None:
+    """The job spawns its subprocess in the given working directory."""
+    script = tmp_path / "pwd.py"
+    script.write_text("import os\nprint(os.getcwd())\n")
+    lines: list[str] = []
+    job = DownloadJob([sys.executable, str(script)], on_line=lines.append, cwd=str(tmp_path))
+    job.start()
+    job.wait(timeout=10)
+    assert tmp_path.as_posix() in lines[0]
