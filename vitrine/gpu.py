@@ -28,7 +28,6 @@ class NixosDriverEnv:
     glvnd_lib: str | None = None
     icd_json: str | None = None
     dri_dir: str | None = None
-    freetype_so: str | None = None
     candidates: list[str] = field(default_factory=list)
 
     @property
@@ -52,14 +51,11 @@ class NixosDriverEnv:
             existing = out.get("LD_LIBRARY_PATH")
             merged = libs + ([existing] if existing else [])
             out["LD_LIBRARY_PATH"] = ":".join(x for x in merged if x)
-        # Wine's wineloader ignores the caller's LD_LIBRARY_PATH for its runtime
-        # dlopen of libfreetype (fonts). It *does* honour LD_PRELOAD, so preload
-        # FreeType explicitly -- otherwise Proton GUIs render blank/no text.
-        if self.freetype_so:
-            existing_pre = out.get("LD_PRELOAD")
-            out["LD_PRELOAD"] = ":".join(
-                x for x in (self.freetype_so, existing_pre) if x
-            )
+        # NOTE: we deliberately do *not* LD_PRELOAD FreeType. Wine launches both
+        # a 64-bit and a 32-bit loader, and a 64-bit libfreetype preloaded into
+        # the 32-bit loader aborts with "wrong ELF class". Let each wine process
+        # resolve fonts via its own loader (steam-run/FHS provides freetype), so
+        # Proton launches cleanly.
         return out
 
 
@@ -104,7 +100,6 @@ def discover() -> NixosDriverEnv:
 
     out.vulkan_loader_lib = _vulkan_loader_dir()
     out.glvnd_lib = _glvnd_dir()
-    out.freetype_so = _freetype_so()
     return out
 
 
@@ -233,31 +228,6 @@ def _glvnd_dir() -> str | None:
     for d in glob.glob("/nix/store/*libglvnd-*/lib"):
         if os.path.exists(os.path.join(d, "libGL.so.1")):
             return d
-    return None
-
-
-def _freetype_so() -> str | None:
-    """Locate a real ``libfreetype.so.6`` to LD_PRELOAD for Proton's wineloader.
-
-    Proton's ``win32u.so`` dlopens FreeType at runtime to draw fonts. Its custom
-    wineloader ignores the caller's ``LD_LIBRARY_PATH`` but honours ``LD_PRELOAD``,
-    so Vitrine preloads the installed FreeType so GUI text renders. Without it,
-    Proton GUIs (winecfg, games) draw frames but no glyphs -- invisible text.
-    """
-    prof = _resolve_profile_lib("libfreetype.so.6")
-    if prof and os.path.exists(prof):
-        return prof
-    seen: set[str] = set()
-    for d in glob.glob("/nix/store/*freetype-*/lib"):
-        candidate = os.path.join(d, "libfreetype.so.6")
-        if not os.path.exists(candidate):
-            continue
-        target = os.path.realpath(candidate)
-        if target in seen:
-            continue
-        seen.add(target)
-        if os.path.exists(target):
-            return target
     return None
 
 

@@ -86,6 +86,12 @@ def build_env(game: Game, config: dict) -> dict[str, str]:
         overrides += ["d3d10core=n", "d3d11=n", "dxgi=n"]
     if not config.get("vkd3d", True):
         overrides.append("d3d12=n")
+    # DirectX 9/10/11 runtime DLLs (d3dx9_43, d3dcompiler_43, ...) that Wine
+    # doesn't bundle; without them old games fail with "d3dx9_43.dll not found".
+    if config.get("d3d_extras", True):
+        d3d = install_d3d_extras(env["WINEPREFIX"])
+        if d3d:
+            overrides.append(d3d)
     if config.get("dll_overrides"):
         overrides.append(str(config["dll_overrides"]))
     if overrides:
@@ -112,6 +118,24 @@ def build_env(game: Game, config: dict) -> dict[str, str]:
     for key, value in (config.get("env") or {}).items():
         env[str(key)] = str(value)
     return env
+
+
+def install_d3d_extras(prefix: str) -> str | None:
+    """Install the bundled D3D runtime DLLs into ``prefix``.
+
+    Returns a ``WINEDLLOVERRIDES`` fragment (``;``-separated ``name=n`` entries)
+    for the DLLs that were installed, or ``None`` when d3d_extras is not
+    available or nothing was installed. Errors are non-fatal (best effort).
+    """
+    from .wine import d3d_extras
+
+    try:
+        installed = d3d_extras.install_to_prefix(prefix)
+    except Exception:  # noqa: BLE001 - never block a launch on D3D extras
+        return None
+    if not installed:
+        return None
+    return d3d_extras.dll_overrides(installed)
 
 
 def wine_command(game: Game, config: dict) -> list[str]:

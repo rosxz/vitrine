@@ -36,6 +36,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "dll_overrides": "",
     "dxvk": True,
     "vkd3d": True,
+    #: Install the bundled DirectX 9/10/11 runtime DLLs (d3dx9_43, ...) into the
+    #: prefix so old games that need them launch under Wine/Proton.
+    "d3d_extras": True,
     "esync": True,
     "fsync": True,
     "env": {},

@@ -1152,6 +1152,13 @@ class VitrineWindow(Adw.ApplicationWindow):
         env["WINEARCH"] = "win64"
         env["WINEDLLOVERRIDES"] = "winemenubuilder.exe=d"
         env = apply_gpu_env(env)
+        # DirectX 9/10/11 runtime DLLs (d3dx9_43, d3dcompiler_43, ...) so old
+        # games work under Proton; adds "name=n" overrides to WINEDLLOVERRIDES.
+        from ..launch import install_d3d_extras
+
+        d3d_overrides = install_d3d_extras(wine_prefix)
+        if d3d_overrides:
+            env["WINEDLLOVERRIDES"] += ";" + d3d_overrides
         if is_proton:
             from ..prefix import _ensure_library_path
 

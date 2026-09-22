@@ -11,6 +11,23 @@
       pkgs = nixpkgs.legacyPackages.${system};
 
       # Everything the app needs at runtime. The devShell adds tooling on top.
+      # Needs to be defined before use.
+      d3dExtras = pkgs.stdenv.mkDerivation {
+        pname = "d3d_extras";
+        version = "v2";
+        src = pkgs.fetchurl {
+          url = "https://github.com/lutris/d3d_extras/releases/download/v2/v2.tar.xz";
+          sha256 = "1bvkn1jvdrmgwj0l5fwbwgiv2f77g50k2xfnq1gqclvvjj3aq5wi";
+        };
+        dontConfigure = true;
+        dontBuild = true;
+        installPhase = ''
+          mkdir -p "$out"
+          tar -xJf "$src" --strip-components=1 -C "$out"
+        '';
+      };
+
+      # Everything the app needs at runtime. The devShell adds tooling on top.
       runtime = {
         python = with pkgs.python3; withPackages (ps: [
           ps.pygobject3
@@ -64,6 +81,9 @@
         # Likewise pin gogdl (Heroic's GOG depot downloader) for non-interactive
         # GOG installs.
         export VITRINE_GOGDL="${pkgs.gogdl}/bin/gogdl"
+        # Point at the bundled D3D runtime DLLs (DirectX 9/10/11 helpers) used to
+        # populate Wine prefixes so old games launch.
+        export VITRINE_D3D_EXTRAS="${d3dExtras}"
         export LD_LIBRARY_PATH="${runtimeEnv}:$LD_LIBRARY_PATH"
         export GI_TYPELIB_PATH="${typelibPath}:$GI_TYPELIB_PATH"
         export XDG_DATA_DIRS="${dataDirs}:$XDG_DATA_DIRS"
@@ -74,7 +94,7 @@
     {
       packages.${system}.default = pkgs.symlinkJoin {
         name = "vitrine";
-        paths = [ vitrineApp pkgs.legendary-gl pkgs.gogdl ];
+        paths = [ vitrineApp pkgs.legendary-gl pkgs.gogdl d3dExtras ];
         passthru.python = runtime.python;
       };
 
@@ -110,6 +130,7 @@
           pkgs.mypy
           pkgs.legendary-gl
           pkgs.gogdl
+          d3dExtras
         ];
 
         shellHook = ''
@@ -118,6 +139,7 @@
           export GI_TYPELIB_PATH="${typelibPath}:$GI_TYPELIB_PATH"
           export XDG_DATA_DIRS="${dataDirs}:$XDG_DATA_DIRS"
           export GST_PLUGIN_SYSTEM_PATH="${gstPluginPath}:$GST_PLUGIN_SYSTEM_PATH"
+          export VITRINE_D3D_EXTRAS="${d3dExtras}"
           export VITRINE_DEV=1
         '';
       };

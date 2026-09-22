@@ -99,11 +99,13 @@ def test_apply_gpu_env_is_driver_env(monkeypatch):
     assert gpu.apply_gpu_env is gpu.driver_env
 
 
-def test_env_preloads_freetype(monkeypatch):
-    """Wine's wineloader needs freetype via LD_PRELOAD, preserved with existing."""
+def test_env_does_not_preload_freetype(monkeypatch):
+    """A 64-bit libfreetype must not be LD_PRELOADed: it aborts wine's 32-bit
+    loader with 'wrong ELF class'. Existing LD_PRELOAD is left untouched."""
     _reset_cache(monkeypatch)
-    ft = "/nix/store/zzz-freetype-2.13.3/lib/libfreetype.so.6"
-    fake = gpu.NixosDriverEnv(freetype_so=ft)
+    fake = gpu.NixosDriverEnv(icd_json="/x/intel_icd.x86_64.json", vulkan_loader_lib="/x/lib")
     monkeypatch.setattr(gpu, "discover", lambda: fake)
-    assert gpu.driver_env({})["LD_PRELOAD"] == ft
-    assert gpu.driver_env({"LD_PRELOAD": "/old.so"})["LD_PRELOAD"] == f"{ft}:/old.so"
+    assert "LD_PRELOAD" not in gpu.driver_env({})
+    # Preserve a caller-supplied preload.
+    out = gpu.driver_env({"LD_PRELOAD": "/old.so"})
+    assert out["LD_PRELOAD"] == "/old.so"
