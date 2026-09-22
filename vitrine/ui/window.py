@@ -32,6 +32,10 @@ ALL_GAMES = "__all__"
 
 #: Setting key (boolean) for the eye button: hide owned-but-not-installed games.
 HIDE_NOT_INSTALLED = "hide_not_installed"
+#: Seconds to allow a gogdl depot download to produce *any* output before we
+#: declare it stalled. gogdl can hang on some machines after manifest init
+#: (0 bytes, no progress); a short timeout lets us fall back instead of blocking.
+GOGDL_DOWNLOAD_TIMEOUT = 30.0
 
 
 def _row_widget_shim(widget: Gtk.Widget) -> Gtk.Widget:
@@ -648,12 +652,17 @@ class VitrineWindow(Adw.ApplicationWindow):
         game.config["gog_id"] = game_id
         if game.id is not None:
             self.library.update(game)
-        self._start_download(game, command, log=False)
+        self._start_download(game, command, timeout=GOGDL_DOWNLOAD_TIMEOUT)
         GLib.idle_add(self._set_downloading_ui, game, True)
         self.toasts.add_toast(Adw.Toast(title=f"Downloading {game.name}…"))
 
     def _gog_finish_install(self, game: Game) -> None:
-        """Mark a GOG game installed after a successful depot download."""
+        """Mark a GOG game installed after a successful depot download.
+
+        gogdl can stall (0 bytes) on some machines — a known upstream bug. If no
+        game files actually landed, fall back to the interactive offline
+        installer, which is the proven path.
+        """
         from ..sources.gog import gogdl
         from ..util import slugify
 
@@ -661,6 +670,14 @@ class VitrineWindow(Adw.ApplicationWindow):
         install_dir = game.config.get("gog_install_dir")
         if not install_dir:
             install_dir = gogdl.install_dir(game.slug or slugify(game.name))
+        if game_id and not gogdl.install_is_valid(game_id, install_dir):
+            GLib.idle_add(self._set_downloading_ui, game, False)
+            GLib.idle_add(
+                self.toasts.add_toast,
+                Adw.Toast(title=f"{game.name}: gogdl stalled; using the offline installer"),
+            )
+            self._install_gog_offline(game)
+            return
         game.installed = True
 
         # Best-effort: read the executable / info from the gogdl manifest.
@@ -692,9 +709,92 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         return str(paths.cache_dir() / "gogdl-auth.json")
 
+    def _install_gog_offline(self, game: Game) -> None:
+        """Fallback: install GOG via its interactive offline installer.
+
+        Used when gogdl's depot download stalls (a known upstream bug on some
+        machines). Downloads the installer and runs it under the game's Wine
+        prefix, then marks the game installed and detects its executable.
+        """
+        import subprocess
+
+        from ..sources.gog_source import GogSource
+        from ..util import slugify
+
+        game_id = game.source_id or ""
+        if not game_id:
+            return
+        source = GogSource(self.library)
+        if not source.is_authenticated():
+            GLib.idle_add(self.toasts.add_toast, Adw.Toast(title="Sign in to GOG first"))
+            return
+
+        store = source.login_token_store()
+        from .. import paths
+        from ..sources.gog import installer as gog_installer
+
+        installer_dir = paths.data_dir() / "installers"
+        installer_dir.mkdir(parents=True, exist_ok=True)
+        GLib.idle_add(self._set_downloading_ui, game, True)
+
+        from ..launch import wine_prefix_for
+        from ..runners import load_runners_store, resolve_runner
+
+        config = game.merged_config(self.library.global_config())
+        wine_binary = resolve_runner(
+            config.get("runner"), load_runners_store(self.library), config.get("wine_binary")
+        )
+        prefix = str(wine_prefix_for(game))
+
+        def _notify(title: str) -> None:
+            GLib.idle_add(self.toasts.add_toast, Adw.Toast(title=title))
+
+        def _worker() -> None:
+            try:
+                url = gog_installer.offline_installer(store, game_id, game.name)
+                dest = installer_dir / f"{slugify(game.name)}.exe"
+                _notify(f"Downloading {game.name} installer…")
+                gog_installer.download_installer(url, str(dest))
+            except Exception as exc:  # noqa: BLE001
+                _notify(f"GOG installer download failed for {game.name}: {exc}")
+                GLib.idle_add(self._set_downloading_ui, game, False)
+                return
+            try:
+                env = dict(os.environ)
+                env["WINEPREFIX"] = prefix
+                os.makedirs(prefix, exist_ok=True)
+                _notify(f"Running {game.name} installer…")
+                proc = subprocess.Popen([wine_binary, str(dest)], env=env)
+
+                from ..launch import detect_gog_executable
+
+                proc.wait()
+                game.installed = True
+                exe = detect_gog_executable(prefix)
+                if exe:
+                    game.executable = exe
+                if game.id is not None:
+                    self.library.update(game)
+                GLib.idle_add(self._set_downloading_ui, game, False)
+                GLib.idle_add(self.reload)
+                GLib.idle_add(
+                    self.toasts.add_toast,
+                    Adw.Toast(
+                        title=f"Installed {game.name}"
+                        + ("" if exe else " — set the executable in Properties")
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001
+                _notify(f"Could not run GOG installer for {game.name}: {exc}")
+                GLib.idle_add(self._set_downloading_ui, game, False)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     # -- download state ---------------------------------------------------------
 
-    def _start_download(self, game: Game, command: list[str], *, log: bool = True) -> object:
+    def _start_download(
+        self, game: Game, command: list[str], *, log: bool = True, timeout: float | None = None
+    ) -> object:
         """Run ``command`` as a tracked download job, optionally streamed to a log."""
         from ..downloads import run_download
         from ..library import DEBUG_LOG_SETTING
@@ -717,6 +817,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             progress=_on_progress,
             done=_on_done,
             on_line=window.append_line if window is not None else None,
+            timeout=timeout,
         )
         if game.id is not None:
             self._downloads[game.id] = job

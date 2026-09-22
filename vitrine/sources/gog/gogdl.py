@@ -52,13 +52,24 @@ def is_installed() -> bool:
 
 
 def write_auth_config(store: GogTokenStore, config_path: str) -> str:
-    """Write Vitrine's GOG token into gogdl's expected auth-config format."""
+    """Write Vitrine's GOG token into gogdl's expected auth-config format.
+
+    gogdl flags a credential expired when ``now >= loginTime + expires_in``.
+    Vitrine keeps its access token fresh by refreshing before it expires during
+    sync, so we give gogdl a generous validity window for the token we already
+    hold (it will simply be re-fetched next login). If Vitrine kept no expiry
+    (older logins), fall back to a 7-day window so gogdl uses the fresh
+    ``access_token`` directly rather than trying (and failing) to refresh.
+    """
+    fetched_at = store.fetched_at() or int(time.time())
+    stored_expires = store.expires_in()
+    expires_in = stored_expires if stored_expires > 0 else 7 * 86400
     payload = {
         GOG_CLIENT_ID: {
             "access_token": store.access_token(),
             "refresh_token": store.refresh_token(),
-            "expires_in": store.expires_in() or 3600,
-            "loginTime": store.fetched_at() or int(time.time()),
+            "expires_in": expires_in,
+            "loginTime": fetched_at,
         }
     }
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
@@ -75,11 +86,14 @@ def download_command(
     platform: str = "windows",
     lang: str | None = None,
     skip_dlcs: bool = True,
+    max_workers: int = 4,
 ) -> list[str]:
     """Build the gogdl ``download`` command for ``game_id``.
 
     Downloads the game depot into ``install_path``. If ``lang`` is omitted the
-    system locale is used; ``skip_dlcs`` avoids pulling every owned DLC.
+    system locale is used; ``skip_dlcs`` avoids pulling every owned DLC. A modest
+    ``max_workers`` prevents gogdl from exhausting connections/inotify and
+    stalling on large manifests (a known gogdl issue on many-core machines).
     """
     cmd = [
         gogdl_binary(),
@@ -91,6 +105,8 @@ def download_command(
         install_path,
         "--platform",
         platform,
+        "--max-workers",
+        str(max_workers),
     ]
     if lang:
         cmd += ["--lang", lang]

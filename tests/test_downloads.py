@@ -73,3 +73,14 @@ def test_job_captures_output_lines(tmp_path: Path) -> None:
     # The accumulated buffer mirrors what the callback stream received.
     assert len(job.line_buffer) == len(lines)
     assert job.line_buffer == lines
+
+def test_job_timeout_terminates_stalled_process(tmp_path: Path) -> None:
+    """A job that produces no output is terminated after its timeout."""
+    script = tmp_path / "stall.py"
+    script.write_text("import time\nwhile True:\n    time.sleep(1)\n")
+    done: list[int] = []
+    job = DownloadJob([sys.executable, str(script)], done=done.append, timeout=1.0)
+    job.start()
+    job.wait(timeout=10)
+    assert len(done) == 1
+    assert done[0] != 0  # terminated quickly, not rc 0

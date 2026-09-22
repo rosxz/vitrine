@@ -12,6 +12,7 @@ import logging
 import re
 import subprocess
 import threading
+import time
 from collections.abc import Callable, Sequence
 
 logger = logging.getLogger(__name__)
@@ -37,12 +38,14 @@ class DownloadJob:
         progress: _on_progress | None = None,
         done: _on_done | None = None,
         on_line: _on_line | None = None,
+        timeout: float | None = None,
     ) -> None:
         self.command = list(command)
         self.env = env
         self.progress = progress
         self.done = done
         self.on_line = on_line
+        self.timeout = timeout
         #: Accumulated output (for a logs window). Thread-safe-ish: lines are
         #: appended by the worker and read back by the UI via a callback.
         self.line_buffer: list[str] = []
@@ -79,6 +82,7 @@ class DownloadJob:
                 self.command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
                 text=True,
                 env=self.env,
             )
@@ -91,16 +95,42 @@ class DownloadJob:
 
         self._process = process
         assert process.stdout is not None
+
+        def _read_loop() -> None:
+            try:
+                for raw in process.stdout:
+                    line = raw.rstrip("\n")
+                    self.line_buffer.append(line)
+                    if self.on_line is not None:
+                        self.on_line(line)
+                    percent = _extract_percent(line)
+                    if percent is not None and self.progress is not None:
+                        self.progress(percent)
+            finally:
+                try:
+                    process.stdout.close()
+                except OSError:
+                    pass
+
+        reader = threading.Thread(target=_read_loop, daemon=True, name="vitrine-download-read")
+        reader.start()
+
         try:
-            for raw in process.stdout:
-                line = raw.rstrip("\n")
-                self.line_buffer.append(line)
-                if self.on_line is not None:
-                    self.on_line(line)
-                percent = _extract_percent(line)
-                if percent is not None and self.progress is not None:
-                    self.progress(percent)
+            deadline = time.monotonic() + self.timeout if self.timeout is not None else None
+            while True:
+                if process.poll() is not None:
+                    break
+                if deadline is not None and time.monotonic() >= deadline:
+                    logger.warning("Download job timed out, terminating: %s", self.command[0])
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                    break
+                time.sleep(0.05)
         finally:
+            reader.join(timeout=5)
             process.wait()
             self._finished.set()
             result = process.returncode
@@ -125,8 +155,9 @@ def run_download(
     progress: _on_progress | None = None,
     done: _on_done | None = None,
     on_line: _on_line | None = None,
+    timeout: float | None = None,
 ) -> DownloadJob:
     """Convenience: build and start a :class:`DownloadJob`."""
-    job = DownloadJob(command, env=env, progress=progress, done=done, on_line=on_line)
+    job = DownloadJob(command, env=env, progress=progress, done=done, on_line=on_line, timeout=timeout)
     job.start()
     return job
