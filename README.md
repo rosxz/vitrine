@@ -1,11 +1,8 @@
 # Vitrine
 
 A unified game library launcher for Linux: one library view across every store you own
-games on (local installs, Steam owned + Steam Family, GOG and Epic later), with covers
-normalised to a single aspect ratio instead of the mix of portraits, banners and icons
-each store ships.
-
-Status: **early scaffolding**. Nothing here launches a game yet.
+games on (local installs, Steam owned + Steam Family, GOG and Epic), with customizable
+covers and banners normalised to a single aspect ratio.
 
 ## Layout
 
@@ -51,10 +48,9 @@ nix develop -c sh -c 'Xvfb :99 -screen 0 1280x800x24 & sleep 1; DISPLAY=:99 pyth
 
 ## Design decisions
 
-- **Own database.** Vitrine keeps its own SQLite library and never writes to
-  `~/.local/share/lutris`. Lutris can be installed alongside.
-- **No Lutris code.** Lutris is a reference implementation, not a dependency. The
-  `lutris.net` public API is used for catalogue IDs, artwork and runner downloads.
+- **Own database.** Vitrine keeps its own SQLite library.
+- **Lutris Reference.** Lutris is great, and used as reference implementation. Vitrine seeks
+  to encourage the continued support of the Lutris project, through script installs, game database, etc.
 - **Source plugins.** Each store is a `Source` subclass; syncs run off the UI thread and
   must not import GTK.
 - **Normalised artwork.** Covers are cached at one fixed aspect ratio so the unified grid
@@ -67,28 +63,12 @@ nix develop -c sh -c 'Xvfb :99 -screen 0 1280x800x24 & sleep 1; DISPLAY=:99 pyth
   (essential for local games, which have no store artwork); the detail bar falls back to
   the cover behind a scrim, then initials.
 
-## Roadmap
+## Future additions
 
-0. Shell, schema, source API
-1. Local game + Wine/Proton launch + gamescope
-   - Launch pipeline (gamescope / GameMode / MangoHud / DXVK / Wayland) — done
-   - Process supervision, running indicator, playtime recording — done
-2. Themed shell + settings
-   - Theme engine (Galaxy default / follow system) + bundled CSS — done
-   - Global settings (cog) and per-game settings (right-click / detail-bar cog) — done
-   - Hero detail bar with play / playtime / last-played — done
-   - Single titlebar for editors/settings; sources column fixed and slender — done
-   - Edition windows are movable; double-click launches, single click selects — done
-   - Fixed-height hero collapses via an on-image toggle (top overlay) — done
-3. Steam source
-   - Local installed-library discovery from `appmanifest_*.acf` + `libraryfolders.vdf` — done
-   - Durable auth cache (cookies + access/refresh tokens) that avoids frequent re-login — done
-   - Whole-owned library sync (installed + store-only, translucent tiles) via Web API — done
-   - Steam Family inclusion toggle (global settings) — done
-   - Embedded WebKit sign-in (webkitgtk_6_0, GTK4) with automatic cookie capture — done
-   - Per-source refresh button, per-game remove, right-click menu — done
-4. Runner catalogue, download, per-game and global defaults
-4. Per-game configuration UI (prefix, DLLs, DXVK, env, arguments)
-5. Metadata and artwork (lutris.net, SteamGridDB, IGDB, manual override)
-6. Unified library view with deduplication and source ranking
-7. GOG, Epic (via `legendary`), installs from Lutris installer scripts
+- Support for Linux games (.sh)
+- Game metadata (? consider feature)
+- Game deduplication
+- Support for Lutris installer scripts 
+- Integrate Discord Rich Presence
+- Proper Steam time tracking
+- Game achievements for any source (GOG, Steam, Epic)
