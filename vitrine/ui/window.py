@@ -6,13 +6,15 @@ import glob
 import logging
 import os
 import shlex
+import shutil
 import threading
 from collections.abc import Callable, Sequence
+from importlib import resources
 
 from gi.repository import Adw, GLib, Gtk
 
 from ..gpu import apply_gpu_env
-from ..library import Game, Library
+from ..library import SHOW_DETAIL_SETTING, SHOW_HIDDEN, Game, Library
 from ..paths import secret_dir
 from ..running import GameAlreadyRunning, Runtime
 from ..sources import registry
@@ -29,9 +31,24 @@ from .steam_login_dialog import SteamLoginDialog
 logger = logging.getLogger(__name__)
 
 ALL_GAMES = "__all__"
+#: Sidebar pseudo-source showing only starred games (below "All games").
+FAVORITES = "__favorites__"
 
 #: Setting key (boolean) for the eye button: hide owned-but-not-installed games.
 HIDE_NOT_INSTALLED = "hide_not_installed"
+
+#: Bundled monochrome brand marks for store/sidebar entries (SVG files under
+#: ``vitrine/ui/style/brand/``). Keyed by source id.
+_BRAND_SOURCE_ICONS = {
+    "steam": "steam.svg",
+    "gog": "gog.svg",
+    FAVORITES: "favorite-white.svg",
+}
+
+
+def _brand_icon_path(name: str) -> str:
+    """Absolute path to a bundled brand mark SVG under ``vitrine/ui/style/brand``."""
+    return str(resources.files("vitrine.ui.style").joinpath("brand", name))
 #: Idle timeout (seconds without any gogdl output) before we declare a depot
 #: download stalled and kill it. gogdl can hang after manifest init when handed
 #: a bad token (0 bytes, no output); a short *idle* timeout lets us fall back
@@ -64,6 +81,11 @@ def _gamescope_wrap(config: dict, command: list[str]) -> list[str]:
         args += ["-W", width, "-H", height]
     if config.get("gamescope_fps_limiter"):
         args += ["-r", str(config["gamescope_fps_limiter"])]
+    # FSR upscaling (opt-in per game). Gamescope applies a sharpness filter while
+    # upscaling from a lower internal resolution to the output.
+    if config.get("fsr", True):
+        sharpness = str(config.get("gamescope_fsr_sharpness") or 4)
+        args += ["--fsr-sharpness", sharpness]
     return args + ["--", *command]
 
 
@@ -86,6 +108,8 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.library = library
         self.theme_manager = application.theme_manager
         self.current_source: str | None = None
+        # Whether the per-game description/hero bar is shown at all (Settings).
+        self.show_detail_bar = bool(library.setting(SHOW_DETAIL_SETTING, True))
 
         self.set_default_size(1100, 760)
         self.add_css_class("vitrine-window")
@@ -100,6 +124,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.detail_bar = GameDetailBar(
             on_play=self._on_detail_play,
             on_settings=self._on_detail_settings,
+            on_favorite=self._on_detail_favorite,
         )
 
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -112,8 +137,15 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         header = Adw.HeaderBar()
         title = Adw.WindowTitle(title="Vitrine")
-        header.set_title_widget(title)
         self.title_widget = title
+        header.set_title_widget(title)
+        # Left-aligned search field (filters within the current view).
+        self.search_entry = Gtk.SearchEntry()
+        self.search_entry.set_placeholder_text("Search")
+        self.search_entry.set_width_chars(26)
+        self.search_entry.set_margin_start(10)
+        self.search_entry.connect("search-changed", self.on_search_changed)
+        header.pack_start(self.search_entry)
 
         add_button = Gtk.Button(icon_name="list-add-symbolic")
         add_button.set_tooltip_text("Add a game")
@@ -137,19 +169,14 @@ class VitrineWindow(Adw.ApplicationWindow):
         # Toggle to hide games that are not installed locally (owned-but-not
         # downloaded store titles such as Steam). Eye icon reflects the state.
         self.hide_not_installed = bool(self.library.setting(HIDE_NOT_INSTALLED, False))
+        # Whether hidden/blacklisted games are revealed (set via Settings → General).
+        self.show_hidden = bool(self.library.setting(SHOW_HIDDEN, False))
         eye_name = "view-reveal-symbolic" if self.hide_not_installed else "view-conceal-symbolic"
         eye_button = Gtk.Button(icon_name=eye_name)
         eye_button.set_tooltip_text("Hide games not installed locally")
         eye_button.connect("clicked", self.on_toggle_hidden)
         header.pack_end(eye_button)
         self.eye_button = eye_button
-
-        # Epic-store process controls, top-left (opposite the refresh/scan
-        # cluster on the right). Shown only when the Epic source is active.
-        self.store_buttons = self._build_store_buttons()
-        for button in self.store_buttons:
-            header.pack_start(button)
-        self._set_store_buttons_visible(False)
 
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(header)
@@ -173,26 +200,6 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     # -- UI construction -------------------------------------------------------
 
-    def _build_store_buttons(self) -> list[Gtk.Button]:
-        """Launch / Focus / Kill buttons for the background Epic Games Store."""
-        specs = [
-            ("media-playback-start-symbolic", "Launch Epic Games Store", self.on_epic_store_launch),
-            ("video-display-symbolic", "Focus Epic Games Store", self.on_epic_store_focus),
-            ("process-stop-symbolic", "Kill Epic Games Store", self.on_epic_store_kill),
-        ]
-        buttons: list[Gtk.Button] = []
-        for icon, tooltip, handler in specs:
-            button = Gtk.Button(icon_name=icon)
-            button.set_tooltip_text(tooltip)
-            button.add_css_class("flat")
-            button.connect("clicked", handler)
-            buttons.append(button)
-        return buttons
-
-    def _set_store_buttons_visible(self, visible: bool) -> None:
-        for button in self.store_buttons:
-            button.set_visible(visible)
-
     def _build_sidebar(self) -> Gtk.Widget:
         sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         sidebar.add_css_class("sidebar")
@@ -211,6 +218,7 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         self.source_rows: dict[str, Gtk.ListBoxRow] = {}
         self._add_source_row(ALL_GAMES, "All games", "view-grid-symbolic")
+        self._add_source_row(FAVORITES, "Favorites", "star-outline-symbolic")
         # Store sources first, then "Local" at the bottom.
         local_source = registry.get("local")
         for source in registry.all():
@@ -220,7 +228,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         self._add_source_row(
             "local",
             (local_source.name if local_source else "Local"),
-            (local_source.icon if local_source else "folder-symbolic") or "folder-symbolic",
+            (local_source.icon if local_source else "go-home-symbolic") or "go-home-symbolic",
         )
 
         scroller = Gtk.ScrolledWindow()
@@ -269,7 +277,15 @@ class VitrineWindow(Adw.ApplicationWindow):
         row.add_css_class("vitrine-nav-row")
 
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        icon = Gtk.Image.new_from_icon_name(icon_name)
+
+        brand = _BRAND_SOURCE_ICONS.get(source_id)
+        if brand:
+            # Bundled monochrome SVG brand mark (Steam / GOG). Sized to match the
+            # other (symbolic) nav icons.
+            icon = Gtk.Image.new_from_file(_brand_icon_path(brand))
+            icon.set_pixel_size(18)
+        else:
+            icon = Gtk.Image.new_from_icon_name(icon_name)
         icon.add_css_class("vitrine-nav-icon")
         box.append(icon)
         box.append(Gtk.Label(label=title, xalign=0))
@@ -286,30 +302,58 @@ class VitrineWindow(Adw.ApplicationWindow):
         if row is None:
             return
         source_id = getattr(row, "source_id", ALL_GAMES)
-        self.current_source = None if source_id == ALL_GAMES else source_id
-        self.reload()
+        if source_id == ALL_GAMES:
+            self.current_source = None
+        elif source_id == FAVORITES:
+            self.current_source = FAVORITES
+        else:
+            self.current_source = source_id
+        # Switching source intentionally resets scroll/selection.
+        self.reload(preserve_scroll=False)
 
-    def reload(self) -> None:
-        games = self.library.games(source=self.current_source)
+    def reload(self, *, preserve_scroll: bool = True) -> None:
+        self.show_hidden = bool(self.library.setting(SHOW_HIDDEN, False))
+        self.show_detail_bar = bool(self.library.setting(SHOW_DETAIL_SETTING, True))
+        if not self.show_detail_bar:
+            self.detail_bar.set_visible(False)
+        if self.current_source == FAVORITES:
+            games = self.library.favorite_games()
+        else:
+            games = self.library.games(source=self.current_source)
         # Local games are by definition installed on this machine.
         for game in games:
             if game.source == "local" and not game.installed:
                 game.installed = True
+        # Hidden/blacklisted games are suppressed unless "show hidden" is on.
+        if not self.show_hidden:
+            games = [g for g in games if not g.hidden]
         if self.hide_not_installed:
             games = [g for g in games if g.installed or not g.source]
-        self.library_view.set_games(games)
+        # Search filters within the current view.
+        query = (self.search_entry.get_text() or "").strip().lower()
+        searching = bool(query)
+        if query:
+            games = [g for g in games if query in (g.name or "").lower()]
+        # While searching, don't auto-select the first result (that would pop
+        # the detail/hover panel open on every keystroke).
+        self.library_view.set_games(
+            games, preserve_scroll=preserve_scroll, auto_select=not searching
+        )
         self.title_widget.set_subtitle(
             "1 game" if len(games) == 1 else f"{len(games)} games"
         )
         # Store sources get a refresh button instead of "add a game".
-        if self.current_source and self.current_source != "local":
+        if self.current_source and self.current_source not in ("local", FAVORITES):
             self.add_button.set_visible(False)
             self.refresh_button.set_visible(True)
         else:
             self.add_button.set_visible(True)
             self.refresh_button.set_visible(False)
-        self._set_store_buttons_visible(self.current_source == "epic")
         self._restore_download_state()
+
+    def on_search_changed(self, _entry: Gtk.SearchEntry) -> None:
+        """Refilter the current view as the user types."""
+        self.reload()
 
     def _restore_download_state(self) -> None:
         """Re-apply the "downloading" visuals to tiles after a rebuild."""
@@ -358,7 +402,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         ProtonWindow(self.library, on_changed=self._refresh_runner_dropdown, parent=self).present()
 
     def on_settings_clicked(self, _button: Gtk.Button) -> None:
-        SettingsDialog(
+        dialog = SettingsDialog(
             self.library,
             self.theme_manager,
             on_steam_login=self.on_steam_login,
@@ -371,7 +415,15 @@ class VitrineWindow(Adw.ApplicationWindow):
             on_epic_refresh=self._run_epic_sync,
             on_epic_reset=self.on_epic_reset_session,
             parent=self,
-        ).present()
+        )
+        # Settings can change library-wide flags (e.g. "show hidden games"), so
+        # refresh the grid when the settings window goes away.
+        dialog.connect("close-request", self._on_settings_closed)
+        dialog.present()
+
+    def _on_settings_closed(self, _dialog) -> bool:
+        self.reload()
+        return False
 
     def on_add_game_clicked(self, _button: Gtk.Button) -> None:
         AddGameDialog(self.library, on_add=self.on_game_added, parent=self).present()
@@ -874,30 +926,6 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     # -- Epic Games Store process buttons ---------------------------------------
 
-    def on_epic_store_launch(self, _button: Gtk.Button | None = None) -> None:
-        from .epic_store_control import launch_store
-
-        try:
-            launch_store()
-        except Exception as error:  # noqa: BLE001
-            self.toasts.add_toast(Adw.Toast(title=f"Could not launch Epic store: {error}"))
-
-    def on_epic_store_focus(self, _button: Gtk.Button | None = None) -> None:
-        from .epic_store_control import focus_store
-
-        try:
-            focus_store()
-        except Exception as error:  # noqa: BLE001
-            self.toasts.add_toast(Adw.Toast(title=str(error)))
-
-    def on_epic_store_kill(self, _button: Gtk.Button | None = None) -> None:
-        from .epic_store_control import kill_store
-
-        try:
-            kill_store()
-        except Exception as error:  # noqa: BLE001
-            self.toasts.add_toast(Adw.Toast(title=str(error)))
-
     # -- asynchronous artwork -------------------------------------------------
 
     _ART_WORKERS = 8
@@ -906,7 +934,11 @@ class VitrineWindow(Adw.ApplicationWindow):
         """Fetch artwork for many games on a worker pool, off the UI thread."""
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        from ..artwork import fetch_game_artwork
+        from ..artwork import fetch_game_artwork, load_context
+
+        # Snapshot credentials + priority on the main thread; workers must not
+        # touch the library's sqlite connection.
+        art_context = load_context(self.library)
 
         total = len(games)
         self._art_total = total
@@ -920,7 +952,7 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         def _work(game: Game) -> tuple[Game, bool]:
             try:
-                changed = fetch_game_artwork(game, force=False)
+                changed = fetch_game_artwork(game, force=False, library=self.library, ctx=art_context)
             except Exception:  # noqa: BLE001 - one bad game must not kill others.
                 logger.exception("Artwork fetch failed for %s", game.name)
                 changed = False
@@ -976,7 +1008,7 @@ class VitrineWindow(Adw.ApplicationWindow):
     def on_game_added(self, game: Game) -> None:
         self.library.add(game)
         self.reload()
-        self.detail_bar.set_game(game)
+        self._set_detail_game(game)
         self.toasts.add_toast(Adw.Toast(title=f"Added {game.name}"))
 
     def _on_detail_play(self, game: Game | None) -> None:
@@ -987,6 +1019,45 @@ class VitrineWindow(Adw.ApplicationWindow):
         if game is not None:
             self.on_edit_game(game)
 
+    def _on_detail_favorite(self, game: Game | None) -> None:
+        if game is None:
+            return
+        starred = not bool(game.favorite)
+        self.set_game_favorite(game, starred)
+        self.toasts.add_toast(Adw.Toast(title=f"{'Starred' if starred else 'Unstarred'} {game.name}"))
+
+    def set_game_favorite(self, game: Game, favorite: bool) -> None:
+        """Persist a favorite toggle without rebuilding the grid (no flash).
+
+        Un-favoriting while the Favorites view is active removes that game's tile
+        in place; otherwise nothing in the grid changes, only the hero star.
+        """
+        self.library.set_favorite(game.id, favorite)
+        game.favorite = favorite
+        if self.detail_bar.game() is game:
+            self.detail_bar.set_favorite(favorite)
+        if self.current_source == FAVORITES and not favorite:
+            if self.library_view.remove_game(game):
+                self._update_visible_count()
+
+    def set_game_hidden(self, game: Game, hidden: bool) -> None:
+        """Hide/blacklist (or unhide) a game without rebuilding the grid.
+
+        When "show hidden" is off the tile is removed in place (scroll position
+        is untouched); when on, the tile just dims. No reload → no white flash.
+        """
+        self.library.set_hidden(game.id, hidden)
+        game.hidden = hidden
+        if self.show_hidden:
+            self.library_view.set_hidden_visual(game, hidden)
+        else:
+            if self.library_view.remove_game(game):
+                self._update_visible_count()
+
+    def _update_visible_count(self) -> None:
+        count = self.library_view.total_count()
+        self.title_widget.set_subtitle("1 game" if count == 1 else f"{count} games")
+
     def on_edit_game(self, game: Game) -> None:
         GameSettingsDialog(
             self.library,
@@ -994,9 +1065,19 @@ class VitrineWindow(Adw.ApplicationWindow):
             on_save=self.on_game_edited,
             on_remove=self.on_game_removed,
             on_refresh_artwork=self._on_refresh_artwork,
+            on_pick_artwork=self._on_artwork_chosen,
+            on_open_install=self._open_install_dir,
+            on_open_prefix=self._open_prefix_dir,
             on_wine_config=self.open_wine_config,
             parent=self,
         ).present()
+
+    def _on_artwork_chosen(self, game: Game) -> None:
+        """Refresh the UI after the artwork picker chose a tile+hero."""
+        self.library.update(game)
+        self.reload()
+        self._set_detail_game(game)
+        self.toasts.add_toast(Adw.Toast(title=f"Updated artwork for {game.name}"))
 
     def _on_refresh_artwork(self, game: Game) -> None:
         try:
@@ -1006,29 +1087,150 @@ class VitrineWindow(Adw.ApplicationWindow):
         except Exception as exc:  # noqa: BLE001 - surface as a toast, not a crash.
             self.toasts.add_toast(Adw.Toast(title=f"Refresh failed: {exc}"))
             return
+        if not changed:
+            self._maybe_show_provider_hint()
         if changed:
             self.library.update(game)
             self.reload()
-            self.detail_bar.set_game(game)
+            self._set_detail_game(game)
             self.toasts.add_toast(Adw.Toast(title=f"Updated artwork for {game.name}"))
-        else:
-            self.toasts.add_toast(
-                Adw.Toast(title=f"No automatic artwork for {game.name} (set a source and slug, or use Local)")
-            )
+
+    def _maybe_show_provider_hint(self) -> None:
+        """One-time hint when no artwork provider key is configured."""
+        try:
+            from ..artwork import mark_provider_hint_shown, provider_hint_pending
+
+            if provider_hint_pending(self.library):
+                mark_provider_hint_shown(self.library)
+                self.toasts.add_toast(
+                    Adw.Toast(
+                        title="Configure IGDB/SteamGridDB keys in Settings → Appearance for richer artwork."
+                    )
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("provider hint")
 
     def on_game_edited(self, game: Game) -> None:
         self.reload()
-        self.detail_bar.set_game(game)
+        self._set_detail_game(game)
         self.toasts.add_toast(Adw.Toast(title=f"Updated {game.name}"))
 
     def on_game_removed(self, game: Game) -> None:
-        if game.source in ("steam", "gog", "epic"):
-            self.library.remove_source_game(game.source, game.source_id or "")
-        else:
+        """'Remove' action for a game.
+
+        Local games are fully removed from the library (Vitrine owns them). Steam
+        games are handed to Steam itself (``steam://uninstall/<appid>``) -- Steam
+        manages its own install files, so no local prompt is shown. Other store
+        games (GOG/Epic) revert to *available but not installed*: we uninstall the
+        files on disk (and optionally the prefix, after a confirmation) but keep
+        the library entry so it stays reinstallable.
+        """
+        if game.source == "local":
             self.library.remove(game.id) if game.id is not None else None
+            self.reload()
+            self._set_detail_game(None)
+            self.toasts.add_toast(Adw.Toast(title=f"Removed {game.name}"))
+            return
+        if game.source == "steam":
+            self._uninstall_steam_game(game)
+            return
+        self._prompt_uninstall(game)
+
+    def _uninstall_steam_game(self, game: Game) -> None:
+        """Uninstall a Steam game through Steam itself (no local prompt).
+
+        Steam owns the install directory, so Vitrine asks Steam to uninstall the
+        title and marks it *not installed* so the UI reflects it immediately. If
+        the user cancels the uninstall in Steam, a library refresh re-detects it
+        (the Steam source reconciles installed-ness from the app manifests).
+        """
+        from gi.repository import Gio
+
+        appid = game.source_id or ""
+        if not appid:
+            self.toasts.add_toast(Adw.Toast(title=f"No Steam appid for {game.name}"))
+            return
+        uri = f"steam://uninstall/{appid}"
+        try:
+            Gio.AppInfo.launch_default_for_uri(uri)
+        except Exception as error:  # noqa: BLE001
+            logger.warning("Failed to uninstall %s via Steam: %s", game.name, error)
+            self.toasts.add_toast(Adw.Toast(title=f"Could not uninstall {game.name} via Steam"))
+            return
+
+        # Reflect the pending uninstall locally; the next Steam sync reconciles.
+        game.installed = False
+        if game.id is not None:
+            self.library.update(game)
         self.reload()
-        self.detail_bar.set_game(None)
-        self.toasts.add_toast(Adw.Toast(title=f"Removed {game.name}"))
+        self.toasts.add_toast(Adw.Toast(title=f"Uninstalling {game.name} via Steam"))
+
+    def _prompt_uninstall(self, game: Game) -> None:
+        """Ask whether to delete the game prefix along with its install files."""
+        from gi.repository import Adw
+
+        dialog = Adw.AlertDialog(
+            heading=f"Uninstall {game.name}?",
+            body=(
+                "This removes the installed game files. Your library entry is "
+                "kept, so the game stays available to reinstall at any time.\n\n"
+                "Do you also want to delete this game's Wine/Proton prefix?"
+            ),
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("files", "Remove files")
+        dialog.add_response("files_prefix", "Remove files and prefix")
+        dialog.set_response_appearance("files", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_response_appearance("files_prefix", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", self._on_uninstall_response, game)
+        dialog.present(self)
+
+    def _on_uninstall_response(self, dialog, response: str, game: Game) -> None:
+        if response in ("files", "files_prefix"):
+            self._uninstall_game(game, remove_prefix=(response == "files_prefix"))
+
+    def _uninstall_game(self, game: Game, remove_prefix: bool) -> None:
+        """Uninstall a store game's files (+ prefix) and revert to not-installed."""
+        from ..sources.epic import legendary as lg
+
+        if game.source == "epic" and game.source_id and lg.is_installed():
+            # Legendary tracks its own installs; let it remove the files (and any
+            # leftover metadata) so it no longer reports the app as installed.
+            try:
+                lg.uninstall(game.source_id)
+            except Exception:  # noqa: BLE001
+                logger.exception("legendary uninstall failed for %s", game.name)
+                self.toasts.add_toast(Adw.Toast(title=f"Could not uninstall {game.name}"))
+                return
+        else:
+            install_dir = self._game_install_dir(game)
+            if install_dir:
+                try:
+                    shutil.rmtree(install_dir, ignore_errors=True)
+                except Exception:  # noqa: BLE001
+                    logger.exception("removing install dir for %s", game.name)
+
+        if remove_prefix:
+            from ..launch import wine_prefix_for
+
+            prefix = str(wine_prefix_for(game))
+            if os.path.isdir(prefix):
+                try:
+                    shutil.rmtree(prefix, ignore_errors=True)
+                except Exception:  # noqa: BLE001
+                    logger.exception("removing prefix for %s", game.name)
+
+        # Keep the library entry, but revert it to 'available, not installed'.
+        game.installed = False
+        if game.executable is not None:
+            game.executable = None
+        if game.id is not None:
+            self.library.update(game)
+        self.reload()
+        self._set_detail_game(None)
+        self.toasts.add_toast(Adw.Toast(title=f"Uninstalled {game.name}"))
 
     def on_game_activated(self, game: Game) -> None:
         # Every Steam game launches through Steam itself (steam://rungameid),
@@ -1107,7 +1309,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             return
 
         from ..downloads import run_download
-        from ..library import DEBUG_LOG_SETTING
+        from ..library import DEBUG_LOG_SETTING, DUMP_LAUNCH_ENV_SETTING
         from ..runners import DEFAULT_PROTON_SETTING, get_runner, load_runners_store, resolve_runner
         from .log_window import ExecutionLogWindow
 
@@ -1173,12 +1375,14 @@ class VitrineWindow(Adw.ApplicationWindow):
                 install_path=os.path.dirname(exe),
             )
             # Do NOT apply driver_env here: its Nix LD_LIBRARY_PATH breaks
-            # pressure-vessel. Only surface non-loader driver vars.
+            # pressure-vessel. In particular, never surface VK_ICD_FILENAMES --
+            # pointing the Vulkan loader at the Nix mesa ICD that pressure-vessel
+            # doesn't stage in its sandbox makes DXVK fail to init and the game
+            # exits without opening a window. The GL driver paths are safe to
+            # carry for legacy wined3d titles.
             from ..gpu import discover as _gpu_discover
 
             _gpu = _gpu_discover()
-            if _gpu.icd_json:
-                env.setdefault("VK_ICD_FILENAMES", _gpu.icd_json)
             if _gpu.dri_dir:
                 env.setdefault("LIBGL_DRIVERS_PATH", _gpu.dri_dir)
                 env.setdefault("MESA_DRIVER_PATH", _gpu.dri_dir)
@@ -1190,6 +1394,26 @@ class VitrineWindow(Adw.ApplicationWindow):
                 env["WINEDLLOVERRIDES"] = (
                     env["WINEDLLOVERRIDES"] + ";" if env["WINEDLLOVERRIDES"] else ""
                 ) + d3d
+            # Per-game DXVK toggle: off forces Proton to Wine's built-in D3D
+            # translators instead of the Vulkan DXVK renderer.
+            if not config.get("dxvk", True):
+                off = "d3d10core=n;d3d11=n;dxgi=n"
+                env.setdefault("WINEDLLOVERRIDES", "")
+                env["WINEDLLOVERRIDES"] = (
+                    (env["WINEDLLOVERRIDES"] + ";") if env["WINEDLLOVERRIDES"] else ""
+                ) + off
+            # Per-game esync/fsync/FSR/EasyAntiCheat switches (same flags the
+            # local/Wine path applies).
+            from ..launch import apply_performance_env
+
+            apply_performance_env(env, config)
+            # Per-game environment variables + locale override (Lutris-style).
+            for key, value in (config.get("env") or {}).items():
+                if key:
+                    env[str(key)] = str(value)
+            if config.get("locale"):
+                env["LANG"] = str(config["locale"])
+                env["LC_ALL"] = str(config["locale"])
             # umu_command already wraps in steam-run so pressure-vessel can build
             # its sandbox.
         else:
@@ -1227,21 +1451,30 @@ class VitrineWindow(Adw.ApplicationWindow):
             log = None
         if is_proton:
             # Launch Proton games the same way manual runs do -- a direct
-            # subprocess with inherited stdio (not a piped download job), the
-            # clean umu env, and the game directory as cwd. This is what
-            # reliably presents the game window on Wayland. Watch it in the
-            # background to clear the launch state on exit.
+            # subprocess (not a piped download job), the clean umu env, and the
+            # game directory as cwd. This is what reliably presents the game
+            # window on Wayland. Watch it in the background to clear the launch
+            # state on exit.
             import subprocess
 
-            self._dump_launch(command, env)
+            if self.library.setting(DUMP_LAUNCH_ENV_SETTING, False):
+                self._dump_launch(command, env)
+            # When the debug log is open, capture the game's output and send it
+            # to the log window so errors are visible there too. Otherwise leave
+            # stdio inherited (so the detached game doesn't block on a full pipe).
+            capture = log is not None
             proc = subprocess.Popen(
                 command,
                 env=env,
                 cwd=os.path.dirname(exe) if exe else None,
+                stdout=subprocess.PIPE if capture else None,
+                stderr=subprocess.STDOUT if capture else None,
+                text=True,
+                bufsize=1,
             )
             if game.id is not None:
                 self._downloads[game.id] = proc
-            threading.Thread(target=self._watch_proton_proc, args=(proc, game), daemon=True).start()
+            threading.Thread(target=self._watch_proton_proc, args=(proc, game, log), daemon=True).start()
             self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name}"))
         else:
             job = run_download(
@@ -1261,8 +1494,20 @@ class VitrineWindow(Adw.ApplicationWindow):
         if game_id is not None:
             self._downloads.pop(game_id, None)
 
-    def _watch_proton_proc(self, proc, game: Game) -> None:
-        """Wait for a detached Proton process and clear launch state on exit."""
+    def _watch_proton_proc(self, proc, game: Game, log=None) -> None:
+        """Wait for a detached Proton process, streaming output to the log.
+
+        ``log`` is the open ExecutionLogWindow (or ``None``). When present, its
+        stdout/stderr were captured to pipes, so forward each line here before
+        waiting on the process. ``append_line`` is thread-safe and wakes up the
+        GTK loop, so this can run on a daemon thread.
+        """
+        if log is not None and proc.stdout is not None:
+            try:
+                for line in proc.stdout:
+                    log.append_line(line.rstrip("\n"))
+            except Exception:  # noqa: BLE001 - a broken pipe must not crash
+                logger.exception("reading Proton output stream")
         proc.wait()
         if game.id is not None and self._downloads.get(game.id) is proc:
             GLib.idle_add(
@@ -1338,7 +1583,14 @@ class VitrineWindow(Adw.ApplicationWindow):
     # -- selection -------------------------------------------------------------
 
     def _on_selection_changed(self, view: LibraryView) -> None:
-        self.detail_bar.set_game(view.selected_game())
+        self._set_detail_game(view.selected_game())
+
+    def _set_detail_game(self, game: Game | None) -> None:
+        """Show the description/hero bar, unless globally disabled in Settings."""
+        if self.show_detail_bar or game is None:
+            self.detail_bar.set_game(game)
+        else:
+            self.detail_bar.set_visible(False)
 
     def on_tile_context(self, game: Game, _x: float, _y: float) -> None:
         """Right-click on a tile: show a context menu."""
@@ -1375,8 +1627,11 @@ class VitrineWindow(Adw.ApplicationWindow):
         """
         items: list[tuple[str, Callable[[], None]]] = [
             ("Properties", lambda: self.on_edit_game(game)),
-            ("Wine Configuration…", lambda: self.open_wine_config(game)),
         ]
+        fav_label = "Remove from favorites" if game.favorite else "Add to favorites"
+        items.append((fav_label, lambda: self.set_game_favorite(game, not game.favorite)))
+        hide_label = "Unhide game" if game.hidden else "Hide game"
+        items.append((hide_label, lambda: self.set_game_hidden(game, not game.hidden)))
         if game.source == "steam" and not game.installed:
             items.append(("Open store page", lambda: self.open_store_page(game)))
             return items
@@ -1386,9 +1641,59 @@ class VitrineWindow(Adw.ApplicationWindow):
                 items.append(("Install…", lambda: self.install_game(game)))
             items.append(("Open store page", lambda: self.open_store_page(game)))
             return items
-        # Locally installed (local games or installed store games): removable.
-        items.append(("Remove from library", lambda: self.on_game_removed(game)))
+        # Locally installed (local games or installed store games).
+        label = "Remove from library" if game.source == "local" else "Uninstall…"
+        items.append((label, lambda: self.on_game_removed(game)))
         return items
+
+    def _open_directory(self, path: str) -> None:
+        """Open a directory in the system file manager via xdg-open."""
+        import subprocess
+
+        if not path or not os.path.isdir(path):
+            self.toasts.add_toast(Adw.Toast(title="Game directory not found"))
+            return
+        try:
+            subprocess.Popen(["xdg-open", path])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not open directory %s: %s", path, exc)
+            self.toasts.add_toast(Adw.Toast(title=f"Could not open {path}"))
+
+    def _open_prefix_dir(self, game: Game) -> None:
+        """Reveal the game's Wine/Proton prefix directory in the file manager."""
+        from ..launch import wine_prefix_for
+
+        self._open_directory(str(wine_prefix_for(game)))
+
+    def _open_install_dir(self, game: Game) -> None:
+        """Reveal the game's installation directory in the file manager."""
+        directory = self._game_install_dir(game)
+        if directory:
+            self._open_directory(directory)
+
+    def _game_install_dir(self, game: Game) -> str | None:
+        """Resolve the directory where the game's files actually live."""
+        if game.source == "epic" and game.source_id:
+            try:
+                from ..sources.epic import legendary as lg
+
+                if lg.is_installed():
+                    exe = lg.installed_executable(game.source_id)
+                    if exe:
+                        return os.path.dirname(exe)
+            except Exception:  # noqa: BLE001
+                logger.exception("resolving install dir for %s", game.name)
+        for candidate in (game.executable, game.working_dir):
+            if not candidate:
+                continue
+            directory = (
+                candidate
+                if os.path.isdir(candidate)
+                else (os.path.dirname(candidate) if os.path.isfile(candidate) else None)
+            )
+            if directory and os.path.isdir(directory):
+                return directory
+        return None
 
     def install_game(self, game: Game) -> None:
         """Install an owned but not-yet-installed store game."""

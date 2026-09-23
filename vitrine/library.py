@@ -17,6 +17,17 @@ if TYPE_CHECKING:
 #: installs/launches across every source.
 DEBUG_LOG_SETTING = "auto_show_debug_log"
 
+#: Setting key (boolean): reveal hidden/blacklisted games in the lists.
+SHOW_HIDDEN = "show_hidden"
+
+#: Setting key (boolean): show the game description / hero detail bar on selection.
+SHOW_DETAIL_SETTING = "show_detail_bar"
+
+#: Setting key (boolean): write the exact Proton launch command + environment to
+#: ``$XDG_CACHE_HOME/vitrine/proton-launch.env`` on every launch, for debugging
+#: window-presentation issues. Off by default -- it's a diagnostics aid only.
+DUMP_LAUNCH_ENV_SETTING = "dump_launch_env"
+
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "graphics": "x11",  # "x11" or "wayland"
@@ -41,6 +52,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "d3d_extras": True,
     "esync": True,
     "fsync": True,
+    #: AMD FidelityFX Super Resolution (FSR) upscaling (via gamescope / wine-fsr).
+    "fsr": True,
+    #: Easy Anti-Cheat runtime (Proton ``PROTON_EAC_RUNTIME`` when available).
+    "eac": True,
+    #: Locale override (``LANG``/``LC_ALL``) for the game, e.g. ``ja_JP.UTF-8``.
+    "locale": "",
     "env": {},
     "pre_launch": [],
     "post_launch": [],
@@ -70,8 +87,10 @@ class Game:
     lastplayed: int | None = None
     cover: str | None = None
     banner: str | None = None
-    artwork_source: str = "lutris"
+    artwork_source: str = "auto"
     lutris_slug: str | None = None
+    favorite: bool = False
+    hidden: bool = False
     config: dict[str, Any] = field(default_factory=dict)
 
     def merged_config(self, global_config: dict[str, Any]) -> dict[str, Any]:
@@ -87,7 +106,9 @@ class Game:
     def from_row(cls, row: sqlite3.Row) -> Game:
         data = dict(row)
         data["config"] = json.loads(data.get("config") or "{}")
-        data["installed"] = bool(data.get("installed"))
+        for flag in ("installed", "favorite", "hidden"):
+            if flag in data:
+                data[flag] = bool(data.get(flag))
         return cls(**{key: data[key] for key in cls.__dataclass_fields__ if key in data})
 
     def to_row(self) -> dict[str, Any]:
@@ -95,6 +116,8 @@ class Game:
         row.pop("id", None)
         row["config"] = json.dumps(row["config"])
         row["installed"] = int(bool(self.installed))
+        row["favorite"] = int(bool(self.favorite))
+        row["hidden"] = int(bool(self.hidden))
         return row
 
 
@@ -104,16 +127,68 @@ class Library:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
 
+    def migrate_artwork_source_default(self) -> int:
+        """Migrate the legacy ``lutris`` artwork default to ``auto``.
+
+        Before the artwork providers, every store game defaulted to the ``lutris``
+        source. Now that ``auto`` is the default (and its priority chain includes
+        Lutris as a fallback), convert those implicit-default rows so existing
+        games gain IGDB/SteamGridDB coverage. Users who explicitly pick a source
+        later can still do so — and ``auto`` keeps Lutris art reachable anyway.
+        Returns how many rows were changed.
+        """
+        cursor = self.conn.execute(
+            "UPDATE games SET artwork_source = 'auto' WHERE artwork_source = 'lutris'"
+        )
+        self.conn.commit()
+        return max(cursor.rowcount, 0)
+
     # -- games -----------------------------------------------------------------
 
-    def games(self, source: str | None = None) -> list[Game]:
-        query = "SELECT * FROM games"
+    def games(self, source: str | None = None, favorite: bool | None = None) -> list[Game]:
+        query = "SELECT * FROM games WHERE 1 = 1"
         params: list[Any] = []
         if source:
-            query += " WHERE source = ?"
+            query += " AND source = ?"
             params.append(source)
+        if favorite is not None:
+            query += " AND favorite = ?"
+            params.append(int(bool(favorite)))
         query += " ORDER BY COALESCE(sortname, name) COLLATE NOCASE"
         return [Game.from_row(row) for row in self.conn.execute(query, params)]
+
+    def favorite_games(self) -> list[Game]:
+        return self.games(favorite=True)
+
+    def set_favorite(self, game_id: int | None, favorite: bool) -> None:
+        """Mark a game as starred/favorite. No-op without a row id."""
+        if game_id is None:
+            return
+        self.conn.execute(
+            "UPDATE games SET favorite = ?, updated_at = ? WHERE id = ?",
+            (int(bool(favorite)), now(), game_id),
+        )
+        self.conn.commit()
+
+    def set_hidden(self, game_id: int | None, hidden: bool, source_id: str | None = None) -> None:
+        """Hide/blacklist a game. Uses the row id when available, else source_id.
+
+        Store-synced games may not have been persisted with an id yet; falling
+        back to ``(source, source_id)`` keeps hiding robust for those rows.
+        """
+        if game_id is not None:
+            self.conn.execute(
+                "UPDATE games SET hidden = ?, updated_at = ? WHERE id = ?",
+                (int(bool(hidden)), now(), game_id),
+            )
+        elif source_id:
+            self.conn.execute(
+                "UPDATE games SET hidden = ?, updated_at = ? WHERE source_id = ?",
+                (int(bool(hidden)), now(), source_id),
+            )
+        else:
+            return
+        self.conn.commit()
 
     def game(self, game_id: int) -> Game | None:
         row = self.conn.execute("SELECT * FROM games WHERE id = ?", (game_id,)).fetchone()

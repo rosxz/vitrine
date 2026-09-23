@@ -75,6 +75,29 @@ def detect_gog_executable(prefix: str | Path) -> str | None:
     return best[0] if best else None
 
 
+def apply_performance_env(env: dict[str, str], config: dict) -> None:
+    """Apply per-game performance/anti-cheat switches (Lutris semantics).
+
+    - ``esync``/``fsync``: set ``WINEESYNC``/``WINEFSYNC`` (and Proton's inverted
+      ``PROTON_NO_ESYNC``/``PROTON_NO_FSYNC`` when disabled).
+    - ``fsr``: AMD FidelityFX Super Resolution via ``WINE_FULLSCREEN_FSR``.
+    - ``eac``: point ``PROTON_EAC_RUNTIME`` at Vitrine's EAC runtime dir when the
+      user has placed one there (mirrors Lutris's ``eac_runtime``).
+    """
+    env["WINEESYNC"] = "1" if config.get("esync", True) else "0"
+    env["WINEFSYNC"] = "1" if config.get("fsync", True) else "0"
+    if not config.get("esync", True):
+        env["PROTON_NO_ESYNC"] = "1"
+    if not config.get("fsync", True):
+        env["PROTON_NO_FSYNC"] = "1"
+    if config.get("fsr", True):
+        env["WINE_FULLSCREEN_FSR"] = "1"
+    if config.get("eac", True):
+        runtime = paths.data_dir() / "eac_runtime"
+        if runtime.is_dir():
+            env["PROTON_EAC_RUNTIME"] = str(runtime)
+
+
 def build_env(game: Game, config: dict) -> dict[str, str]:
     """Environment for the game: prefix, DLL overrides, sync, user variables."""
     env = dict(os.environ)
@@ -126,8 +149,7 @@ def build_env(game: Game, config: dict) -> dict[str, str]:
     if overrides:
         env["WINEDLLOVERRIDES"] = ";".join(overrides)
 
-    env["WINEESYNC"] = "1" if config.get("esync", True) else "0"
-    env["WINEFSYNC"] = "1" if config.get("fsync", True) else "0"
+    apply_performance_env(env, config)
 
     # MangoHud is skipped under gamescope: gamescope draws its own overlay, and
     # MANGOHUD=1 inside a gamescope session makes many games crash. Same rule as
@@ -143,6 +165,11 @@ def build_env(game: Game, config: dict) -> dict[str, str]:
         # Proton's supported switch. Wine builds select their Wayland driver
         # themselves when WAYLAND_DISPLAY is set and the driver is present.
         env["PROTON_ENABLE_WAYLAND"] = "1"
+
+    # Per-game locale override (Lutris-style: sets LANG + LC_ALL).
+    if config.get("locale"):
+        env["LANG"] = str(config["locale"])
+        env["LC_ALL"] = str(config["locale"])
 
     for key, value in (config.get("env") or {}).items():
         env[str(key)] = str(value)

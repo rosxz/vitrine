@@ -150,7 +150,7 @@ def test_sync_promotes_lutris_artwork_and_paginates(
 
     alpha = library.game_by_source_id("gog", "1")
     assert alpha is not None
-    assert alpha.artwork_source == "lutris"
+    assert alpha.artwork_source == "auto"
 
 
 # -- login helpers -------------------------------------------------------------

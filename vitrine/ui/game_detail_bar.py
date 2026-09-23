@@ -14,6 +14,7 @@ reopened.
 from __future__ import annotations
 
 from collections.abc import Callable
+from importlib import resources
 
 from gi.repository import Gtk
 
@@ -26,6 +27,11 @@ DEFAULT_HEIGHT = 200
 COLLAPSED_HEIGHT = 26
 
 
+def _brand_icon_path(name: str) -> str:
+    """Absolute path to a bundled brand/art SVG under ``vitrine/ui/style/brand``."""
+    return str(resources.files("vitrine.ui.style").joinpath("brand", name))
+
+
 class GameDetailBar(Gtk.Box):
     """Collapsible hero detail panel for the currently-selected game."""
 
@@ -33,10 +39,12 @@ class GameDetailBar(Gtk.Box):
         self,
         on_play: Callable[[Game | None], None] | None = None,
         on_settings: Callable[[Game | None], None] | None = None,
+        on_favorite: Callable[[Game | None], None] | None = None,
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self._on_play = on_play
         self._on_settings = on_settings
+        self._on_favorite = on_favorite
         self._game: Game | None = None
         self._expanded = True
 
@@ -101,11 +109,23 @@ class GameDetailBar(Gtk.Box):
         self._settings_button.add_css_class("flat")
         self._settings_button.connect("clicked", lambda _b: self._on_settings(self._game))
 
+        # Favorite star: the bundled brand SVG (filled with the play-button accent)
+        # is semi-transparent when not starred and fully opaque when starred.
+        self._favorite_button = Gtk.Button()
+        self._favorite_button.add_css_class("flat")
+        self._favorite_button.add_css_class("vitrine-star")
+        self._favorite_button.set_tooltip_text("Add to favorites")
+        self._favorite_icon = Gtk.Image.new_from_file(_brand_icon_path("favorite.svg"))
+        self._favorite_icon.set_pixel_size(22)
+        self._favorite_button.set_child(self._favorite_icon)
+        self._favorite_button.connect("clicked", lambda _b: self._on_favorite(self._game))
+
         controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
         controls.set_halign(Gtk.Align.END)
         controls.set_valign(Gtk.Align.END)
         controls.set_margin_bottom(12)
         controls.set_margin_end(18)
+        controls.append(self._favorite_button)
         controls.append(self._settings_button)
         controls.append(self._play_button)
 
@@ -197,6 +217,25 @@ class GameDetailBar(Gtk.Box):
             self._placeholder.set_visible(True)
 
         self._refresh_meta()
+        self._refresh_favorite()
+
+    def _refresh_favorite(self) -> None:
+        if self._game is None:
+            return
+        starred = bool(self._game.favorite)
+        self._favorite_button.set_tooltip_text(
+            "Remove from favorites" if starred else "Add to favorites"
+        )
+        if starred:
+            self._favorite_button.add_css_class("favorited")
+        else:
+            self._favorite_button.remove_css_class("favorited")
+
+    def set_favorite(self, favorite: bool) -> None:
+        """Refresh the star to match a (possibly externally-updated) favorite state."""
+        if self._game is not None:
+            self._game.favorite = favorite
+        self._refresh_favorite()
 
     def set_running(self, elapsed_seconds: float | None) -> None:
         """Reflect the currently-running state on the play button."""

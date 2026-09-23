@@ -42,6 +42,17 @@ def test_umu_env_is_clean_and_sets_protocol_vars(monkeypatch: pytest.MonkeyPatch
     assert "/usr/bin:/bin" in env["PATH"]
 
 
+def test_umu_env_never_leaks_vk_icd_filenames(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pointing the Vulkan loader at the Nix mesa ICD that pressure-vessel
+    doesn't stage makes DXVK fail to init and the game exit without a window.
+    VK_ICD_FILENAMES must never reach the umu/Proton env, even if the parent
+    process exports it."""
+
+    monkeypatch.setenv("VK_ICD_FILENAMES", "/nix/store/mesa/share/vulkan/icd.d/intel_icd.x86_64.json")
+    env = umu.umu_env("/p", proton_path="/proton", game_id="abc", install_path="/g")
+    assert "VK_ICD_FILENAMES" not in env
+
+
 def test_umu_env_always_sets_game_and_verb(monkeypatch: pytest.MonkeyPatch) -> None:
     # Whatever the caller passes, GAMEID and PROTON_VERB are fixed.
     monkeypatch.delenv("GAMEID", raising=False)

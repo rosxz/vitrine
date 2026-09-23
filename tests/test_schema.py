@@ -17,6 +17,8 @@ def _connection_with_v1_schema() -> sqlite3.Connection:
     conn.execute("ALTER TABLE games DROP COLUMN banner")
     conn.execute("ALTER TABLE games DROP COLUMN artwork_source")
     conn.execute("ALTER TABLE games DROP COLUMN lutris_slug")
+    conn.execute("ALTER TABLE games DROP COLUMN favorite")
+    conn.execute("ALTER TABLE games DROP COLUMN hidden")
     conn.execute("PRAGMA user_version = 1")
 
     # Seed with plain SQL (the updated Game model carries the new columns).
@@ -42,6 +44,8 @@ def test_migration_v1_to_latest_adds_artwork_columns_and_keeps_rows() -> None:
     assert "banner" in columns
     assert "artwork_source" in columns
     assert "lutris_slug" in columns
+    assert "favorite" in columns
+    assert "hidden" in columns
 
     connected = Library(conn)
     after = connected.games(source="local")
@@ -51,6 +55,8 @@ def test_migration_v1_to_latest_adds_artwork_columns_and_keeps_rows() -> None:
     assert after[0].banner is None
     assert after[0].artwork_source == "lutris"
     assert after[0].lutris_slug is None
+    assert after[0].favorite is False
+    assert after[0].hidden is False
 
 
 def test_artwork_fields_round_trip() -> None:

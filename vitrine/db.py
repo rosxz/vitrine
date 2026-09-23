@@ -76,6 +76,12 @@ def _add_artwork_source(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE games ADD COLUMN lutris_slug TEXT")
 
 
+def _add_favorite_hidden(conn: sqlite3.Connection) -> None:
+    """v3 -> v4: per-game flags for starring (favorites) and hiding (blacklist)."""
+    conn.execute("ALTER TABLE games ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0")
+    conn.execute("ALTER TABLE games ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
+
+
 # Each future schema change gets a function here; ``initialize`` runs the ones
 # this database has not seen yet. Index ``n`` upgrades version ``n`` to
 # ``n + 1``.
@@ -83,6 +89,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _noop,  # v0 -> v1 (the initial walking skeleton created a fresh schema)
     _add_artwork_columns,  # v1 -> v2
     _add_artwork_source,  # v2 -> v3
+    _add_favorite_hidden,  # v3 -> v4
 ]
 
 

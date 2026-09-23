@@ -10,3 +10,14 @@ dist/
 *.egg-info/
 .venv/
 session-ses_*.md
+
+# Runtime / credential safety (never publish)
+.env
+.env.*
+*.db
+*.sqlite
+*.sqlite3
+vitrine.log
+secrets/
+.covers/
+covers/

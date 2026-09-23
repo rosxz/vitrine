@@ -239,6 +239,20 @@ def install(app_name: str, base_path: str | None = None, *, skip_dlcs: bool = Tr
     _require_success(_run(install_command(app_name, base_path, skip_dlcs=skip_dlcs), timeout=LIST_TIMEOUT), "install")
 
 
+def uninstall_command(app_name: str) -> list[str]:
+    """Build the ``legendary uninstall`` command line for ``app_name``.
+
+    ``-y`` answers 'yes' to the confirmation prompt so it never stalls waiting
+    for stdin.
+    """
+    return ["uninstall", app_name, "-y"]
+
+
+def uninstall(app_name: str) -> None:
+    """Uninstall (delete the game files) via legendary. Blocks until done."""
+    _require_success(_run(uninstall_command(app_name), timeout=LIST_TIMEOUT), "uninstall")
+
+
 def launch_command(
     app_name: str,
     *,

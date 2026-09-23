@@ -81,3 +81,38 @@ def test_remove_deletes_the_row(library: Library) -> None:
     library.remove(game.id)
 
     assert library.game(game.id) is None
+
+
+def test_favorite_and_hidden_round_trip(library: Library) -> None:
+    game = library.add(Game(name="Starred"))
+
+    library.set_favorite(game.id, True)
+    library.set_hidden(game.id, True)
+
+    reloaded = library.game(game.id)
+    assert reloaded.favorite is True
+    assert reloaded.hidden is True
+
+    assert [g.name for g in library.favorite_games()] == ["Starred"]
+    assert [g.name for g in library.games(favorite=True)] == ["Starred"]
+    assert [g.name for g in library.games(favorite=False)] == []
+
+    library.set_favorite(game.id, False)
+    library.set_hidden(game.id, False)
+    reloaded = library.game(game.id)
+    assert reloaded.favorite is False
+    assert reloaded.hidden is False
+    assert library.favorite_games() == []
+
+
+def test_new_games_default_to_not_favorite_and_not_hidden() -> None:
+    game = Game(name="Plain")
+    assert game.favorite is False
+    assert game.hidden is False
+
+
+def test_set_hidden_falls_back_to_source_id(library: Library) -> None:
+    library.add(Game(name="Store game", source="steam", source_id="99"))
+    library.set_hidden(None, True, source_id="99")
+    game = library.game_by_source_id("steam", "99")
+    assert game is not None and game.hidden is True

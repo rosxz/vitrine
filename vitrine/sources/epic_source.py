@@ -17,6 +17,7 @@ import logging
 from typing import Any
 
 from .. import paths
+from ..artwork import FORCE_REFRESH_SETTING
 from ..library import Library
 from ..util import slugify
 from .base import Source, SourceGame, registry
@@ -99,8 +100,9 @@ class EpicSource(Source):
 
     def games_needing_artwork(self) -> list[Any]:
         pending = []
+        force = bool(self.library.setting(FORCE_REFRESH_SETTING, False))
         for game in self.library.games(source=self.id):
-            if not (game.cover and game.banner):
+            if not (game.cover and game.banner) or force:
                 pending.append(game)
         return pending
 

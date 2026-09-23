@@ -358,7 +358,7 @@ def test_sync_uses_legendary_listing(
 
     hitman = library.game_by_source_id("epic", "Eider")
     assert hitman is not None
-    assert hitman.artwork_source == "lutris"
+    assert hitman.artwork_source == "auto"
 
 
 def test_sync_falls_back_to_http_when_legendary_missing(

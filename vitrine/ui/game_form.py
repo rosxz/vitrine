@@ -24,6 +24,20 @@ from ..util import expand
 #: Browse button field keys.
 BROWSE_FIELDS = ("executable", "cover", "banner")
 
+#: Common locales offered as completion presets for the per-game Locale field.
+_COMMON_LOCALES = (
+    "en_US.UTF-8",
+    "ja_JP.UTF-8",
+    "zh_CN.UTF-8",
+    "ko_KR.UTF-8",
+    "fr_FR.UTF-8",
+    "de_DE.UTF-8",
+    "es_ES.UTF-8",
+    "pt_BR.UTF-8",
+    "ru_RU.UTF-8",
+    "it_IT.UTF-8",
+)
+
 
 class _LabeledEntry(Gtk.Box):
     """A labelled, optional-browse text entry."""
@@ -75,6 +89,8 @@ class GameForm(Gtk.Box):
         allow_provider: bool = True,
         runner_list: list[tuple[str, str]] | None = None,
         default_runner: str = "wine-64",
+        on_open_install: Callable[[], None] | None = None,
+        on_open_prefix: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self._on_browse = on_browse or (lambda _kind, _entry: None)
@@ -83,6 +99,8 @@ class GameForm(Gtk.Box):
         self._loading = False
         self._runner_list = runner_list or []
         self._default_runner_id = default_runner
+        self._on_open_install = on_open_install
+        self._on_open_prefix = on_open_prefix
 
         self.name = _LabeledEntry("Name")
         self.executable = _LabeledEntry("Executable", browse=True)
@@ -113,9 +131,9 @@ class GameForm(Gtk.Box):
         self._artwork_source = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         self._source_buttons: dict[str, Gtk.CheckButton] = {}
         group = None
-        sources = (("local", "Local"), ("lutris", "Lutris"))
+        sources = (("auto", "Auto"), ("local", "Local"), ("lutris", "Lutris"))
         if self._allow_provider:
-            sources = (("local", "Local"), ("provider", "Provider"), ("lutris", "Lutris"))
+            sources = (("auto", "Auto"), ("local", "Local"), ("provider", "Provider"), ("lutris", "Lutris"))
         for src, label in sources:
             if group is None:
                 btn = Gtk.CheckButton(label=label)
@@ -125,23 +143,8 @@ class GameForm(Gtk.Box):
             btn.connect("toggled", self._on_source_toggled, src)
             self._artwork_source.append(btn)
             self._source_buttons[src] = btn
-        self._source_buttons["lutris"].set_active(True)
+        self._source_buttons["auto"].set_active(True)
         art_sources.append(self._artwork_source)
-
-        for entry in (
-            self.name,
-            self.executable,
-            self.arguments,
-            self.working_dir,
-            self.prefix,
-            self.cover,
-            self.banner,
-            self.lutris_slug,
-        ):
-            self.append(entry)
-        self.append(art_sources)
-        self.append(runner_label)
-        self.append(self.runner_row)
 
         # Opt-in gamescope (nested display/GPU session) on the host compositor.
         self.gamescope_row = Gtk.CheckButton(
@@ -151,7 +154,35 @@ class GameForm(Gtk.Box):
             "Run this game inside a gamescope window (virtualized display). "
             "Recommended on Wayland for many Windows games. Disables MangoHud."
         )
-        self.append(self.gamescope_row)
+
+        # Per-game DXVK toggle (on by default). Off forces Wine's built-in
+        # Direct3D translators instead of the Vulkan-based DXVK renderer.
+        self.dxvk_row = Gtk.CheckButton(
+            label="DXVK", active=True, halign=Gtk.Align.START
+        )
+        self.dxvk_row.set_tooltip_text(
+            "Use DXVK to translate Direct3D to Vulkan. Disable for games that "
+            "misbehave with DXVK (they'll use Wine's built-in D3D instead)."
+        )
+
+        # Performance / anti-cheat toggles (Lutris-style).
+        self.esync_row = Gtk.CheckButton(label="Esync", active=True, halign=Gtk.Align.START)
+        self.esync_row.set_tooltip_text(
+            "Enable eventfd-based synchronization (esync) for better multi-core performance."
+        )
+        self.fsync_row = Gtk.CheckButton(label="Fsync", active=True, halign=Gtk.Align.START)
+        self.fsync_row.set_tooltip_text(
+            "Enable futex-based synchronization (fsync). Requires kernel 5.16+."
+        )
+        self.fsr_row = Gtk.CheckButton(label="FSR", active=True, halign=Gtk.Align.START)
+        self.fsr_row.set_tooltip_text(
+            "AMD FidelityFX Super Resolution upscaling (with gamescope). "
+            "Run the game at a lower resolution and FSR upscales it."
+        )
+        self.eac_row = Gtk.CheckButton(label="EasyAntiCheat", active=True, halign=Gtk.Align.START)
+        self.eac_row.set_tooltip_text(
+            "Enable Easy Anti-Cheat support (uses Proton's EAC runtime when available)."
+        )
 
         self._fields: dict[str, _LabeledEntry] = {
             "executable": self.executable,
@@ -160,6 +191,154 @@ class GameForm(Gtk.Box):
         }
         for kind, entry in self._fields.items():
             entry.on_browse(lambda k=kind, e=entry: self._on_browse(k, e))
+
+        notebook = Gtk.Notebook()
+        notebook.set_scrollable(True)
+
+        general = self._tab()
+        for entry in (self.name, self.executable, self.arguments, self.working_dir):
+            general.append(entry)
+        # Reveal the game's on-disk directories in the file manager (edit-only).
+        if self._on_open_install or self._on_open_prefix:
+            dir_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            dir_buttons.set_margin_top(4)
+            if self._on_open_install:
+                btn = Gtk.Button(label="Open installation directory…")
+                btn.connect("clicked", lambda _b: self._on_open_install())
+                dir_buttons.append(btn)
+            if self._on_open_prefix:
+                btn = Gtk.Button(label="Open prefix directory…")
+                btn.connect("clicked", lambda _b: self._on_open_prefix())
+                dir_buttons.append(btn)
+            general.append(dir_buttons)
+
+        launcher = self._tab()
+        launcher.append(self.prefix)
+        launcher.append(runner_label)
+        launcher.append(self.runner_row)
+        launcher.append(self.gamescope_row)
+        launcher.append(self.dxvk_row)
+        launcher.append(self.esync_row)
+        launcher.append(self.fsync_row)
+        launcher.append(self.fsr_row)
+        launcher.append(self.eac_row)
+
+        appearance = self._tab()
+        appearance.append(self.cover)
+        appearance.append(self.banner)
+        appearance.append(art_sources)
+
+        details = self._tab()
+        details.append(self.lutris_slug)
+
+        environment = self._build_environment_tab()
+
+        for tab, title in (
+            (general, "General"),
+            (launcher, "Launcher"),
+            (appearance, "Appearance"),
+            (environment, "Environment"),
+            (details, "Details"),
+        ):
+            notebook.append_page(tab, Gtk.Label(label=title))
+
+        self.append(notebook)
+
+    @staticmethod
+    def _tab() -> Gtk.Box:
+        """A vertical container for a single tab's fields."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_top(8)
+        box.set_margin_bottom(8)
+        box.set_margin_start(8)
+        box.set_margin_end(8)
+        return box
+
+    def _build_environment_tab(self) -> Gtk.Widget:
+        """Per-game locale + environment-variable list (Lutris-style)."""
+        tab = self._tab()
+
+        locale_group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        locale_label = Gtk.Label(label="Locale (LANG / LC_ALL)", halign=Gtk.Align.START)
+        locale_label.add_css_class("caption")
+        self.locale_entry = Gtk.Entry()
+        self.locale_entry.set_placeholder_text("e.g. en_US.UTF-8 — pick a preset or type")
+        completion = Gtk.EntryCompletion()
+        store = Gtk.ListStore(str)
+        for locale in _COMMON_LOCALES:
+            store.append([locale])
+        completion.set_model(store)
+        completion.set_text_column(0)
+        self.locale_entry.set_completion(completion)
+        locale_group.append(locale_label)
+        locale_group.append(self.locale_entry)
+        tab.append(locale_group)
+
+        env_label = Gtk.Label(label="Environment variables", halign=Gtk.Align.START)
+        env_label.add_css_class("caption")
+        env_hint = Gtk.Label(
+            label="Each variable is exported to the game's process (e.g. DXVK_HUD=fps).",
+            halign=Gtk.Align.START, wrap=True, xalign=0.0,
+        )
+        env_hint.add_css_class("dim-label")
+        tab.append(env_label)
+        tab.append(env_hint)
+
+        self._env_list = Gtk.ListBox()
+        self._env_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        tab.append(self._env_list)
+
+        add_button = Gtk.Button(label="Add variable")
+        add_button.add_css_class("suggested-action")
+        add_button.set_halign(Gtk.Align.START)
+        add_button.connect("clicked", lambda _b: self._add_env_row())
+        tab.append(add_button)
+        return tab
+
+    def _add_env_row(self, key: str = "", value: str = "") -> None:
+        """Append one key/value environment-variable row to the list."""
+        row = Gtk.ListBoxRow()
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        key_entry = Gtk.Entry()
+        key_entry.set_placeholder_text("VARIABLE")
+        key_entry.set_hexpand(True)
+        key_entry.set_text(key)
+        value_entry = Gtk.Entry()
+        value_entry.set_placeholder_text("value")
+        value_entry.set_hexpand(True)
+        value_entry.set_text(value)
+        remove_button = Gtk.Button(icon_name="edit-delete-symbolic")
+        remove_button.add_css_class("flat")
+        remove_button.set_tooltip_text("Remove variable")
+        remove_button.connect("clicked", lambda _b, r=row: self._env_list.remove(r))
+        box.append(key_entry)
+        box.append(value_entry)
+        box.append(remove_button)
+        row.set_child(box)
+        self._env_list.append(row)
+
+    def _env_values(self) -> dict[str, str]:
+        """Gather the (non-blank) environment variables as a dict."""
+        result: dict[str, str] = {}
+        child = self._env_list.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.ListBoxRow):
+                first = child.get_child()
+                if isinstance(first, Gtk.Box):
+                    key_widget = first.get_first_child()
+                    value_widget = key_widget.get_next_sibling() if key_widget is not None else None
+                    key = key_widget.get_text().strip() if isinstance(key_widget, Gtk.Entry) else ""
+                    value = value_widget.get_text() if isinstance(value_widget, Gtk.Entry) else ""
+                    if key:
+                        result[key] = value
+            child = child.get_next_sibling()
+        return result
+
+    def _set_env(self, env: dict[str, str] | None) -> None:
+        while (child := self._env_list.get_first_child()) is not None:
+            self._env_list.remove(child)
+        for key, value in (env or {}).items():
+            self._add_env_row(key, value)
 
     def _on_source_toggled(self, btn: Gtk.CheckButton, src: str) -> None:
         if self._loading or not btn.get_active():
@@ -195,6 +374,13 @@ class GameForm(Gtk.Box):
         self.set_artwork_source(game.artwork_source)
         self.set_runner(game.config.get("runner"))
         self.gamescope_row.set_active(bool(game.config.get("gamescope", False)))
+        self.locale_entry.set_text(game.config.get("locale") or "")
+        self._set_env(game.config.get("env") or {})
+        self.dxvk_row.set_active(bool(game.config.get("dxvk", True)))
+        self.esync_row.set_active(bool(game.config.get("esync", True)))
+        self.fsync_row.set_active(bool(game.config.get("fsync", True)))
+        self.fsr_row.set_active(bool(game.config.get("fsr", True)))
+        self.eac_row.set_active(bool(game.config.get("eac", True)))
 
     def set_runner(self, runner_id: str | None) -> None:
         """Select the per-game runner override, or the default if unset."""
@@ -212,9 +398,9 @@ class GameForm(Gtk.Box):
         return None if option == "__default__" else option
 
     def set_artwork_source(self, source: str) -> None:
-        source = source or "lutris"
+        source = source or "auto"
         if source not in self._source_buttons:
-            source = "lutris"
+            source = "auto"
         self._loading = True
         try:
             self._source_buttons[source].set_active(True)
@@ -225,7 +411,7 @@ class GameForm(Gtk.Box):
         for src, btn in self._source_buttons.items():
             if btn.get_active():
                 return src
-        return "lutris"
+        return "auto"
 
     def validate(self) -> str | None:
         if not self.name.text():
@@ -236,10 +422,37 @@ class GameForm(Gtk.Box):
         """Whether the per-game gamescope flag is enabled."""
         return bool(self.gamescope_row.get_active())
 
+    def dxvk(self) -> bool:
+        """Whether the per-game DXVK toggle is enabled (default on)."""
+        return bool(self.dxvk_row.get_active())
+
+    def esync(self) -> bool:
+        return bool(self.esync_row.get_active())
+
+    def fsync(self) -> bool:
+        return bool(self.fsync_row.get_active())
+
+    def fsr(self) -> bool:
+        return bool(self.fsr_row.get_active())
+
+    def eac(self) -> bool:
+        return bool(self.eac_row.get_active())
+
     def build_game(self) -> Game:
         v = self._values()
         runner = self.runner()
-        config: dict = {"gamescope": self.gamescope()}
+        config: dict = {
+            "gamescope": self.gamescope(),
+            "dxvk": self.dxvk(),
+            "esync": self.esync(),
+            "fsync": self.fsync(),
+            "fsr": self.fsr(),
+            "eac": self.eac(),
+            "env": self._env_values(),
+        }
+        locale = self.locale_entry.get_text().strip()
+        if locale:
+            config["locale"] = locale
         if runner:
             config["runner"] = runner
         return Game(
@@ -275,6 +488,17 @@ class GameForm(Gtk.Box):
         else:
             game.config.pop("runner", None)
         game.config["gamescope"] = self.gamescope()
+        game.config["dxvk"] = self.dxvk()
+        game.config["esync"] = self.esync()
+        game.config["fsync"] = self.fsync()
+        game.config["fsr"] = self.fsr()
+        game.config["eac"] = self.eac()
+        game.config["env"] = self._env_values()
+        locale = self.locale_entry.get_text().strip()
+        if locale:
+            game.config["locale"] = locale
+        else:
+            game.config.pop("locale", None)
         return game
 
     def _values(self) -> dict:

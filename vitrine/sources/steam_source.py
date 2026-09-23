@@ -25,6 +25,7 @@ from typing import Any
 import requests
 
 from .. import paths
+from ..artwork import FORCE_REFRESH_SETTING
 from ..library import Library
 from ..util import slugify
 from .base import Source, SourceGame, registry
@@ -134,10 +135,16 @@ class SteamSource(Source):
         return len(deduped)
 
     def games_needing_artwork(self) -> list[Any]:
-        """Return this source's games that still lack cached artwork."""
+        """Return this source's games that still lack cached artwork.
+
+        When the global "refresh artwork for all games" setting is enabled,
+        every game (even ones with artwork) is returned so a source refresh
+        re-pulls them all.
+        """
+        force = bool(self.library.setting(FORCE_REFRESH_SETTING, False))
         pending = []
         for game in self.library.games(source=self.id):
-            if not (game.cover and game.banner):
+            if not (game.cover and game.banner) or force:
                 pending.append(game)
         return pending
 

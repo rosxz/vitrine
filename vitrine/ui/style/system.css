@@ -127,3 +127,17 @@ window.vitrine-window {
 .vitrine-tile.downloading {
     animation: vitrine-breathe 1.6s ease-in-out infinite;
 }
+
+/* Favorite star on the hero: semi-transparent until starred, then accent. */
+.vitrine-star image {
+    opacity: 0.45;
+}
+.vitrine-star.favorited image {
+    opacity: 1.0;
+    color: @accent_bg_color;
+}
+
+/* Hidden/blacklisted games are dimmed when revealed. */
+.vitrine-tile.vitrine-hidden {
+    opacity: 0.45;
+}

@@ -288,6 +288,24 @@ def test_steam_source_promotes_provider_art_and_lists_missing(
     assert any(g.source_id == "11112222" for g in pending)
 
 
+def test_games_needing_artwork_force_refresh_setting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With the global "refresh all" setting on, already-artworked games are
+    returned too so a source refresh re-pulls them."""
+    from vitrine import artwork
+    from vitrine.library import Game
+    from vitrine.sources.steam_source import SteamSource
+
+    library = _library(monkeypatch)
+    library.add(Game(name="Have Art", source="steam", source_id="1", cover="/c", banner="/b"))
+    library.add(Game(name="No Art", source="steam", source_id="2"))
+    src = SteamSource(library)
+    assert [g.name for g in src.games_needing_artwork()] == ["No Art"]
+
+    library.set_setting(artwork.FORCE_REFRESH_SETTING, True)
+    names = [g.name for g in src.games_needing_artwork()]
+    assert "Have Art" in names and "No Art" in names
+
+
 def test_steam_source_requires_login_to_sync(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from vitrine.sources import steam_source as steam_source_mod
     from vitrine.sources.steam.auth import SteamAuthError

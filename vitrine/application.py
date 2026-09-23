@@ -44,6 +44,7 @@ class VitrineApplication(Adw.Application):
         self.connection = connect()
         initialize(self.connection)
         self.library = Library(self.connection)
+        self.library.migrate_artwork_source_default()
         self.theme_manager.apply(self.library.setting("theme", "galaxy"))
         logger.info("%s started", APP_NAME)
 

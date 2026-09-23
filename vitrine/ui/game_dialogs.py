@@ -79,6 +79,7 @@ class _GameWindow(Gtk.Window):
         parent: Gtk.Widget | None,
         on_remove: Callable[[Game], None] | None = None,
         on_refresh_artwork: Callable[[Game], None] | None = None,
+        on_pick_artwork: Callable[[Game], None] | None = None,
         on_wine_config: Callable[[Game], None] | None = None,
     ) -> None:
         super().__init__(title=title)
@@ -87,6 +88,7 @@ class _GameWindow(Gtk.Window):
         self._save_callback: Callable[[Game], None] | None = None
         self._remove_callback = on_remove
         self._refresh_artwork_callback = on_refresh_artwork
+        self._pick_artwork_callback = on_pick_artwork
         self._wine_config_callback = on_wine_config
         self.add_css_class("vitrine-window")
         self.set_default_size(_FORM_WIDTH, _FORM_HEIGHT)
@@ -120,6 +122,7 @@ class _GameWindow(Gtk.Window):
         if (
             on_remove is not None
             or self._refresh_artwork_callback is not None
+            or self._pick_artwork_callback is not None
             or self._wine_config_callback is not None
         ):
             content.append(self._build_footer())
@@ -142,6 +145,11 @@ class _GameWindow(Gtk.Window):
         remove.set_tooltip_text("Delete this entry from Vitrine (the installed files are untouched)")
         remove.connect("clicked", self._on_remove)
         footer.append(remove)
+        if self._pick_artwork_callback is not None:
+            pick = Gtk.Button(label="Choose artwork…")
+            pick.set_tooltip_text("Pick a tile cover and hero banner from all artwork providers")
+            pick.connect("clicked", self._on_pick_artwork)
+            footer.append(pick)
         if self._refresh_artwork_callback is not None:
             refresh = Gtk.Button(label="Refresh artwork")
             refresh.set_tooltip_text("Re-download automatic artwork for this game")
@@ -167,6 +175,29 @@ class _GameWindow(Gtk.Window):
         game = self._remove_game()
         if game is not None:
             self._refresh_artwork_callback(game)
+
+    def _on_pick_artwork(self, _button: Gtk.Button) -> None:
+        if self._pick_artwork_callback is None:
+            return
+        game = self._remove_game()
+        if game is None:
+            return
+        from .artwork_picker import ArtworkPickerWindow
+
+        ArtworkPickerWindow(
+            self.library,
+            game,
+            on_chosen=self._on_picker_chosen,
+            parent=self,
+        ).present()
+
+    def _on_picker_chosen(self, game: Game) -> None:
+        """Refresh the form's cover/banner fields with the chosen artwork."""
+        self._form.set_browse_result("cover", game.cover or "")
+        self._form.set_browse_result("banner", game.banner or "")
+        self.library.update(game)
+        if self._pick_artwork_callback is not None:
+            self._pick_artwork_callback(game)
 
     def _on_remove(self, _button: Gtk.Button) -> None:
         if self._remove_callback is None:
@@ -235,11 +266,19 @@ class GameSettingsWindow(_GameWindow):
         on_save: Callable[[Game], None],
         on_remove: Callable[[Game], None] | None = None,
         on_refresh_artwork: Callable[[Game], None] | None = None,
+        on_pick_artwork: Callable[[Game], None] | None = None,
+        on_open_install: Callable[[Game], None] | None = None,
+        on_open_prefix: Callable[[Game], None] | None = None,
         on_wine_config: Callable[[Game], None] | None = None,
         parent: Gtk.Widget | None = None,
     ) -> None:
         self._game = game
-        form = GameForm(allow_provider=game.source != "local", **_runner_form_args(library))
+        form = GameForm(
+            allow_provider=game.source != "local",
+            **_runner_form_args(library),
+            on_open_install=(lambda: on_open_install(game)) if on_open_install else None,
+            on_open_prefix=(lambda: on_open_prefix(game)) if on_open_prefix else None,
+        )
         form.connect_source_changed(self._on_source_changed)
         form.populate(game)
         super().__init__(
@@ -249,6 +288,7 @@ class GameSettingsWindow(_GameWindow):
             parent=parent,
             on_remove=on_remove,
             on_refresh_artwork=on_refresh_artwork,
+            on_pick_artwork=on_pick_artwork,
             on_wine_config=on_wine_config,
         )
         self._save_callback = on_save

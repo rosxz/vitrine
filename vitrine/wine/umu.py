@@ -44,7 +44,11 @@ _UMP_PASSTHROUGH = (
     "XDG_CACHE_HOME",
     "GST_PLUGIN_SYSTEM_PATH",
     "GST_PLUGIN_SYSTEM_PATH_1_0",
-    "VK_ICD_FILENAMES",
+    # NOTE: VK_ICD_FILENAMES is deliberately NOT passed through. Pointing the
+    # Vulkan loader at the Nix mesa ICD that pressure-vessel doesn't stage inside
+    # its steam-run FHS sandbox makes Proton/DXVK fail to initialise, so the game
+    # exits before opening a window. Let pressure-vessel resolve its own drivers
+    # (Lutris/Steam do the same).
     "LIBGL_DRIVERS_PATH",
     "MESA_DRIVER_PATH",
     "UMU_LOG",

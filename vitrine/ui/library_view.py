@@ -33,10 +33,28 @@ TILE_HEIGHT = int(COVER_WIDTH / COVER_RATIO) + NAME_MAX_LINES * NAME_LINE_HEIGHT
 MIN_COLUMNS = 2
 MAX_COLUMNS = 9
 
+#: Tiles materialised synchronously when a view is built. Kept modest so
+#: switching to a huge source (e.g. "All games" / Steam) doesn't stall the UI
+#: constructing hundreds of widgets at once; the rest stream in on scroll.
+_INITIAL_BATCH = 72
+#: Tiles appended per scroll frame as the user nears the bottom of the list.
+_SCROLL_BATCH = 72
+#: Pixels before the viewport bottom that trigger loading the next batch.
+_SCROLL_BUFFER = 500
+
 
 def _is_not_installed(game: Game) -> bool:
     """Store-owned title that isn't installed locally (shown translucent)."""
     return not game.installed and game.source in ("steam", "gog", "epic")
+
+
+def _same_game(a: Game, b: Game) -> bool:
+    """Whether two Game objects denote the same library entry."""
+    if a.id is not None and b.id is not None:
+        return a.id == b.id
+    if getattr(a, "source", None) and getattr(a, "source_id", None):
+        return (a.source == b.source) and (a.source_id == b.source_id)
+    return (a.name or "").lower() == (b.name or "").lower()
 
 
 class GameTile(Gtk.FlowBoxChild):
@@ -49,6 +67,9 @@ class GameTile(Gtk.FlowBoxChild):
         # Store-owned titles that aren't installed locally render translucent.
         if _is_not_installed(game):
             self.add_css_class("not-installed")
+        # Hidden/blacklisted games are dimmed when revealed.
+        if game.hidden:
+            self.add_css_class("vitrine-hidden")
         self._context_callback: Callable[[Game, float, float], None] | None = None
 
         gesture = Gtk.GestureClick()
@@ -275,33 +296,215 @@ class LibraryView(Gtk.Stack):
         # once (hundreds of image decodes would stall the grid).
         self._pending_reveal: set[int] = set()
         self._idle_armed: bool = False
+        # Virtualized grid: only a window of GameTile widgets exists; the rest
+        # are appended in batches as the user scrolls (see _materialize/_do_fill).
+        self._all_games: list[Game] = []
+        self._materialized: int = 0
+        self._fill_armed: bool = False
         vadj = scroller.get_vadjustment()
         vadj.connect("value-changed", self._on_scroll_changed)
         vadj.connect("changed", self._on_scroll_changed)
-        scroller.connect("edge-reached", lambda *_a: self._reveal_visible())
+        scroller.connect("edge-reached", lambda *_a: (self._reveal_visible(), self._maybe_fill()))
         scroller.connect("realize", lambda *_a: self._reveal_visible())
 
     # -- public API -----------------------------------------------------------
 
-    def set_games(self, games: Iterable[Game]) -> None:
-        """Replace the contents of the grid."""
+    def set_games(
+        self,
+        games: Iterable[Game],
+        *,
+        preserve_scroll: bool = False,
+        auto_select: bool = True,
+    ) -> None:
+        """Replace the contents of the grid.
+
+        Games are virtualised: a bounded leading window of tiles is created
+        immediately and the remainder stream in as the user scrolls, so switching
+        to a large source (All games / Steam) never stalls the UI building every
+        tile at once. With ``preserve_scroll`` the current scroll offset and
+        selection are kept across the rebuild (idle-applied after layout) so
+        actions like hiding a game don't jump the user back to the top of the
+        list. With ``auto_select=False`` the grid is rebuilt without grabbing a
+        selection (used while searching, so the detail bar doesn't pop open on
+        every key).
+        """
+        old_scroll = self.scroller.get_vadjustment().get_value() if preserve_scroll else 0.0
+        old_key = (
+            self._game_key(self.selected_game())
+            if (preserve_scroll and auto_select)
+            else None
+        )
+
         while child := self.flow.get_first_child():
             self.flow.remove(child)
 
-        count = 0
+        self._all_games = list(games)
+        self._materialized = 0
         self._pending_reveal.clear()
-        for game in games:
+        self._fill_armed = False
+        created = self._materialize(_INITIAL_BATCH)
+
+        self.set_visible_child_name("grid" if created else "empty")
+        if created:
+            if preserve_scroll and (old_scroll > 0 or old_key is not None):
+                GLib.idle_add(self._restore_view, old_scroll, old_key, auto_select)
+            elif auto_select:
+                self.flow.select_child(self.flow.get_first_child())
+            else:
+                # Search is active: reveal the grid without auto-picking a game.
+                self.flow.unselect_all()
+                self.emit("selection-changed")
+        GLib.idle_add(self._reveal_visible)
+
+    def _materialize(self, count: int) -> int:
+        """Create up to ``count`` GameTile widgets from the unbuilt games.
+
+        Returns how many tiles were added. Newly added tiles are queued for
+        lazy cover loading via ``_pending_reveal``.
+        """
+        added = 0
+        for game in self._all_games[self._materialized:]:
             tile = GameTile(game)
             tile.set_context_callback(self._on_context)
             self.flow.append(tile)
             self._pending_reveal.add(id(tile))
-            count += 1
+            self._materialized += 1
+            added += 1
+            if added >= count:
+                break
+        return added
 
-        self.set_visible_child_name("grid" if count else "empty")
-        if count:
-            self.flow.select_child(self.flow.get_first_child())
-        # Reveal the first window immediately (queue pending for when laid out).
-        GLib.idle_add(self._reveal_visible)
+    def total_count(self) -> int:
+        """Total number of games in the current view (materialised or not)."""
+        return len(self._all_games)
+
+    def _maybe_fill(self) -> None:
+        """Queue the next batch of tiles when the user nears the list's end."""
+        if self._fill_armed or self._materialized >= len(self._all_games):
+            return
+        vadj = self.scroller.get_vadjustment()
+        if vadj.get_value() + vadj.get_page_size() < vadj.get_upper() - _SCROLL_BUFFER:
+            return
+        self._fill_armed = True
+        GLib.idle_add(self._do_fill)
+
+    def _do_fill(self) -> bool:
+        """Create another batch of tiles (one idle frame). One-shot."""
+        self._fill_armed = False
+        if self._materialized >= len(self._all_games):
+            return False
+        self._materialize(_SCROLL_BATCH)
+        self._reveal_visible()
+        return False
+
+    @staticmethod
+    def _game_key(game: Game | None) -> tuple | None:
+        if game is None:
+            return None
+        return (getattr(game, "source", None), getattr(game, "source_id", None), getattr(game, "name", None))
+
+    def count(self) -> int:
+        """Number of tiles currently in the grid."""
+        return sum(1 for _ in _children(self.flow))
+
+    def remove_game(self, game: Game) -> bool:
+        """Remove every tile for ``game`` without rebuilding the whole grid.
+
+        Keeps the scroll offset exactly where it is (no flash), re-selects a
+        neighbouring tile if the removed one was selected, and emits
+        ``selection-changed`` so the detail bar stays in sync. Also drops the
+        game from the unbuilt pool so it won't re-materialise on scroll.
+        """
+        # Remove from the (possibly partly untouched) pool first.
+        game_index = next(
+            (i for i, g in enumerate(self._all_games) if _same_game(g, game)), None
+        )
+        removed_from_pool = game_index is not None
+        if game_index is not None:
+            del self._all_games[game_index]
+            if game_index < self._materialized:
+                self._materialized -= 1
+
+        children = list(_children(self.flow))
+        selected = self.flow.get_selected_children()
+        selected_ids = {id(child) for child in selected}
+        removed_selected: int | None = None
+        removed_any = False
+        for index, child in enumerate(children):
+            if isinstance(child, GameTile) and _same_game(child.game, game):
+                removed_any = True
+                if id(child) in selected_ids:
+                    removed_selected = index
+                self.flow.remove(child)
+        if not removed_any and not removed_from_pool:
+            return False
+
+        if removed_selected is not None:
+            remaining = list(_children(self.flow))
+            if remaining:
+                target = remaining[min(removed_selected, len(remaining) - 1)]
+                self.flow.select_child(target)
+            else:
+                self.flow.unselect_all()
+            self._sync_stack()
+            self.emit("selection-changed")
+        else:
+            self._sync_stack()
+        return True
+
+    def set_hidden_visual(self, game: Game, hidden: bool) -> None:
+        """Toggle the dimmed appearance of a game's tiles (without reloading)."""
+        for child in _children(self.flow):
+            if isinstance(child, GameTile) and _same_game(child.game, game):
+                if hidden:
+                    child.add_css_class("vitrine-hidden")
+                else:
+                    child.remove_css_class("vitrine-hidden")
+
+    def _sync_stack(self) -> None:
+        self.set_visible_child_name("grid" if self.count() else "empty")
+
+    def _restore_view(self, old_scroll: float, old_key: tuple | None, auto_select: bool) -> bool:
+        """Re-apply the previous scroll position and re-select a sensible tile.
+
+        With ``auto_select=False`` (active search) the scroll is restored but no
+        tile is selected, so the detail bar doesn't pop open mid-typing.
+        """
+        vadj = self.scroller.get_vadjustment()
+        if old_scroll > 0:
+            clamp = max(0.0, vadj.get_upper() - vadj.get_page_size())
+            vadj.set_value(min(old_scroll, clamp))
+
+        if not auto_select:
+            self.flow.unselect_all()
+            children = list(_children(self.flow))
+            if children:
+                self.emit("selection-changed")
+            self._reveal_visible()
+            return False
+
+        target: Gtk.FlowBoxChild | None = None
+        children = list(_children(self.flow))
+        if old_key is not None:
+            for child in children:
+                if isinstance(child, GameTile) and self._game_key(child.game) == old_key:
+                    target = child
+                    break
+        if target is None and children:
+            if old_scroll > 0:
+                # Pick the first tile that crosses the old scroll top so the user
+                # stays at the same place in the list after a removal.
+                for child in children:
+                    allocation = child.get_allocation()
+                    if allocation.y + allocation.height >= old_scroll - 1:
+                        target = child
+                        break
+            if target is None:
+                target = children[0]
+        if target is not None:
+            self.flow.select_child(target)
+        self._reveal_visible()
+        return False  # one-shot idle
 
     def selected_game(self) -> Game | None:
         selected = self.flow.get_selected_children()
@@ -317,6 +520,8 @@ class LibraryView(Gtk.Stack):
         if not self._idle_armed:
             self._idle_armed = True
             GLib.idle_add(self._reveal_visible)
+        # Stream in further batches as the viewport approaches the list's end.
+        self._maybe_fill()
 
     def _reveal_visible(self, *_args) -> bool:
         """Load covers for tiles intersecting the visible viewport.
@@ -369,8 +574,11 @@ class LibraryView(Gtk.Stack):
         selected = _selected(flow)
         for child in _children(flow):
             classes = ["vitrine-tile"]
-            if isinstance(child, GameTile) and _is_not_installed(child.game):
-                classes.append("not-installed")
+            if isinstance(child, GameTile):
+                if _is_not_installed(child.game):
+                    classes.append("not-installed")
+                if child.game.hidden:
+                    classes.append("vitrine-hidden")
             if child is selected:
                 classes.append("selected")
             child.set_css_classes(classes)
