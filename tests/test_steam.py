@@ -570,3 +570,79 @@ def test_prune_source_games_removes_stale_installed_flag(tmp_path: Path) -> None
     assert removed == 2
     apps = {g.source_id for g in lib.games(source="steam")}
     assert apps == {"2"}, f"expected only truly-on-disk app to remain, got {apps}"
+
+
+def test_read_manifest_playtime_and_install_dir(
+    steam_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Steam writes playtime on exit; we read it from the freshly-written manifest."""
+    from vitrine.sources.steam import config as steam_config
+    from vitrine.sources.steam_source import SteamSource
+
+    _write_vdf(
+        steam_root / "steamapps" / "appmanifest_570.acf",
+        '"AppState" {'
+        '  "appid" "570"'
+        '  "name" "Half-Life"'
+        '  "installdir" "Half-Life"'
+        '  "playtime_forever" "6000"'
+        '  "LastPlayed" "1760455998"'
+        "}",
+    )
+    monkeypatch.setattr(steam_config, "find_steam_root", lambda: str(steam_root))
+    from vitrine import db
+    from vitrine.library import Library
+
+    conn = db.connect(":memory:")
+    db.initialize(conn)
+    source = SteamSource(Library(conn))
+
+    hours, lastplayed = source.read_manifest_playtime("570")
+    assert hours == pytest.approx(100.0)  # 6000 minutes -> 100 hours
+    assert lastplayed == 1760455998
+    assert source.installed_game_dir("570") == str(steam_root / "steamapps" / "common" / "Half-Life")
+    assert source.read_manifest_playtime("221410") == (None, None)
+
+
+def test_web_playtime_falls_back_for_missing_manifest_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Some manifests carry no playtime_forever; the Web API supplies it."""
+    from vitrine import db
+    from vitrine.library import Library
+    from vitrine.sources.base import SourceGame
+    from vitrine.sources.steam_source import SteamSource
+
+    conn = db.connect(":memory:")
+    db.initialize(conn)
+    src = SteamSource(Library(conn))
+
+    class _FakeStore:
+        @staticmethod
+        def exists() -> bool:
+            return True
+
+        @staticmethod
+        def access_token() -> str:
+            return "tok"
+
+    monkeypatch.setattr(src, "_token_store", lambda: _FakeStore())
+    monkeypatch.setattr(
+        src,
+        "_owned_page",
+        lambda _session, _store: [
+            SourceGame(
+                source="steam",
+                appid="2084300",
+                name="Schism",
+                slug="schism",
+                installed=False,
+                details={"playtime_hours": 2.5, "lastplayed": 1790209621},
+            )
+        ],
+    )
+
+    hours, lastplayed = src.web_playtime("2084300")
+    assert hours == 2.5
+    assert lastplayed == 1790209621
+    assert src.web_playtime("999") == (None, None)

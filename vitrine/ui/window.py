@@ -8,6 +8,7 @@ import os
 import shlex
 import shutil
 import threading
+import time
 from collections.abc import Callable, Sequence
 from importlib import resources
 
@@ -195,6 +196,11 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         # Active downloads keyed by game id (drives tile/detail download state).
         self._downloads: dict[int, object] = {}
+        # A Steam game launched via steam:// is watched via /proc (no Popen); the
+        # watcher is non-None while we are tracking one, and the game is surfaced
+        # through the running-game/elapsed plumbing so the ticker shows "Playing".
+        self.steam_watcher = None
+        self._steam_running_game: Game | None = None
 
         self.reload()
 
@@ -1252,8 +1258,11 @@ class VitrineWindow(Adw.ApplicationWindow):
             return
         if game.id is None:
             return
-        if self.runtime.running_game is game:
+        if (self.runtime.running_game or self._steam_running_game) is game:
             self._stop_game()
+            return
+        if self._steam_running_game is not None:
+            self.toasts.add_toast(Adw.Toast(title="Close the running Steam game first"))
             return
         config = game.merged_config(self.library.global_config())
         try:
@@ -1271,13 +1280,19 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.toasts.add_toast(Adw.Toast(title=f"Failed to launch {game.name}"))
 
     def _launch_steam_game(self, game: Game) -> None:
-        """Launch a Steam game via Steam's run-game URI.
+        """Launch a Steam game via Steam's run-game URI and watch its session.
 
         Works for installed games and, by prompting Steam to install, for ones
-        that are only owned.
+        that are only owned. We don't own the process, so a :class:`SteamSessionWatcher`
+        (via /proc) flips the game to "Playing" when Steam starts it and, on exit,
+        reads the freshly-written app manifest so playtime updates without a manual
+        refresh.
         """
         from gi.repository import Gio
 
+        if self.steam_watcher is not None or self.runtime.running:
+            self.toasts.add_toast(Adw.Toast(title="Another game is already running"))
+            return
         appid = game.source_id or ""
         if not appid:
             self.toasts.add_toast(Adw.Toast(title=f"No Steam appid for {game.name}"))
@@ -1289,6 +1304,19 @@ class VitrineWindow(Adw.ApplicationWindow):
             logger.warning("Failed to launch Steam game %s: %s", game.name, error)
             self.toasts.add_toast(Adw.Toast(title=f"Could not launch {game.name} via Steam"))
             return
+
+        from .. import steamwatch
+        from ..sources.steam_source import SteamSource
+
+        source = SteamSource(self.library)
+        installdir = source.installed_game_dir(appid)
+        self.steam_watcher = steamwatch.SteamSessionWatcher(
+            appid,
+            installdir=installdir,
+            on_start=lambda: self._marshal(lambda: self._on_steam_game_started(game)),
+            on_exit=lambda: self._marshal(lambda: self._on_steam_game_exited(game)),
+        )
+        self.steam_watcher.start()
         self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name} via Steam"))
 
     def _launch_epic_game(self, game: Game) -> None:
@@ -1575,6 +1603,9 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.toasts.add_toast(Adw.Toast(title=f"Could not open store page for {game.name}"))
 
     def _stop_game(self) -> None:
+        if self._steam_running_game is not None:
+            self._stop_steam_game()
+            return
         game = self.runtime.running_game
         self.runtime.stop()
         if game is not None:
@@ -1727,22 +1758,99 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         self._marshal(apply)
 
+    # -- Steam session (watched via /proc, no local process) -------------------
+
+    def _on_steam_game_started(self, game: Game) -> None:
+        self._steam_running_game = game
+        self._running_started_monotonic = GLib.get_monotonic_time() / 1e6
+        self.toasts.add_toast(Adw.Toast(title=f"Playing {game.name}"))
+
+    def _on_steam_game_exited(self, game: Game) -> None:
+        """The Steam-launched process is gone: stop the session and refresh
+        playtime from the app manifest Steam wrote on exit (no manual refresh)."""
+        if self.steam_watcher is not None:
+            self.steam_watcher.stop()
+        self.steam_watcher = None
+        self._steam_running_game = None
+        self._running_started_monotonic = None
+        self._refresh_running_state()
+        self.toasts.add_toast(Adw.Toast(title=f"{game.name} closed"))
+        threading.Thread(target=self._steam_playtime_refresh, args=(game,), daemon=True).start()
+
+    def _steam_playtime_refresh(self, game: Game) -> None:
+        from ..sources.steam_source import SteamSource
+
+        appid = game.source_id or ""
+        source = SteamSource(self.library)
+        hours: float | None = None
+        lastplayed: int | None = None
+        # Steam writes playtime on exit but may lag a moment; retry briefly.
+        # Prefer the freshly-written local manifest; fall back to the Steam Web
+        # API (some manifests, e.g. Proton titles, never carry playtime_forever).
+        for _ in range(6):
+            hours, lastplayed = source.read_manifest_playtime(appid)
+            if hours is None:
+                try:
+                    hours, lastplayed = source.web_playtime(appid)
+                except Exception:  # noqa: BLE001 - network hiccups must not kill the refresh
+                    logger.exception("Steam web playtime refresh failed for %s", game.name)
+                    hours, lastplayed = None, None
+            if hours is not None:
+                break
+            time.sleep(2.0)
+        GLib.idle_add(self._apply_steam_playtime, game, hours, lastplayed)
+
+    def _apply_steam_playtime(self, game: Game, hours: float | None, lastplayed: int | None) -> None:
+        if hours is None:
+            return  # game not installed / no manifest; nothing authoritative to write.
+        if game.id is not None:
+            fresh = self.library.game(game.id) or game
+            fresh.playtime = float(hours)
+            if lastplayed is not None:
+                fresh.lastplayed = lastplayed
+            self.library.update(fresh)
+        self.reload()
+        self.toasts.add_toast(Adw.Toast(title=f"Updated playtime for {game.name}"))
+
+    def _stop_steam_game(self) -> None:
+        """Best-effort stop: SIGTERM the process tree Steam spawned for the game."""
+        game = self._steam_running_game
+        if game is None:
+            return
+        from .. import steamwatch
+
+        appid = game.source_id or (self.steam_watcher.appid if self.steam_watcher else "")
+        installdir = self.steam_watcher.installdir if self.steam_watcher else None
+        sent = steamwatch.terminate_game(appid, installdir) if appid else 0
+        self.toasts.add_toast(
+            Adw.Toast(title=f"Stopping {game.name}" + ("" if sent else " (no process found)"))
+        )
+
     # -- running indicator ------------------------------------------------------
 
     def setup_running_ticker(self) -> None:
         def tick() -> bool:
-            game = self.runtime.running_game
-            elapsed = None
-            if game is not None and self._running_started_monotonic:
-                elapsed = (GLib.get_monotonic_time() / 1e6) - self._running_started_monotonic
-            for tile in self._all_tiles():
-                tile.set_running(elapsed if tile.game is game else None)
-            if self.detail_bar.game() is game:
-                self.detail_bar.set_running(elapsed)
+            self._refresh_running_state()
             return GLib.SOURCE_CONTINUE
 
         self._running_started_monotonic = None
         self._ticker = GLib.timeout_add_seconds(1, tick)
+
+    def _refresh_running_state(self) -> None:
+        """Push the current running state to every tile and the hero bar.
+
+        Always refreshes the detail/heard button so a session that ended (e.g. a
+        Steam game quit from the game's own menu, leaving no running game) resets
+        its label from "Playing · …" back to "Play".
+        """
+        game = self.runtime.running_game or self._steam_running_game
+        elapsed = None
+        if game is not None and self._running_started_monotonic:
+            elapsed = (GLib.get_monotonic_time() / 1e6) - self._running_started_monotonic
+        for tile in self._all_tiles():
+            tile.set_running(elapsed if tile.game is game else None)
+        if self.detail_bar.game() is game or game is None:
+            self.detail_bar.set_running(elapsed)
 
     def _all_tiles(self):
         tiles = []

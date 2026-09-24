@@ -116,3 +116,41 @@ def test_set_hidden_falls_back_to_source_id(library: Library) -> None:
     library.set_hidden(None, True, source_id="99")
     game = library.game_by_source_id("steam", "99")
     assert game is not None and game.hidden is True
+
+
+class _SteamCatalog:
+    def __init__(self, appid, name, hours, lastplayed):
+        self.appid = appid
+        self.name = name
+        self.slug = name.lower()
+        self.installed = False
+        self.details = {"playtime_hours": hours, "lastplayed": lastplayed}
+
+
+def test_merge_source_games_persists_steam_playtime(library: Library) -> None:
+    """Steam's authoritative playtime is copied into the library row on merge."""
+    from vitrine.sources.base import SourceGame
+
+    library.merge_source_games("steam", [
+        SourceGame(source="steam", appid="1", name="A", slug="a", installed=False,
+                   details={"playtime_hours": 3.5, "lastplayed": 11}),
+    ])
+    game = library.game_by_source_id("steam", "1")
+    assert game is not None
+    assert game.playtime == 3.5
+    assert game.lastplayed == 11
+
+    # Refreshing with a higher authoritative value overwrites (never accumulates).
+    library.merge_source_games("steam", [
+        SourceGame(source="steam", appid="1", name="A", slug="a", installed=False,
+                   details={"playtime_hours": 4.0, "lastplayed": 22}),
+    ])
+    game = library.game_by_source_id("steam", "1")
+    assert game.playtime == 4.0
+    assert game.lastplayed == 22
+
+    # Non-Steam sources carry no playtime_hours key -> ignored.
+    library.merge_source_games("gog", [
+        SourceGame(source="gog", appid="7", name="G", slug="g", installed=False, details={}),
+    ])
+    assert library.game_by_source_id("gog", "7") is not None

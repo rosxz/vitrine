@@ -183,6 +183,22 @@ Lutris/Steam/Heroic let pressure-vessel resolve its own drivers.
   stalls building every tile. `total_count()` reports the full view;
   `remove_game` also drops from the unbuilt pool. Combined with lazy cover
   decoding (`_reveal_visible`), both widget creation *and* artwork are on demand.
+- **Steam playtime (no refresh needed)** — `vitrine/steamwatch.py` detects a
+  running Steam game from `/proc`: the reliable signal is **`SteamAppId` in
+  `/proc/<pid>/environ`** (Steam sets it on every spawned process; Wine/Proton
+  trees never carry the appid in argv). Fallbacks: an appid argv token
+  (`reaper <appid> …`) and the game install-dir appearing in a process's
+  argv/exe/cwd. **Wine-internal processes** (`wineserver`, `services.exe`,
+  `explorer.exe`, `C:\windows\...` argv) carry `SteamAppId` too but linger after
+  the game quits, so `steam_game_is_running` filters them out — the watcher flips
+  to "closed" the moment the real game process dies, even while Wine services
+  linger (`steam_game_pids` keeps them so Stop can kill the whole tree). On game
+  close, read the freshly-written `appmanifest_*.acf`
+  (`playtime_forever` minutes, `LastPlayed`) with retries; **if the manifest has
+  no `playtime_forever` (common for Proton titles like Schism), fall back to the
+  Steam Web API** (`GetOwnedGames` → `playtime_hours`/`lastplayed`), so playtime
+  updates right after the session closes. `Stop` SIGTERMs the detected process
+  tree (children first).
 - Proton launches previously used inherited stdio (window worked but output was
   invisible). **Now:** when the debug log is open, the game's stdout+stderr are
   captured (`subprocess.PIPE`, `stderr=STDOUT`) and streamed line-by-line into

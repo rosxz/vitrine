@@ -275,6 +275,9 @@ class Library:
         for catalog in games:
             if not all(hasattr(catalog, attr) for attr in ("appid", "name", "slug", "installed")):
                 continue
+            details = getattr(catalog, "details", None) or {}
+            hours = details.get("playtime_hours")
+            lastplayed = details.get("lastplayed")
             existing = self.game_by_source_id(source, catalog.appid)
             if existing is None:
                 game = Game(
@@ -284,6 +287,8 @@ class Library:
                     source=source,
                     source_id=catalog.appid,
                     installed=catalog.installed,
+                    playtime=float(hours) if hours is not None else 0.0,
+                    lastplayed=int(lastplayed) if lastplayed is not None else None,
                 )
                 self.add(game)
                 new_games.append(game)
@@ -294,6 +299,15 @@ class Library:
                     dirty = True
                 if existing.installed != catalog.installed:
                     existing.installed = catalog.installed
+                    dirty = True
+                # Steam's authoritative playtime: overwrite (never accumulate) so
+                # Vitrine mirrors Steam. Only sources that emit ``playtime_hours``
+                # participate; GOG/Epic entries carry no such key and are ignored.
+                if hours is not None and float(hours) != existing.playtime:
+                    existing.playtime = float(hours)
+                    dirty = True
+                if lastplayed is not None and int(lastplayed) != existing.lastplayed:
+                    existing.lastplayed = int(lastplayed)
                     dirty = True
                 if dirty:
                     self.update(existing)

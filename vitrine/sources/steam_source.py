@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 from typing import Any
 
 import requests
@@ -253,6 +254,8 @@ class SteamSource(Source):
                     slug=slugify(item.get("name", "")),
                     installed=False,
                     details={
+                        "playtime_hours": _minutes_to_hours(playtime),
+                        "lastplayed": item.get("rtime_last_played"),
                         "playtime_forever": playtime,
                         "time_last_played": item.get("rtime_last_played"),
                         "store_url": f"https://store.steampowered.com/app/{item['appid']}",
@@ -334,11 +337,75 @@ class SteamSource(Source):
             details={
                 "installdir": state.get("installdir"),
                 "lastplayed": state.get("LastPlayed"),
+                "playtime_hours": _minutes_to_hours(_to_number(state.get("playtime_forever"))),
                 "playtime_forever": state.get("playtime_forever"),
                 "size_on_disk": state.get("SizeOnDisk"),
                 "state_flags": state.get("StateFlags"),
             },
         )
+
+    # -- running game / playtime ----------------------------------------------
+
+    def installed_game_dir(self, appid: str) -> str | None:
+        """Absolute path to an installed game's directory, or ``None``."""
+        if not self.steam_root:
+            return None
+        for steamapps in steam_config.steamapps_dirs(self.steam_root):
+            for manifest_path in steam_config.appmanifest_paths(steamapps):
+                state = self._manifest_state(manifest_path)
+                if state is None or str(state.get("appid")) != str(appid):
+                    continue
+                installdir = state.get("installdir")
+                if installdir:
+                    return os.path.join(steamapps, "common", installdir)
+        return None
+
+    def read_manifest_playtime(self, appid: str) -> tuple[float | None, int | None]:
+        """Return ``(playtime_hours, lastplayed_unix)`` from the local manifest.
+
+        Steam writes ``playtime_forever`` (minutes) and ``LastPlayed`` to the app
+        manifest when the game exits, so reading it shortly after the process
+        stops gives the authoritative, freshly-updated playtime without needing a
+        Web API refresh.
+        """
+        if not self.steam_root:
+            return None, None
+        for steamapps in steam_config.steamapps_dirs(self.steam_root):
+            for manifest_path in steam_config.appmanifest_paths(steamapps):
+                state = self._manifest_state(manifest_path)
+                if state is None or str(state.get("appid")) != str(appid):
+                    continue
+                hours = _minutes_to_hours(_to_number(state.get("playtime_forever")))
+                lastplayed = _to_number(state.get("LastPlayed"))
+                return hours, lastplayed
+        return None, None
+
+    @staticmethod
+    def _manifest_state(manifest_path: str) -> dict | None:
+        from .steam.vdf import parse_vdf_file
+
+        data = parse_vdf_file(manifest_path)
+        state = data.get("AppState")
+        return state if isinstance(state, dict) else None
+
+    def web_playtime(self, appid: str) -> tuple[float | None, int | None]:
+        """Authoritative playtime from the Steam cloud (``GetOwnedGames``).
+
+        Some manifests never carry ``playtime_forever`` (e.g. recently-played
+        Proton titles), so after a session ends we fall back to the Web API value
+        ``playtime_forever``/``rtime_last_played``, which Steam updates on exit.
+        Returns ``(hours, lastplayed)`` or ``(None, None)`` when unknown.
+        """
+        store = self._token_store()
+        if not store.exists() or not store.access_token():
+            return None, None
+        for game in self._owned_page(self._api_session(store), store):
+            if str(game.appid) == str(appid):
+                return (
+                    game.details.get("playtime_hours"),
+                    game.details.get("lastplayed"),
+                )
+        return None, None
 
 
 registry.register(SteamSource)
@@ -363,3 +430,10 @@ def _to_number(value) -> int | float | None:
         return float(text) if "." in text else int(text)
     except ValueError:
         return None
+
+
+def _minutes_to_hours(minutes) -> float | None:
+    """Steam reports playtime in whole minutes; Vitrine stores hours."""
+    if minutes is None:
+        return None
+    return round(float(minutes) / 60.0, 2)
