@@ -72,12 +72,6 @@ the sandbox. The source reads the host Steam library under `~/.local/share/Steam
 (and the Flatpak Steam at `~/.var/app/com.valvesoftware.Steam/...`), all covered
 by `--filesystem=home`.
 
-> **Remaining limitation:** *non-Steam* Windows/Epic/GOG games would normally be
-> run through Wine/Proton via `steam-run` + umu, which needs an FHS host and
-> multilib. The Flatpak keeps local + native-Linux, GOG/Epic installs, playtime
-> and artwork; Wine/Proton launching of *non-Steam* Windows games is best on the
-> host flake (`nix run .#`).
-
 ## Design decisions
 
 - **Own database.** Vitrine keeps its own SQLite library.
