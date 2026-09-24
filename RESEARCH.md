@@ -199,6 +199,48 @@ Lutris/Steam/Heroic let pressure-vessel resolve its own drivers.
   Steam Web API** (`GetOwnedGames` → `playtime_hours`/`lastplayed`), so playtime
   updates right after the session closes. `Stop` SIGTERMs the detected process
   tree (children first).
+- **Wrapped-game exit** (gamescope lingering): `vitrine/procwatch.py` inspects
+  `/proc` process trees. A wrapper like gamescope can outlive the game (keeping an
+  invisible window), so `Runtime._watch` would block forever and "Playing" never
+  reverted. When the spawned root is a known wrapper, the watcher polls the tree
+  and only tears it down (SIGTERM then SIGKILL) once a *real* (non-wrapper,
+  non-Wine-internal) process has been seen at least once **and** then stays
+  absent for several polls — so it safely catches a closed game that leaves only
+  `gamescopereaper`/`wineserver` behind, without ever killing a game that is
+  still starting or running (a plain exe/marker-on-argv approach was too fragile:
+  Wine's client can exit right after the window opens). `Runtime.stop()` also now
+  uses the full tree teardown instead of a bare SIGTERM (which gamescope ignores).
+- **"Playing" button is a Stop toggle**: re-clicking the running game (hero or
+  tile) force-stops it — `on_game_activated` matches the running game by **id /
+  source_id, not object identity** (tiles are rebuilt after reloads), then
+  `_stop_game` tears down the tree (SIGTERM→SIGKILL via `procwatch` for local
+  games; SIGTERM→SIGKILL via `steamwatch.kill_game` for Steam games). So if the
+  auto wrapper-teardown ever misses a lingering gamescope, one click always
+  recovers.
+- **Debug log applies to all non-Steam sources**: installs always open the log
+  window when the setting is on; game *launches* open it for Epic (existing) and
+  now for local/GOG too — `Runtime.start(..., log=callback)` captures the game's
+  stdout/stderr (piped) and streams lines into the `ExecutionLogWindow`
+  (`launch.launch(plan, capture=True)`). Steam games intentionally skip it (no
+  meaningfully own process output).
+- **Epic playtime is Vitrine-local too** (no Epic server integration): launching
+  an Epic game marks it the running session (`_epic_running_game`), so the hero
+  shows Playing with an elapsed ticker; on exit `_epic_playtime_exit` accumulates
+  local hours via `record_playtime` (like GOG), reverts to Play, and reloads.
+  `_stop_game`/`_stop_epic_game` force-stop the legendary job/proc. Steam relies
+  on `/proc` watching and the Web API fallback instead; GOG/local/Epic are all
+  measured locally.
+- **GOG/local playtime is Vitrine-local** (no store integration): installed GOG
+  games already launch through the local `Runtime` (Popen + `_watch`) → hero
+  shows Playing and `record_playtime` **accumulates** on exit. The gap was GOG
+  installed-state: `GogSource.installed_on_disk()`/`sync_installed()` are no-op,
+  so games installed via gogdl weren't always `installed=True`/executabled.
+  Now `sync_installed()` scans `$XDG_DATA_HOME/vitrine/gog/<slug>/` for
+  `goggame-<id>.info` (keyed by the `<id>` == `source_id`), upgrades matching
+  rows to installed (never downgrades), repairs the executable via
+  `gogdl import`/`executable_from_info`, and **dedupes** stale
+  owned-but-not-installed twins when a truly-installed row exists (one game = one
+  tile; clicking Play then launches and tracks locally).
 - Proton launches previously used inherited stdio (window worked but output was
   invisible). **Now:** when the debug log is open, the game's stdout+stderr are
   captured (`subprocess.PIPE`, `stderr=STDOUT`) and streamed line-by-line into

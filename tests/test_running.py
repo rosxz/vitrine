@@ -112,3 +112,148 @@ def test_no_side_effects_until_started() -> None:
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+def test_wait_for_exit_tears_down_lingering_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When a gamescope wrapper outlives the game, _wait_for_exit must kill it
+    so the Playing state reverts."""
+    from vitrine import procwatch
+    from vitrine.running import Runtime
+
+    calls = {"term": 0, "kill": 0, "presence": 0}
+    monkeypatch.setattr(procwatch, "is_wrapper", lambda pid: True)
+
+    def _present(_pid) -> bool:
+        calls["presence"] += 1
+        return calls["presence"] <= 2  # game seen present twice, then gone
+
+    monkeypatch.setattr(procwatch, "game_present_in_tree", _present)
+    monkeypatch.setattr(procwatch, "terminate_tree", lambda pid: calls.__setitem__("term", calls["term"] + 1))
+    monkeypatch.setattr(procwatch, "kill_tree", lambda pid: calls.__setitem__("kill", calls["kill"] + 1))
+
+    class _Fake:
+        pid = 1
+
+        def poll(self):
+            return None  # wrapper never exits on its own
+
+        def wait(self):
+            return 143  # what we observe after a teardown
+
+    code = Runtime._wait_for_exit(_Fake(), interval=0.01, linger_polls=1)
+    assert calls["term"] >= 1
+    assert calls["kill"] >= 1
+    assert code == 143
+
+
+def test_wait_for_exit_never_tears_down_before_game_seen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Never kill before a real game process appeared (e.g. slow Wine boot)."""
+    from vitrine import procwatch
+    from vitrine.running import Runtime
+
+    term = []
+    monkeypatch.setattr(procwatch, "is_wrapper", lambda pid: True)
+    monkeypatch.setattr(procwatch, "game_present_in_tree", lambda pid: False)
+    monkeypatch.setattr(procwatch, "terminate_tree", lambda pid: term.append(pid))
+    monkeypatch.setattr(procwatch, "kill_tree", lambda pid: term.append(pid))
+
+    class _Fake:
+        pid = 7
+        left = 3
+
+        def poll(self):
+            if self.left > 0:
+                self.left -= 1
+                return None  # wrapper keeps running for a few polls
+            return 0
+
+        def wait(self):
+            return 0
+
+    assert Runtime._wait_for_exit(_Fake(), interval=0.01, linger_polls=1) == 0
+    assert term == []  # game process never seen -> must never tear down
+
+
+def test_wait_for_exit_plain_game_just_waits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unwrapped games (wine/native) block on wait(); never force-killed."""
+    from vitrine import procwatch
+    from vitrine.running import Runtime
+
+    kills = []
+    monkeypatch.setattr(procwatch, "is_wrapper", lambda pid: False)
+    monkeypatch.setattr(procwatch, "terminate_tree", lambda pid: kills.append(pid))
+    monkeypatch.setattr(procwatch, "kill_tree", lambda pid: kills.append(pid))
+
+    class _Fake:
+        pid = 1
+
+        def poll(self):
+            return 0
+
+        def wait(self):
+            return 0
+
+    assert Runtime._wait_for_exit(_Fake()) == 0
+    assert kills == []
+
+
+def test_stop_force_kills_stubborn_process(library: Library) -> None:
+    """Stop must SIGKILL a process that ignores SIGTERM (e.g. a lingering
+    wrapper), so the Playing state can always be torn down."""
+    import sys
+
+    from vitrine.running import Runtime
+
+    script = (
+        "import signal, time;"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN);"
+        "time.sleep(60)"
+    )
+    game = library.add(
+        Game(name="Stubborn", runner="linux", executable=sys.executable,
+             arguments="-c " + script, source="local")
+    )
+    runtime = Runtime()
+    exited: list[tuple] = []
+    runtime.on_exit = lambda g, hours, rc: exited.append((g, hours, rc))
+
+    runtime.start(game, {})
+    deadline = time.monotonic() + 5
+    while not runtime.running and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert runtime.running
+
+    runtime.stop()
+
+    deadline = time.monotonic() + 6
+    while not exited and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert exited, "stubborn process was not force-killed"
+    _, _, returncode = exited[0]
+    assert returncode not in (0, None)
+
+
+def test_log_callback_streams_output(library: Library) -> None:
+    """The debug-log path: a log callback receives the game's stdout lines."""
+    import sys
+
+    from vitrine.running import Runtime
+
+    script = "print('hello-vitrine'); import time; time.sleep(0.2)"
+    game = library.add(
+        Game(name="Echo", runner="linux", executable=sys.executable,
+             arguments="-c " + script, source="gog")
+    )
+    lines: list[str] = []
+    runtime = Runtime()
+    exited: list[tuple] = []
+    runtime.on_exit = lambda g, hours, rc: exited.append((g, hours, rc))
+
+    runtime.start(game, {}, log=lines.append)
+
+    deadline = time.monotonic() + 6
+    while not exited and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert exited, "process did not exit"
+    assert any("hello-vitrine" in line for line in lines), f"no streamed line: {lines}"

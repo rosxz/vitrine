@@ -52,24 +52,35 @@ class Runtime:
         with self._lock:
             return self._game
 
-    def start(self, game: Game, config: dict, runners_store: dict[str, str] | None = None) -> None:
+    def start(
+        self,
+        game: Game,
+        config: dict,
+        runners_store: dict[str, str] | None = None,
+        *,
+        log: Callable[[str], None] | None = None,
+    ) -> None:
         """Launch ``game`` under ``config`` and begin watching it.
 
         ``runners_store`` maps runner ids to their wine-binary paths so the
-        selected runner can be resolved. Raises :class:`GameAlreadyRunning` if
-        another game is still running.
+        selected runner can be resolved. ``log``, when given, receives each line
+        of the game's stdout/stderr (used by the debug log window). Raises
+        :class:`GameAlreadyRunning` if another game is still running.
         """
         with self._lock:
             if self._process is not None:
                 name = self._game.name if self._game else "another game"
                 raise GameAlreadyRunning(f"{name} is still running")
 
-            process = launch.launch(launch.build_launch_plan(game, config, runners_store))
+            plan = launch.build_launch_plan(game, config, runners_store)
+            process = launch.launch(plan, capture=log is not None)
             self._process = process
             self._game = game
             self._started_at = time.monotonic()
 
         logger.info("Started %s (pid %s)", game.name, process.pid)
+        if log is not None and process.stdout is not None:
+            threading.Thread(target=self._stream, args=(process, game, log), daemon=True, name="game-stream").start()
         if self.on_start is not None:
             try:
                 self.on_start(game)
@@ -78,17 +89,37 @@ class Runtime:
 
         threading.Thread(target=self._watch, args=(process, game), daemon=True, name="game-watch").start()
 
+    def _stream(self, process: subprocess.Popen, game: Game, log: Callable[[str], None]) -> None:
+        """Forward the game's piped output to ``log`` (e.g. the debug log window)."""
+        try:
+            if process.stdout is not None:
+                for line in process.stdout:
+                    log(line.rstrip("\n"))
+        except Exception:
+            logger.exception("Error streaming output for %s", game.name)
+
     def stop(self) -> None:
-        """Terminate the running game's process tree, if any."""
+        """Terminate the running game's whole process tree.
+
+        Uses the /proc tree teardown rather than a bare SIGTERM: wrappers like
+        gamescope can ignore a lone SIGTERM and leave an invisible window up.
+        """
+        from . import procwatch
+
         with self._lock:
             process = self._process
         if process is not None:
             logger.info("Stopping %s", self._game.name if self._game else "game")
-            process.terminate()
+            procwatch.terminate_tree(process.pid)
+            import time
+
+            time.sleep(1.0)
+            if process.poll() is None:
+                procwatch.kill_tree(process.pid)
 
     def _watch(self, process: subprocess.Popen, game: Game) -> None:
         try:
-            returncode = process.wait()
+            returncode = self._wait_for_exit(process)
         except Exception:
             logger.exception("Error while watching %s", game.name)
             return
@@ -107,3 +138,49 @@ class Runtime:
                 self.on_exit(game, hours, returncode)
             except Exception:
                 logger.exception("on_exit handler failed for %s", game.name)
+
+    @staticmethod
+    def _wait_for_exit(
+        process: subprocess.Popen,
+        *,
+        interval: float = 2.0,
+        linger_polls: int = 3,
+    ) -> int:
+        """Wait for the game to end, tearing down a lingering wrapper (gamescope).
+
+        Most games exit at the same time as the process we spawned. But a wrapper
+        like gamescope can outlive its child: the game window closes, the game
+        process is gone, yet gamescope stays up with an invisible window and
+        ``wait()`` never returns.
+
+        For wrapped games we poll the process tree. We only tear the wrapper down
+        once a *real* (non-wrapper, non-Wine-internal) descendant has been seen
+        at least once (the game actually started) and then stays absent for
+        ``linger_polls`` polls -- so we never kill a game that is still coming
+        up or running. Plain (unwrapped) games block on ``wait()`` like always.
+        """
+        from . import procwatch
+
+        if not procwatch.is_wrapper(process.pid):
+            return process.wait()
+
+        seen_game = False
+        missing = 0
+        while process.poll() is None:
+            time.sleep(interval)
+            if procwatch.game_present_in_tree(process.pid):
+                seen_game = True
+                missing = 0
+            elif seen_game:
+                missing += 1
+                if missing >= linger_polls:
+                    logger.info(
+                        "Game exited but its wrapper (pid %s) lingers; tearing it down",
+                        process.pid,
+                    )
+                    procwatch.terminate_tree(process.pid)
+                    time.sleep(1.0)
+                    if process.poll() is None:
+                        procwatch.kill_tree(process.pid)
+                    break
+        return process.wait()

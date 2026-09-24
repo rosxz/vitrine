@@ -425,3 +425,78 @@ def test_refresh_access_token_posts_and_returns_payload(monkeypatch: pytest.Monk
     monkeypatch.setattr(gog_auth.requests, "post", lambda *a, **k: _Bad())
     with pytest.raises(GogAuthError):
         gog_auth.refresh_access_token("BAD")
+
+
+# -- local installed reconciliation --------------------------------------------
+
+def _gog_data(tmp_path: Path) -> Path:
+    depot = tmp_path / "gog"
+    (depot / "huniepop-2" / "HuniePop").mkdir(parents=True)
+    (depot / "huniepop-2" / "HuniePop" / "goggame-1443428641.info").write_text('{}')
+    (depot / "huniepop-2" / "HuniePop" / "HuniePop.exe").write_bytes(b"MZ")
+    return depot
+
+
+def _gog_source(monkeypatch: pytest.MonkeyPatch, library, tmp_path: Path) -> GogSource:
+    from vitrine.sources import gog_source as gog_mod
+
+    monkeypatch.setattr(gog_mod.paths, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(gog_mod.paths, "cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(gog_mod.paths, "secret_dir", lambda: tmp_path)
+    return GogSource(library)
+
+
+def test_sync_installed_reconciles_on_disk(monkeypatch, library, tmp_path: Path) -> None:
+    gog = _gog_source(monkeypatch, library, tmp_path)
+    _gog_data(tmp_path)
+    row = library.add(
+        Game(name="HuniePop", slug="huniepop-2", source="gog",
+             source_id="1443428641", installed=False)
+    )
+
+    from vitrine.sources.gog import gogdl
+
+    monkeypatch.setattr(
+        gogdl, "import_info",
+        lambda _gid, _root, _auth: {"tasks": [{"category": "game", "path": "HuniePop.exe"}]},
+    )
+
+    assert gog.installed_on_disk() == {"1443428641"}
+    gog.sync_installed()
+
+    reloaded = library.game(row.id)
+    assert reloaded.installed is True
+    assert reloaded.executable is not None
+    assert reloaded.executable.endswith("HuniePop.exe")
+
+
+def test_dedupe_removes_stale_non_installed_twin(monkeypatch, library, tmp_path: Path) -> None:
+    gog = _gog_source(monkeypatch, library, tmp_path)
+    _gog_data(tmp_path)
+    installed = library.add(
+        Game(name="HuniePop", slug="huniepop-2", source="gog",
+             source_id="1443428641", installed=True,
+             executable=str(tmp_path / "gog" / "huniepop-2" / "HuniePop" / "HuniePop.exe"))
+    )
+    stale = library.add(
+        Game(name="HuniePop", slug="huniepop", source="gog", source_id="339800", installed=False)
+    )
+
+    gog.sync_installed()
+
+    assert library.game(installed.id) is not None
+    assert library.game(stale.id) is None
+    remaining = library.games(source="gog")
+    assert [g.source_id for g in remaining] == ["1443428641"]
+
+
+def test_sync_installed_never_downgrades(monkeypatch, library, tmp_path: Path) -> None:
+    """An installed row stays installed even when the depot is not on disk."""
+    gog = _gog_source(monkeypatch, library, tmp_path)
+    row = library.add(
+        Game(name="Vanished", slug="vanished", source="gog",
+             source_id="999", installed=True,
+             executable=str(tmp_path / "nowhere" / "game.exe"))
+    )
+    gog.sync_installed()
+    assert library.game(row.id).installed is True

@@ -325,8 +325,14 @@ def build_launch_plan(game: Game, config: dict, runners_store: dict[str, str] | 
     )
 
 
-def launch(plan: LaunchPlan) -> subprocess.Popen:
-    """Start the game. Callers are responsible for watching the process."""
+def launch(plan: LaunchPlan, *, capture: bool = False) -> subprocess.Popen:
+    """Start the game. Callers are responsible for watching the process.
+
+    With ``capture`` the child's stdout (plus stderr) is piped so a caller can
+    stream it (e.g. into the debug log window) instead of inheriting stdio."""
     if plan.prefix:
         Path(plan.prefix).mkdir(parents=True, exist_ok=True)
-    return subprocess.Popen(plan.command, env=plan.env, cwd=plan.working_dir)
+    kwargs: dict = {"env": plan.env, "cwd": plan.working_dir}
+    if capture:
+        kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    return subprocess.Popen(plan.command, **kwargs)

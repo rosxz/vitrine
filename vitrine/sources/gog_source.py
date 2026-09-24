@@ -13,12 +13,14 @@ there is no store-native launch URI.
 from __future__ import annotations
 
 import logging
+import os
+import re
 
 import requests
 
 from .. import paths
 from ..artwork import FORCE_REFRESH_SETTING
-from ..library import Library
+from ..library import Game, Library
 from ..util import slugify
 from .base import Source, SourceGame, registry
 from .gog.auth import GogAuthError, GogTokenStore
@@ -109,13 +111,98 @@ class GogSource(Source):
         return pending
 
     def sync_installed(self) -> int:
-        # GOG games are ordinary executables; installed-ness is managed like
-        # local entries (the per-game executable field), so there is nothing
-        # store-native to merge here.
-        return 0
+        """Reconcile GOG installed state purely from local disk (no store API).
+
+        Vitrine calls this after a catalogue sync. It scans the gogdl depot root
+        (``$XDG_DATA_HOME/vitrine/gog/<slug>/``) for ``goggame-*.info`` markers,
+        upgrades rows whose game id appears on disk to *installed*, and repairs
+        their executable when missing (best effort via ``gogdl import``). It only
+        ever upgrades -- mirrors Steam's conservative behaviour and never flips an
+        installed game back on a library refresh.
+        """
+        on_disk = self._scan_on_disk()
+        updated = 0
+        for game in self.library.games(source=self.id):
+            root = on_disk.get(game.source_id or "")
+            if root is None:
+                continue
+            changed = False
+            if not game.installed:
+                game.installed = True
+                changed = True
+            exe = game.executable
+            if not exe or not os.path.isfile(os.path.expanduser(exe)):
+                resolved = self._resolve_executable(game.source_id, root)
+                if resolved:
+                    game.executable = resolved
+                    changed = True
+            if changed and game.id is not None:
+                self.library.update(game)
+                updated += 1
+        self._dedupe_installed_twins(on_disk)
+        return updated
 
     def installed_on_disk(self) -> set[str]:
-        return set()
+        """GOG game ids that are installed on this machine (gogdl depot markers)."""
+        return set(self._scan_on_disk())
+
+    def _scan_on_disk(self) -> dict[str, str]:
+        """Map GOG game id -> install root from ``goggame-*.info`` markers.
+
+        gogdl writes a depot to ``data_dir/gog/<slug>/[<InstallDir>/]`` and the
+        marker ``goggame-<id>.info`` can sit directly in or one level below that
+        root, so we search shallowly.
+        """
+        depot_root = paths.data_dir() / "gog"
+        found: dict[str, str] = {}
+        if not depot_root.is_dir():
+            return found
+        for slug_dir in depot_root.iterdir():
+            if not slug_dir.is_dir():
+                continue
+            for info in filter(
+                lambda p: p.is_file() and re.fullmatch(r"goggame-\d+\.info", p.name),
+                slug_dir.rglob("goggame-*.info"),
+            ):
+                game_id = info.name[len("goggame-") : -len(".info")]
+                found.setdefault(game_id, str(info.parent))
+        return found
+
+    def _resolve_executable(self, game_id: str, root: str) -> str | None:
+        """Best-effort absolute executable for an on-disk GOG game."""
+        from .gog import gogdl
+
+        auth_path = str(paths.cache_dir() / "gogdl-auth.json")
+        info = gogdl.import_info(game_id, root, auth_path)
+        return gogdl.executable_from_info(info, root)
+
+    def _dedupe_installed_twins(self, on_disk: dict[str, str]) -> int:
+        """Drop non-installed duplicates when a truly-installed twin exists.
+
+        A catalogue refresh can leave both an installed row (source_id matches a
+        ``goggame-*.info`` on disk) and a stale owned-but-not-installed twin for
+        the same title. The stale twin is the one users tend to click ("Play"
+        opens install instead of launching). Remove it so one game = one tile.
+        """
+        installed_ids = set(on_disk)
+        by_name: dict[str, list[Game]] = {}
+        for game in self.library.games(source=self.id):
+            by_name.setdefault(_norm_name(game.name), []).append(game)
+
+        removed = 0
+        for rows in by_name.values():
+            if len(rows) < 2:
+                continue
+            installed = [g for g in rows if g.installed and g.source_id in installed_ids]
+            if len(installed) != 1:
+                continue
+            keep_id = installed[0].id
+            for duplicate in (g for g in rows if g.id != keep_id and not g.installed):
+                self.library.remove(duplicate.id)
+                removed += 1
+        if removed:
+            logger.info("Removed %d stale non-installed GOG duplicate(s)", removed)
+        return removed
 
     # -- login / logout -------------------------------------------------------
 
@@ -218,6 +305,11 @@ class GogSource(Source):
 
 
 registry.register(GogSource)
+
+
+def _norm_name(name: str) -> str:
+    """Normalise a title for duplicate comparison."""
+    return " ".join(str(name or "").casefold().split())
 
 
 def _get_json(url: str, token: str, params: dict | None = None) -> dict:

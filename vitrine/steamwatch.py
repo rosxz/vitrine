@@ -180,6 +180,27 @@ def terminate_game(appid: str, installdir: str | None = None) -> int:
     return sent
 
 
+def kill_tree(pid: int) -> None:
+    """SIGKILL ``pid``'s descendants first, then ``pid`` itself."""
+    for child in _children(pid):
+        kill_tree(child)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
+def kill_game(appid: str, installdir: str | None = None) -> int:
+    """Force-kill (SIGKILL) the detected game processes; returns how many PIDs
+    were signalled. Used as a fallback when SIGTERM is ignored (e.g. Steam
+    clients that don't respond)."""
+    sent = 0
+    for pid in list(set(steam_game_pids(appid, installdir))):
+        kill_tree(pid)
+        sent += 1
+    return sent
+
+
 class SteamSessionWatcher:
     """Polls /proc until a Steam-launched game stops.
 
