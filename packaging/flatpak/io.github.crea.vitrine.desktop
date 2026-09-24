@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Vitrine
+Comment=A unified game library launcher
+Exec=vitrine %U
+Icon=io.github.crea.vitrine
+Terminal=false
+Categories=Game;Utility;
+Keywords=game;launcher;steam;gog;epic;
+X-GNOME-UsesNotifications=true

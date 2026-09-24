@@ -46,6 +46,30 @@ throwaway XDG directory, then quits — useful as a fast end-to-end check:
 nix develop -c sh -c 'Xvfb :99 -screen 0 1280x800x24 & sleep 1; DISPLAY=:99 python tools/gui_smoke.py'
 ```
 
+## Flatpak
+
+A shareable Flatpak bundle is prebuilt at `dist-flatpak/io.github.crea.vitrine.flatpak`.
+Friends install it with:
+
+```sh
+flatpak --user install -y io.github.crea.vitrine.flatpak
+flatpak run io.github.crea.vitrine
+```
+
+It bundles legendary (Epic), gogdl (GOG), umu-launcher and the d3d_extras Wine
+runtime, and ships alongside the `org.gnome.Platform` runtime (which provides
+GTK4, libadwaita and WebKitGTK 6). Rebuild it with:
+
+```sh
+tools/build-flatpak.sh
+```
+
+> **Limitation:** Windows/Proton games are launched through `steam-run`/umu,
+> which needs an FHS host (NixOS/steam-deck style) and real GPU/mesa access —
+> that cannot run inside a Flatpak sandbox. The Flatpak focuses on the library,
+> GOG/Epic installs, artwork, playtime and native Linux games; Wine/Proton
+> launching is best on the host flake.
+
 ## Design decisions
 
 - **Own database.** Vitrine keeps its own SQLite library.

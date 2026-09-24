@@ -1,0 +1,100 @@
+id: io.github.crea.vitrine
+runtime: org.gnome.Platform
+runtime-version: "50"
+sdk: org.gnome.Sdk
+command: vitrine
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --share=network
+  # Games and prefixes live under the user's home; the launcher must read and
+  # write them. Steam libraries under non-home mounts are out of scope.
+  - --filesystem=home
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.freedesktop.portal.*
+  - --talk-name=org.freedesktop.portal.Flatpak
+
+build-options:
+  build-args:
+    - --share=network
+
+modules:
+  - name: python-requirements
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-deps --prefix=/app ./*.whl
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl
+        sha256: 62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775
+      - type: file
+        url: https://files.pythonhosted.org/packages/fb/af/63240b0c0248c075c2535a1f1bd992821d8251b9f173abc13329661d09e4/charset_normalizer-3.5.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
+        sha256: 62b55f6722735a6c472f88361cde6640608773d9443cebdbb51abf436a1fcdd3
+      - type: file
+        url: https://files.pythonhosted.org/packages/7a/6d/db8b86e168fef0cf904737e275bccb683558088ef971e92d3b41ce980699/filelock-4.0.3-py3-none-any.whl
+        sha256: 30cd166e2aee2c7534ce2c33c6367c4cd051b8368e20e2c4eb0c34f699bacfab
+      - type: file
+        url: https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl
+        sha256: ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c
+      - type: file
+        url: https://files.pythonhosted.org/packages/4c/d5/d9648a3ebc7af8251c2126b97a331cc29e31921298f217c09a536bf1d283/legendary_gl-0.21.1-py3-none-any.whl
+        sha256: e1beedfaaed45ab372b7af047c092723f62a69e65666d81ffe654c61fac09e9c
+      - type: file
+        url: https://files.pythonhosted.org/packages/f7/62/de5bdd77d935331f4f802edc11e4d82950f642caad6cb2f949837b8560e2/pillow-12.3.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+        sha256: 0847a763afefb695bc912d7c131e7e0632d4edc1d8698f58ddabec8e46b8b6d3
+      - type: file
+        url: https://files.pythonhosted.org/packages/c8/a9/8862616a85cf450d2822dbd4fff1fcaba90877907a6ff5bc2672cafe42f8/pycryptodomex-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+        sha256: f489c4765093fb60e2edafdf223397bc716491b2b69fe74367b70d6999257a5c
+      - type: file
+        url: https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl
+        sha256: 2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0
+      - type: file
+        url: https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl
+        sha256: 0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3
+
+  - name: gogdl
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 gogdl_linux_x86_64 /app/bin/gogdl
+    sources:
+      - type: file
+        url: https://github.com/Heroic-Games-Launcher/heroic-gogdl/releases/download/v1.3.0/gogdl_linux_x86_64
+        sha256: cba013d42767c808237c437335ab1d56f58405d07e8f37b3324d264ea5c49655
+
+  - name: umu-launcher
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/libexec/vitrine/umu
+      - cp umu-run umu_run.py /app/libexec/vitrine/umu/
+      - chmod +x /app/libexec/vitrine/umu/umu-run
+      - ln -sf /app/libexec/vitrine/umu/umu-run /app/bin/umu-run
+    sources:
+      - type: archive
+        url: https://github.com/Open-Wine-Components/umu-launcher/releases/download/1.4.4/umu-launcher-1.4.4-zipapp.tar
+        sha256: eb590691841f7fad3fc3ad8fd5db4ccb87849fe7948e62b28ece7a4ee48cc851
+
+  - name: d3d-extras
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/share/vitrine/d3d_extras
+      - cp -r . /app/share/vitrine/d3d_extras/
+    sources:
+      - type: archive
+        url: https://github.com/lutris/d3d_extras/releases/download/v2/v2.tar.xz
+        sha256: 9117ac86947b53865fc0d675314179e738b1e3e38bbb4281e4afe6b665b073af
+
+  - name: vitrine
+    buildsystem: simple
+    build-commands:
+      - cp -r vitrine /app/share/vitrine/vitrine
+      - install -Dm644 packaging/flatpak/io.github.crea.vitrine.desktop /app/share/applications/io.github.crea.vitrine.desktop
+      - install -Dm644 packaging/flatpak/io.github.crea.vitrine.metainfo.xml /app/share/metainfo/io.github.crea.vitrine.metainfo.xml
+      - install -Dm644 packaging/flatpak/icons/io.github.crea.vitrine.png /app/share/icons/hicolor/512x512/apps/io.github.crea.vitrine.png
+      - install -Dm644 packaging/flatpak/icons/io.github.crea.vitrine.svg /app/share/icons/hicolor/scalable/apps/io.github.crea.vitrine.svg
+      - install -Dm755 packaging/flatpak/vitrine-run.sh /app/bin/vitrine
+    sources:
+      - type: dir
+        path: ../../

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.crea.vitrine</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Vitrine</name>
+  <summary>A unified game library launcher</summary>
+  <description>
+    <p>Vitrine is a game library launcher for Linux that unifies local games, Steam (owned and family shared), GOG and Epic accounts into a single browsable library, with artwork, playtime tracking and per-game launcher options.</p>
+    <p>Launching native Linux games, GOG and Epic games is supported. Windows/Proton games are subject to the running Wine/Proton setup on the host.</p>
+  </description>
+  <launchable type="desktop-id">io.github.crea.vitrine.desktop</launchable>
+  <url type="homepage">https://github.com/crea/vitrine</url>
+  <content_rating type="oars-1.1">
+    <content_attribute id="violence-cartoon">none</content_attribute>
+  </content_rating>
+  <releases>
+    <release version="0.0.1" date="2026-09-24"/>
+  </releases>
+</component>

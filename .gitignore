@@ -7,9 +7,14 @@ result
 result-*
 build/
 dist/
+dist-flatpak/
 *.egg-info/
 .venv/
 session-ses_*.md
+
+# Flatpak build artifacts
+.flatpak-builder/
+.flatpak-repo/
 
 # Runtime / credential safety (never publish)
 .env
