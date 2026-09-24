@@ -58,17 +58,25 @@ flatpak run io.github.crea.vitrine
 
 It bundles legendary (Epic), gogdl (GOG), umu-launcher and the d3d_extras Wine
 runtime, and ships alongside the `org.gnome.Platform` runtime (which provides
-GTK4, libadwaita and WebKitGTK 6). Rebuild it with:
+GTK4, libadwaita and WebKitGTK 6). GPU drivers come from the system via
+Flatpak's Mesa/GL extension (just needs `--device=dri`). Rebuild it with:
 
 ```sh
 tools/build-flatpak.sh
 ```
 
-> **Limitation:** Windows/Proton games are launched through `steam-run`/umu,
-> which needs an FHS host (NixOS/steam-deck style) and real GPU/mesa access —
-> that cannot run inside a Flatpak sandbox. The Flatpak focuses on the library,
-> GOG/Epic installs, artwork, playtime and native Linux games; Wine/Proton
-> launching is best on the host flake.
+**Steam works out of the box.** A `steam://rungameid/<appid>` URI is handed to
+the host's own Steam through the OpenURI portal; the game actually runs on the
+host (with the host's Proton and GPU), so Vitrine never needs to launch Wine in
+the sandbox. The source reads the host Steam library under `~/.local/share/Steam`
+(and the Flatpak Steam at `~/.var/app/com.valvesoftware.Steam/...`), all covered
+by `--filesystem=home`.
+
+> **Remaining limitation:** *non-Steam* Windows/Epic/GOG games would normally be
+> run through Wine/Proton via `steam-run` + umu, which needs an FHS host and
+> multilib. The Flatpak keeps local + native-Linux, GOG/Epic installs, playtime
+> and artwork; Wine/Proton launching of *non-Steam* Windows games is best on the
+> host flake (`nix run .#`).
 
 ## Design decisions
 

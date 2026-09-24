@@ -6,13 +6,18 @@ command: vitrine
 
 finish-args:
   - --share=ipc
+  - --share=network
   - --socket=wayland
   - --socket=fallback-x11
+  - --socket=pulseaudio
+  # GPU drivers are supplied by the system via Flatpak's Mesa/GL extension.
   - --device=dri
-  - --share=network
   # Games and prefixes live under the user's home; the launcher must read and
-  # write them. Steam libraries under non-home mounts are out of scope.
+  # write them. Steam libraries under ~/.local/share/Steam (native) and
+  # ~/.var/app/com.valvesoftware.Steam (Flatpak Steam) are covered by this.
   - --filesystem=home
+  # Hand steam://rungameid URIs to the host's own Steam via the OpenURI portal.
+  - --talk-name=org.freedesktop.portal.OpenURI
   - --talk-name=org.freedesktop.Notifications
   - --talk-name=org.freedesktop.portal.*
   - --talk-name=org.freedesktop.portal.Flatpak
