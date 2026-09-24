@@ -151,17 +151,17 @@ def test_save_button_invokes_callback_with_game() -> None:
 
 
 def test_form_default_and_provider_visibility() -> None:
-    """The default art source is Lutris, and local games hide the provider option."""
+    """The default art source is auto, and local games hide the provider option."""
     if not Gtk.init_check():
         pytest.skip("requires a display to construct widgets")
     from vitrine.ui.game_form import GameForm
 
     local = GameForm(allow_provider=False)
-    assert local.artwork_source() == "lutris"
+    assert local.artwork_source() == "auto"
     assert "provider" not in local._source_buttons
 
     store = GameForm(allow_provider=True)
-    assert store.artwork_source() == "lutris"
+    assert store.artwork_source() == "auto"
     assert "provider" in store._source_buttons
     assert "lutris" in store._source_buttons
     assert "local" in store._source_buttons

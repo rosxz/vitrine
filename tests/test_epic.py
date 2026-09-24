@@ -237,6 +237,21 @@ def test_legendary_binary_missing_raises(monkeypatch: pytest.MonkeyPatch) -> Non
         lg.legendary_binary()
 
 
+def test_install_directory_lives_next_to_gog_depot_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Epic installs must land in Vitrine's data dir, not legendary's ~/Games."""
+    from vitrine.sources.epic import legendary as lg
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    assert lg.install_dir() == str(tmp_path / "vitrine" / "egs")
+
+    for app in ("Dingus", "Cleetus"):
+        command = lg.install_command(app)
+        assert "--base-path" in command
+        base = command[command.index("--base-path") + 1]
+        assert base == str(tmp_path / "vitrine" / "egs")
+        assert base != str(Path.home() / "Games")
+
+
 def test_list_games_parses_legendary_json(monkeypatch: pytest.MonkeyPatch) -> None:
     from vitrine.sources.epic import legendary as lg
 

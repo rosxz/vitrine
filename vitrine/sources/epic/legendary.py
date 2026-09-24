@@ -24,8 +24,17 @@ logger = logging.getLogger(__name__)
 #: Env override for the legendary binary (used by tests and unusual setups).
 LEGENDARY_ENV = "VITRINE_LEGENDARY"
 
-#: Default install base legendary uses (also where it stores its own DB).
-DEFAULT_INSTALL_DIR = os.path.expanduser("~/Games")
+
+def install_dir() -> str:
+    """Install base used for Epic games, next to the GOG depot root.
+
+    Mirrors gogdl's layout (``<XDG_DATA_HOME>/vitrine/gog``) so store installs
+    live under Vitrine's data dir instead of legendary's own ``~/Games``
+    default.
+    """
+    from vitrine import paths
+    
+    return str(paths.data_dir() / "egs")
 
 #: Path to legendary's per-user configuration/credential directory.
 LEGENDARY_CONFIG = ("~/.config/legendary", "~/.config/legendary-gl")
@@ -223,12 +232,13 @@ def dry_run_launch(app_name: str) -> list[str]:
 def install_command(app_name: str, base_path: str | None = None, *, skip_dlcs: bool = True) -> list[str]:
     """Build the ``legendary install`` command line for ``app_name``.
 
+    ``--base-path`` is always passed so installs land under Vitrine's data dir
+    (``<XDG_DATA_HOME>/vitrine/egs``) rather than legendary's default ``~/Games``.
     ``-y`` answers 'yes' to any prompt (e.g. accepting prerequisites) so the
     install never stalls waiting for stdin inside the log window.
     """
     args: list[str] = ["-y", "install", app_name]
-    if base_path:
-        args += ["--base-path", base_path]
+    args += ["--base-path", base_path or install_dir()]
     if skip_dlcs:
         args.append("--skip-dlcs")
     return args
