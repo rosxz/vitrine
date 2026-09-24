@@ -92,9 +92,7 @@ by `--filesystem=home`.
 ## Future additions
 
 - Support for Linux games (.sh)
-- Game metadata (? consider feature)
 - Game deduplication
 - Support for Lutris installer scripts 
 - Integrate Discord Rich Presence
-- Proper Steam time tracking
 - Game achievements for any source (GOG, Steam, Epic)
