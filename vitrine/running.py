@@ -59,6 +59,7 @@ class Runtime:
         runners_store: dict[str, str] | None = None,
         *,
         log: Callable[[str], None] | None = None,
+        on_plan: Callable[[launch.LaunchPlan], None] | None = None,
     ) -> None:
         """Launch ``game`` under ``config`` and begin watching it.
 
@@ -73,6 +74,8 @@ class Runtime:
                 raise GameAlreadyRunning(f"{name} is still running")
 
             plan = launch.build_launch_plan(game, config, runners_store)
+            if on_plan is not None:
+                on_plan(plan)
             if game.runner not in (None, "", "linux", "native"):
                 wine_binary = launch.resolve_runner(
                     config.get("runner"), runners_store, config.get("wine_binary")

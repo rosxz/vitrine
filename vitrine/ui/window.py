@@ -1284,11 +1284,21 @@ class VitrineWindow(Adw.ApplicationWindow):
 
                 log = ExecutionLogWindow(f"Launching {game.name}", parent=self)
                 log.present()
-                args = shlex.split(game.arguments) if game.arguments else []
-                log.append_line("$ " + shlex.join([game.executable or "", *args]))
 
+            from ..launch import LaunchPlan
+
+            def report_plan(plan: LaunchPlan) -> None:
+                if log is None:
+                    return
+                for line in plan.debug_lines():
+                    log.append_line(line)
+
+            plan_reporter: Callable[[LaunchPlan], None] | None = (
+                report_plan if log is not None else None
+            )
             self.runtime.start(game, config, load_runners_store(self.library),
-                               log=log.append_line if log is not None else None)
+                               log=log.append_line if log is not None else None,
+                               on_plan=plan_reporter)
             self._running_started_monotonic = GLib.get_monotonic_time() / 1e6
         except GameAlreadyRunning as error:
             self.toasts.add_toast(Adw.Toast(title=str(error)))
@@ -1879,7 +1889,7 @@ class VitrineWindow(Adw.ApplicationWindow):
     @staticmethod
     def _stop_process(proc) -> None:
         """SIGTERM then SIGKILL a child process tree."""
-        from . import procwatch
+        from .. import procwatch
 
         procwatch.terminate_tree(proc.pid)
         import time as _time

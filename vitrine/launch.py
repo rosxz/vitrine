@@ -32,6 +32,19 @@ class LaunchPlan:
     def pretty(self) -> str:
         return " ".join(shlex.quote(part) for part in self.command)
 
+    def debug_lines(self) -> list[str]:
+        """Describe the exact command and runner context used for execution."""
+        lines = ["$ " + self.pretty()]
+        if self.working_dir:
+            lines.append("cwd: " + self.working_dir)
+        if self.prefix:
+            lines.append("prefix: " + self.prefix)
+        for key in ("WINEPREFIX", "WINEARCH", "WINESERVER", "PROTONPATH", "GAMEID"):
+            value = self.env.get(key)
+            if value:
+                lines.append(f"{key}={value}")
+        return lines
+
 
 def wine_prefix_for(game: Game) -> Path:
     """The prefix a game uses: its own if set, otherwise a per-game default."""

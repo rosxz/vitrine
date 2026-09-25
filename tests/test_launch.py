@@ -136,6 +136,29 @@ def test_plan_reports_working_directory_next_to_the_executable() -> None:
     assert plan.pretty().endswith("wine /games/Game.exe")
 
 
+def test_plan_debug_lines_report_exact_proton_command(tmp_path, monkeypatch) -> None:
+    from vitrine.wine import umu
+
+    root, wine = _fake_proton(tmp_path)
+    monkeypatch.setenv(umu.UMU_ENV, "/opt/umu-run")
+    monkeypatch.setattr(
+        umu.shutil,
+        "which",
+        lambda name: "/run/current-system/sw/bin/steam-run" if name == "steam-run" else None,
+    )
+
+    plan = launch.build_launch_plan(
+        game(slug="love", runner="wine"),
+        {"wine_binary": str(wine)},
+    )
+    lines = plan.debug_lines()
+
+    assert lines[0] == "$ steam-run /opt/umu-run /games/Game.exe"
+    assert "prefix: " in "\n".join(lines)
+    assert "PROTONPATH=" + str(root) in lines
+    assert "GAMEID=love" in lines
+
+
 @pytest.mark.parametrize("value", [None, "", False])
 def test_empty_config_values_do_not_wrap(value) -> None:
     command = launch.build_command(game(), {"gamescope": value, "mangohud": value, "gamemode": value})
