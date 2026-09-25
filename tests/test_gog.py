@@ -372,6 +372,13 @@ def test_gogdl_find_game_dir_nested(tmp_path: Path) -> None:
     assert gogdl_mod.install_is_valid("999", str(tmp_path / "root")) is False
 
 
+def test_gogdl_reports_already_downloaded() -> None:
+    from vitrine.sources.gog import gogdl as gogdl_mod
+
+    assert gogdl_mod.reported_nothing_to_do(["Downloading", "Nothing to do."]) is True
+    assert gogdl_mod.reported_nothing_to_do(["Nothing to do. extra"]) is False
+
+
 def test_token_needs_refresh_logic(tmp_path: Path) -> None:
     store = GogTokenStore(tmp_path, "u")
     # Fresh token with refresh_token -> no refresh needed.

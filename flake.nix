@@ -147,6 +147,8 @@
           export VITRINE_UMU="${pkgs.umu-launcher}/bin/umu-run"
           export VITRINE_D3D_EXTRAS="${d3dExtras}"
           export VITRINE_DEV=1
+          mkdir -p "$PWD/.vscode"
+          ln -sfn "$(command -v python)" "$PWD/.vscode/nix-python"
         '';
       };
     };

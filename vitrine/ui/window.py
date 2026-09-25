@@ -24,7 +24,7 @@ from ..sources.gog.auth import GogTokenStore
 from ..sources.steam.auth import SteamTokenStore
 from ..sources.steam_source import SteamAuthError, SteamSource
 from .game_detail_bar import GameDetailBar
-from .game_dialogs import AddGameDialog, GameSettingsDialog
+from .game_dialogs import AddGameDialog, GameSettingsDialog, PrefixRecreateWindow
 from .library_view import LibraryView
 from .settings_dialog import SettingsDialog
 from .steam_login_dialog import SteamLoginDialog
@@ -1075,6 +1075,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             on_pick_artwork=self._on_artwork_chosen,
             on_open_install=self._open_install_dir,
             on_open_prefix=self._open_prefix_dir,
+            on_recreate_prefix=self._recreate_prefix,
             on_wine_config=self.open_wine_config,
             parent=self,
         ).present()
@@ -1609,6 +1610,43 @@ class VitrineWindow(Adw.ApplicationWindow):
             target=lambda: subprocess.Popen(cmd, env=env),
             daemon=True,
         ).start()
+
+    def _recreate_prefix(self, game: Game) -> None:
+        """Open an independent confirmation window for rebuilding the prefix."""
+        from ..prefix import recreate_prefix_for_game
+
+        def on_started() -> None:
+            self._marshal(
+                lambda: self.toasts.add_toast(
+                    Adw.Toast(title=f"Re-creating prefix for {game.name}")
+                )
+            )
+
+        def on_finished(error: Exception | None) -> None:
+            if error is not None:
+                message = str(error)
+                self._marshal(
+                    lambda: self.toasts.add_toast(
+                        Adw.Toast(title=f"Could not re-create prefix: {message}")
+                    )
+                )
+                return
+            self._marshal(
+                lambda: self.toasts.add_toast(
+                    Adw.Toast(title=f"Re-created prefix for {game.name}")
+                )
+            )
+
+        PrefixRecreateWindow(
+            game,
+            on_confirm=lambda: recreate_prefix_for_game(
+                game,
+                self.library,
+                on_started=on_started,
+                on_finished=on_finished,
+            ),
+            parent=self,
+        ).present()
 
     def open_store_page(self, game: Game) -> None:
         """Open a store game's page in the system browser."""

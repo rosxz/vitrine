@@ -256,6 +256,75 @@ class AddGameWindow(_GameWindow):
         return game
 
 
+class PrefixRecreateWindow(Gtk.Window):
+    """Independent confirmation window for deleting and rebuilding a prefix."""
+
+    def __init__(
+        self,
+        game: Game,
+        on_confirm: Callable[[], None],
+        parent: Gtk.Widget | None = None,
+    ) -> None:
+        super().__init__(title=f"Re-create prefix for {game.name}")
+        self.add_css_class("vitrine-window")
+        self.set_default_size(480, 220)
+        parent_window = _parent_window(parent)
+        if parent_window is not None:
+            self.set_transient_for(parent_window)
+
+        header = Adw.HeaderBar()
+        header.set_title_widget(
+            Adw.WindowTitle(title=f"Re-create Wine prefix", subtitle="")
+        )
+        header.set_show_end_title_buttons(True)
+        cancel = Gtk.Button(label="Cancel")
+        cancel.add_css_class("flat")
+        cancel.connect("clicked", lambda _button: self.close())
+        confirm = Gtk.Button(label="Re-create prefix")
+        confirm.add_css_class("destructive-action")
+        confirm.connect("clicked", lambda _button: self._confirm(on_confirm))
+
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        body.set_vexpand(True)
+        body.set_hexpand(True)
+        body.set_margin_top(24)
+        body.set_margin_bottom(24)
+        body.set_margin_start(24)
+        body.set_margin_end(24)
+        message = Gtk.Label(
+            label=(
+                "This permanently deletes the game's Wine/Proton prefix, "
+                "including installed components and settings, then prepares a fresh prefix."
+            ),
+            wrap=True,
+            xalign=0,
+        )
+        button_box = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=8,
+            halign=Gtk.Align.END,
+        )
+        button_box.append(cancel)
+        button_box.append(confirm)
+
+        body.append(message)
+        spacer = Gtk.Box()
+        spacer.set_vexpand(True)
+        body.append(spacer)
+        body.append(button_box)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        content.set_vexpand(True)
+        content.set_hexpand(True)
+        content.append(body)
+        self.set_titlebar(header)
+        self.set_child(content)
+
+    def _confirm(self, on_confirm: Callable[[], None]) -> None:
+        self.close()
+        on_confirm()
+
+
 class GameSettingsWindow(_GameWindow):
     """Edit an existing game's metadata and artwork in a movable window."""
 
@@ -269,6 +338,7 @@ class GameSettingsWindow(_GameWindow):
         on_pick_artwork: Callable[[Game], None] | None = None,
         on_open_install: Callable[[Game], None] | None = None,
         on_open_prefix: Callable[[Game], None] | None = None,
+        on_recreate_prefix: Callable[[Game], None] | None = None,
         on_wine_config: Callable[[Game], None] | None = None,
         parent: Gtk.Widget | None = None,
     ) -> None:
@@ -278,6 +348,7 @@ class GameSettingsWindow(_GameWindow):
             **_runner_form_args(library),
             on_open_install=(lambda: on_open_install(game)) if on_open_install else None,
             on_open_prefix=(lambda: on_open_prefix(game)) if on_open_prefix else None,
+            on_recreate_prefix=(lambda: on_recreate_prefix(game)) if on_recreate_prefix else None,
         )
         form.connect_source_changed(self._on_source_changed)
         form.populate(game)

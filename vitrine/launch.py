@@ -119,6 +119,9 @@ def build_env(game: Game, config: dict) -> dict[str, str]:
         )
         isolate = True
     if not isolate:
+        from .prefix import configure_wine_environment
+
+        configure_wine_environment(env, wine_binary)
         env = driver_env(env)
     else:
         from .gpu import discover

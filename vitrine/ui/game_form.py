@@ -91,6 +91,7 @@ class GameForm(Gtk.Box):
         default_runner: str = "wine-64",
         on_open_install: Callable[[], None] | None = None,
         on_open_prefix: Callable[[], None] | None = None,
+        on_recreate_prefix: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self._on_browse = on_browse or (lambda _kind, _entry: None)
@@ -101,6 +102,7 @@ class GameForm(Gtk.Box):
         self._default_runner_id = default_runner
         self._on_open_install = on_open_install
         self._on_open_prefix = on_open_prefix
+        self._on_recreate_prefix = on_recreate_prefix
 
         self.name = _LabeledEntry("Name")
         self.executable = _LabeledEntry("Executable", browse=True)
@@ -199,7 +201,7 @@ class GameForm(Gtk.Box):
         for entry in (self.name, self.executable, self.arguments, self.working_dir):
             general.append(entry)
         # Reveal the game's on-disk directories in the file manager (edit-only).
-        if self._on_open_install or self._on_open_prefix:
+        if self._on_open_install or self._on_open_prefix or self._on_recreate_prefix:
             dir_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             dir_buttons.set_margin_top(4)
             if self._on_open_install:
@@ -209,6 +211,12 @@ class GameForm(Gtk.Box):
             if self._on_open_prefix:
                 btn = Gtk.Button(label="Open prefix directory…")
                 btn.connect("clicked", lambda _b: self._on_open_prefix())
+                dir_buttons.append(btn)
+            if self._on_recreate_prefix:
+                btn = Gtk.Button(label="Re-create prefix")
+                btn.add_css_class("destructive-action")
+                btn.set_tooltip_text("Delete this prefix and prepare a fresh one")
+                btn.connect("clicked", lambda _b: self._on_recreate_prefix())
                 dir_buttons.append(btn)
             general.append(dir_buttons)
 

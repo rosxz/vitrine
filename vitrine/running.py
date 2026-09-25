@@ -73,6 +73,17 @@ class Runtime:
                 raise GameAlreadyRunning(f"{name} is still running")
 
             plan = launch.build_launch_plan(game, config, runners_store)
+            if game.runner not in (None, "", "linux", "native"):
+                wine_binary = launch.resolve_runner(
+                    config.get("runner"), runners_store, config.get("wine_binary")
+                )
+                from .prefix import prepare_prefix
+
+                prepare_prefix(
+                    wine_binary,
+                    plan.prefix or "",
+                    steam_run=launch._is_proton_path(wine_binary),
+                )
             process = launch.launch(plan, capture=log is not None)
             self._process = process
             self._game = game

@@ -18,15 +18,22 @@ import json
 import os
 import shutil
 import time
+from collections.abc import Iterable
 
 from .auth import GOG_CLIENT_ID, GogTokenStore
 
 #: Environment override for the bundled gogdl, mirroring VITRINE_LEGENDARY.
 GOGDL_ENV = "VITRINE_GOGDL"
+NOTHING_TO_DO = "Nothing to do"
 
 
 class GogdlError(Exception):
     """Raised when gogdl is missing or fails."""
+
+
+def reported_nothing_to_do(output: Iterable[str]) -> bool:
+    """Return whether gogdl reported that a previous download is complete."""
+    return any(NOTHING_TO_DO in line.strip() for line in output)
 
 
 def gogdl_binary() -> str:

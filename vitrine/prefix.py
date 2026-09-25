@@ -15,7 +15,11 @@ import logging
 import os
 import shutil
 import subprocess
+import threading
+from collections.abc import Callable
 from pathlib import Path
+
+from .library import Game, Library
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +70,8 @@ def prepare_prefix(
     case the user should delete the prefix so it is recreated correctly.
     """
     root = _prefix_root(prefix)
+    if root.exists():
+        stop_wineserver(wine_binary, prefix, steam_run=steam_run)
     root.mkdir(parents=True, exist_ok=True)
 
     # A half-initialised prefix (registry present but DLLs missing) is the
@@ -99,6 +105,87 @@ def prepare_prefix(
         return
 
     _run_wineboot(wine_binary, prefix, steam_run=steam_run)
+
+
+def recreate_prefix(
+    wine_binary: str,
+    prefix: str,
+    *,
+    steam_run: bool = False,
+) -> None:
+    """Delete and freshly prepare a game's prefix for the selected runner."""
+    stop_wineserver(wine_binary, prefix, steam_run=steam_run)
+    shutil.rmtree(_prefix_root(prefix), ignore_errors=True)
+    prepare_prefix(wine_binary, prefix, steam_run=steam_run)
+
+
+def recreate_prefix_for_game(
+    game: Game,
+    library: Library,
+    *,
+    on_started: Callable[[], None],
+    on_finished: Callable[[Exception | None], None],
+) -> None:
+    """Resolve a game's runner on GTK's thread and rebuild its prefix in a worker."""
+    from .launch import wine_prefix_for
+    from .runners import DEFAULT_PROTON_SETTING, get_runner, load_runners_store, resolve_runner
+
+    try:
+        config = game.merged_config(library.global_config())
+        store = load_runners_store(library)
+        runner_id = (
+            game.config.get("runner")
+            or library.setting(DEFAULT_PROTON_SETTING, None)
+            or config.get("runner")
+        )
+        wine_binary = resolve_runner(runner_id, store, config.get("wine_binary"))
+        runner = get_runner(runner_id, store)
+        prefix = str(wine_prefix_for(game))
+        steam_run = runner is not None and runner.kind == "proton"
+    except Exception as exc:  # noqa: BLE001 - return lookup failures to the UI
+        on_finished(exc)
+        return
+
+    on_started()
+
+    def rebuild() -> None:
+        try:
+            recreate_prefix(wine_binary, prefix, steam_run=steam_run)
+        except Exception as exc:  # noqa: BLE001 - return preparation failures to the UI
+            logger.exception("recreating prefix for %s failed", game.name)
+            on_finished(exc)
+            return
+        on_finished(None)
+
+    threading.Thread(target=rebuild, daemon=True, name="vitrine-prefix-recreate").start()
+
+
+def configure_wine_environment(env: dict[str, str], wine_binary: str) -> dict[str, str]:
+    """Pin Wine to a 64-bit prefix and the selected runner's wineserver."""
+    env["WINEARCH"] = "win64"
+    wineserver = _siblings_binary(wine_binary, "wineserver")
+    if wineserver:
+        env["WINESERVER"] = wineserver
+    return env
+
+
+def stop_wineserver(wine_binary: str, prefix: str, *, steam_run: bool = False) -> None:
+    """Stop the wineserver associated with ``prefix``, if the runner provides one."""
+    wineserver = _siblings_binary(wine_binary, "wineserver")
+    if not wineserver:
+        return
+    env = configure_wine_environment(
+        {**os.environ, "WINEPREFIX": os.path.expanduser(prefix)}, wine_binary
+    )
+    try:
+        subprocess.run(
+            ["steam-run", wineserver, "-k"] if steam_run else [wineserver, "-k"],
+            env=env,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("could not stop existing wineserver for %s: %s", prefix, exc)
 
 
 def _proton_default_pfx(wine_binary: str) -> Path | None:
@@ -227,7 +314,7 @@ def _run_wineboot(wine_binary: str, prefix: str, *, steam_run: bool) -> None:
 
     env = dict(os.environ)
     env["WINEPREFIX"] = os.path.expanduser(prefix)
-    env["WINEARCH"] = "win64"
+    configure_wine_environment(env, wine_binary)
     env["WINEDLLOVERRIDES"] = "winemenubuilder.exe=d"
     env = driver_env(env)
     wineserver = _siblings_binary(wine_binary, "wineserver")

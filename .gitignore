@@ -10,6 +10,7 @@ dist/
 dist-flatpak/
 *.egg-info/
 .venv/
+.vscode/nix-python
 session-ses_*.md
 
 # Flatpak build artifacts

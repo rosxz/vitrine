@@ -373,4 +373,8 @@ class Library:
         self.conn.commit()
 
     def global_config(self) -> dict[str, Any]:
-        return {**DEFAULT_CONFIG, **(self.setting("global_config", {}) or {})}
+        stored = self.setting("global_config", {}) or {}
+        config = {**DEFAULT_CONFIG, **stored}
+        if "runner" not in stored:
+            config["runner"] = self.setting("default_runner", config["runner"])
+        return config
