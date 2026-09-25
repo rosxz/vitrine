@@ -37,6 +37,9 @@ def test_is_wrapper() -> None:
     assert not procwatch.is_wrapper(3)  # wine is the real runner
     assert not procwatch.is_wrapper(4)  # wineserver
 
+    ARGVS[6] = ["python3", "/opt/.umu-run-wrapped", "/games/Game.exe"]
+    assert procwatch.is_wrapper(6)
+
 
 def test_is_aux_classification() -> None:
     assert procwatch.is_aux(1)  # gamescope

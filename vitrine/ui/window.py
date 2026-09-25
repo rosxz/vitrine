@@ -10,6 +10,7 @@ import shutil
 import threading
 import time
 from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING
 from importlib import resources
 
 from gi.repository import Adw, GLib, Gtk
@@ -28,6 +29,9 @@ from .game_dialogs import AddGameDialog, GameSettingsDialog, PrefixRecreateWindo
 from .library_view import LibraryView
 from .settings_dialog import SettingsDialog
 from .steam_login_dialog import SteamLoginDialog
+
+if TYPE_CHECKING:
+    from .log_window import ExecutionLogWindow
 
 logger = logging.getLogger(__name__)
 
@@ -202,6 +206,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.steam_watcher = None
         self._steam_running_game: Game | None = None
         self._epic_running_game: Game | None = None
+        self._launch_logs: dict[int, ExecutionLogWindow] = {}
 
         self.reload()
 
@@ -1296,6 +1301,8 @@ class VitrineWindow(Adw.ApplicationWindow):
             plan_reporter: Callable[[LaunchPlan], None] | None = (
                 report_plan if log is not None else None
             )
+            if log is not None and game.id is not None:
+                self._launch_logs[game.id] = log
             self.runtime.start(game, config, load_runners_store(self.library),
                                log=log.append_line if log is not None else None,
                                on_plan=plan_reporter)
@@ -1410,6 +1417,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         # setup, so a manual wineboot is unnecessary (and would fight umu).
         if is_proton:
             from ..launch import _proton_dist_dir
+            from ..prefix import stop_wineserver
             from ..wine import umu
 
             try:
@@ -1417,6 +1425,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             except umu.UmuError as exc:
                 self.toasts.add_toast(Adw.Toast(title=str(exc)))
                 return
+            stop_wineserver(wine_bin, wine_prefix, steam_run=True)
             # For launching, legendary is only needed to resolve the installed
             # executable; the game itself runs through umu-run (steam-run wrapped,
             # clean env) which we've verified works on NixOS. Legendary's own
@@ -1536,7 +1545,12 @@ class VitrineWindow(Adw.ApplicationWindow):
             if game.id is not None:
                 self._downloads[game.id] = proc
             self._set_epic_running(game)
-            threading.Thread(target=self._watch_proton_proc, args=(proc, game, log), daemon=True).start()
+            threading.Thread(
+                target=self._watch_proton_proc,
+                args=(proc, game, log, exe, wine_bin, wine_prefix),
+                daemon=True,
+                name="vitrine-epic-watch",
+            ).start()
             self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name}"))
         else:
             self._set_epic_running(game)
@@ -1557,7 +1571,15 @@ class VitrineWindow(Adw.ApplicationWindow):
         if game_id is not None:
             self._downloads.pop(game_id, None)
 
-    def _watch_proton_proc(self, proc, game: Game, log=None) -> None:
+    def _watch_proton_proc(
+        self,
+        proc,
+        game: Game,
+        log=None,
+        executable: str | None = None,
+        wine_binary: str | None = None,
+        wine_prefix: str | None = None,
+    ) -> None:
         """Wait for a detached Epic (Proton) process, streaming output.
 
         ``log`` is the open ExecutionLogWindow (or ``None``). When present, its
@@ -1566,12 +1588,22 @@ class VitrineWindow(Adw.ApplicationWindow):
         GTK loop, so this can run on a daemon thread.
         """
         if log is not None and proc.stdout is not None:
-            try:
-                for line in proc.stdout:
-                    log.append_line(line.rstrip("\n"))
-            except Exception:  # noqa: BLE001 - a broken pipe must not crash
-                logger.exception("reading Proton output stream")
-        proc.wait()
+            def stream_output() -> None:
+                try:
+                    for line in proc.stdout:
+                        log.append_line(line.rstrip("\n"))
+                except Exception:  # noqa: BLE001 - a broken pipe must not crash
+                    logger.exception("reading Proton output stream")
+
+            threading.Thread(target=stream_output, daemon=True, name="vitrine-epic-log").start()
+
+        returncode = Runtime._wait_for_exit(proc, executable=executable)
+        if log is not None:
+            log.append_line(f"[launcher exited with code {returncode}]")
+        if wine_binary and wine_prefix:
+            from ..prefix import stop_wineserver
+
+            stop_wineserver(wine_binary, wine_prefix, steam_run=True)
         self._marshal(lambda: self._epic_playtime_exit(game))
 
     def _dump_launch(self, command: list[str], env: dict) -> None:
@@ -1832,6 +1864,9 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     def _on_game_exited(self, game: Game, hours: float, returncode: int) -> None:
         def apply() -> bool:
+            log = self._launch_logs.pop(game.id, None) if game.id is not None else None
+            if log is not None:
+                log.append_line(f"[launcher exited with code {returncode}]")
             self.library.record_playtime(game, hours)
             self.reload()
             status = "exited" if returncode == 0 else f"exited with code {returncode}"

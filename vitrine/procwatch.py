@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import signal
+from pathlib import Path
 
 
 def proc_argv(pid: int) -> list[str]:
@@ -54,6 +55,8 @@ _WRAPPER_BASENAMES = {
     "bwrap",
     "srt-bwrap",
     "gameoverlayui",
+    ".umu-run-wrapped",
+    "umu-shim",
 }
 
 #: Wine-internal background processes and Steam/overlay helpers that are never
@@ -81,6 +84,12 @@ _WINE_INTERNAL_BASENAMES = {
     "wineconsole.exe",
     "winesystemstats.exe",
     "winedbg",
+    "steam.exe",
+    "proton",
+    "python",
+    "python3",
+    ".umu-run-wrapped",
+    "umu-shim",
     "winevdm",
     "wine-preloader",
     "wine64-preloader",
@@ -109,7 +118,11 @@ def is_wrapper(pid: int) -> bool:
     argv = proc_argv(pid)
     if not argv:
         return False
-    return os.path.basename(argv[0]).lower() in _WRAPPER_BASENAMES
+    return any(
+        os.path.basename(token).lower() in _WRAPPER_BASENAMES
+        for token in argv
+        if token
+    )
 
 
 def is_aux(pid: int) -> bool:
@@ -125,7 +138,7 @@ def is_aux(pid: int) -> bool:
     return os.path.basename(argv[0]).lower() in _AUX_BASENAMES
 
 
-def game_present_in_tree(pid: int) -> bool:
+def game_present_in_tree(pid: int, executable: str | None = None) -> bool:
     """True while any descendant of ``pid`` is a real (non-aux) process.
 
     The game, once launched, is a process whose argv[0] is not a wrapper or a
@@ -133,7 +146,21 @@ def game_present_in_tree(pid: int) -> bool:
     it exits, only aux processes (gamescopereaper, wineserver, …) remain, which
     is how we tell a lingering wrapper from a running game.
     """
-    return any(not is_aux(desc) for desc in descendants(pid))
+    expected = Path(executable).name.casefold() if executable else None
+    for desc in descendants(pid):
+        argv = proc_argv(desc)
+        if is_aux(desc):
+            continue
+        if expected is not None:
+            if any(Path(token).name.casefold() == expected for token in argv):
+                # Proton's wine launcher includes the game path in its argv;
+                # the actual Windows process has the game executable basename.
+                if Path(argv[0]).name.casefold() == expected:
+                    return True
+                continue
+        else:
+            return True
+    return False
 
 
 def terminate_tree(pid: int) -> None:

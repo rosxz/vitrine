@@ -15,6 +15,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 from . import launch
 from .library import Game
@@ -133,7 +134,7 @@ class Runtime:
 
     def _watch(self, process: subprocess.Popen, game: Game) -> None:
         try:
-            returncode = self._wait_for_exit(process)
+            returncode = self._wait_for_exit(process, executable=game.executable)
         except Exception:
             logger.exception("Error while watching %s", game.name)
             return
@@ -159,6 +160,7 @@ class Runtime:
         *,
         interval: float = 2.0,
         linger_polls: int = 3,
+        executable: str | None = None,
     ) -> int:
         """Wait for the game to end, tearing down a lingering wrapper (gamescope).
 
@@ -180,16 +182,36 @@ class Runtime:
 
         seen_game = False
         missing = 0
+        startup_missing = 0
         while process.poll() is None:
             time.sleep(interval)
-            if procwatch.game_present_in_tree(process.pid):
+            game_present = (
+                procwatch.game_present_in_tree(process.pid, executable)
+                if executable is not None
+                else procwatch.game_present_in_tree(process.pid)
+            )
+            if game_present:
                 seen_game = True
                 missing = 0
+                startup_missing = 0
             elif seen_game:
                 missing += 1
                 if missing >= linger_polls:
                     logger.info(
                         "Game exited but its wrapper (pid %s) lingers; tearing it down",
+                        process.pid,
+                    )
+                    procwatch.terminate_tree(process.pid)
+                    time.sleep(1.0)
+                    if process.poll() is None:
+                        procwatch.kill_tree(process.pid)
+                    break
+            elif executable is not None:
+                startup_missing += 1
+                if startup_missing >= linger_polls * 5:
+                    logger.warning(
+                        "Launcher exited without starting %s; tearing down wrapper (pid %s)",
+                        Path(executable).name,
                         process.pid,
                     )
                     procwatch.terminate_tree(process.pid)
