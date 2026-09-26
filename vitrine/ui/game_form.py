@@ -156,6 +156,21 @@ class GameForm(Gtk.Box):
             "Run this game inside a gamescope window (virtualized display). "
             "Recommended on Wayland for many Windows games. Disables MangoHud."
         )
+        self.gamescope_game_res = Gtk.Entry(placeholder_text="e.g. 1280x720", hexpand=True)
+        self.gamescope_game_res.set_tooltip_text("Resolution rendered by the game")
+        self.gamescope_output_res = Gtk.Entry(placeholder_text="e.g. 1920x1080", hexpand=True)
+        self.gamescope_output_res.set_tooltip_text("Resolution presented by gamescope")
+        self.gamescope_mode = Gtk.DropDown()
+        self.gamescope_mode.set_model(
+            Gtk.StringList.new(["Fullscreen", "Borderless", "Windowed"])
+        )
+        self.gamescope_mode.set_selected(0)
+        self.gamescope_relative_mouse = Gtk.CheckButton(label="Relative mouse / grab cursor")
+        self.gamescope_relative_mouse.set_tooltip_text(
+            "Capture the pointer for games that lose mouse input"
+        )
+        self.gamescope_fps = Gtk.Entry(placeholder_text="e.g. 60", hexpand=True)
+        self.gamescope_fps.set_tooltip_text("Gamescope frame-rate limit")
 
         # Per-game DXVK toggle (on by default). Off forces Wine's built-in
         # Direct3D translators instead of the Vulkan-based DXVK renderer.
@@ -225,6 +240,14 @@ class GameForm(Gtk.Box):
         launcher.append(runner_label)
         launcher.append(self.runner_row)
         launcher.append(self.gamescope_row)
+        gamescope_label = Gtk.Label(label="Gamescope options", halign=Gtk.Align.START)
+        gamescope_label.add_css_class("caption")
+        launcher.append(gamescope_label)
+        launcher.append(self._gamescope_entry_row("Game resolution", self.gamescope_game_res))
+        launcher.append(self._gamescope_entry_row("Output resolution", self.gamescope_output_res))
+        launcher.append(self._gamescope_labeled_row("Window mode", self.gamescope_mode))
+        launcher.append(self.gamescope_relative_mouse)
+        launcher.append(self._gamescope_entry_row("FPS limit", self.gamescope_fps))
         launcher.append(self.dxvk_row)
         launcher.append(self.esync_row)
         launcher.append(self.fsync_row)
@@ -261,6 +284,19 @@ class GameForm(Gtk.Box):
         box.set_margin_start(8)
         box.set_margin_end(8)
         return box
+
+    @staticmethod
+    def _gamescope_entry_row(label: str, entry: Gtk.Entry) -> Gtk.Box:
+        return GameForm._gamescope_labeled_row(label, entry)
+
+    @staticmethod
+    def _gamescope_labeled_row(label: str, widget: Gtk.Widget) -> Gtk.Box:
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        caption = Gtk.Label(label=label, xalign=0, hexpand=True)
+        caption.add_css_class("caption")
+        row.append(caption)
+        row.append(widget)
+        return row
 
     def _build_environment_tab(self) -> Gtk.Widget:
         """Per-game locale + environment-variable list (Lutris-style)."""
@@ -382,6 +418,11 @@ class GameForm(Gtk.Box):
         self.set_artwork_source(game.artwork_source)
         self.set_runner(game.config.get("runner"))
         self.gamescope_row.set_active(bool(game.config.get("gamescope", False)))
+        self.gamescope_game_res.set_text(str(game.config.get("gamescope_game_res") or ""))
+        self.gamescope_output_res.set_text(str(game.config.get("gamescope_output_res") or ""))
+        self.gamescope_mode.set_selected({"-f": 0, "-b": 1, "windowed": 2}.get(game.config.get("gamescope_window_mode"), 0))
+        self.gamescope_relative_mouse.set_active(bool(game.config.get("gamescope_relative_mouse", False)))
+        self.gamescope_fps.set_text(str(game.config.get("gamescope_fps_limiter") or ""))
         self.locale_entry.set_text(game.config.get("locale") or "")
         self._set_env(game.config.get("env") or {})
         self.dxvk_row.set_active(bool(game.config.get("dxvk", True)))
@@ -430,6 +471,18 @@ class GameForm(Gtk.Box):
         """Whether the per-game gamescope flag is enabled."""
         return bool(self.gamescope_row.get_active())
 
+    def gamescope_window_mode(self) -> str:
+        return ["-f", "-b", "windowed"][self.gamescope_mode.get_selected()]
+
+    def gamescope_game_resolution(self) -> str:
+        return self.gamescope_game_res.get_text().strip()
+
+    def gamescope_output_resolution(self) -> str:
+        return self.gamescope_output_res.get_text().strip()
+
+    def gamescope_fps_limit(self) -> str:
+        return self.gamescope_fps.get_text().strip()
+
     def dxvk(self) -> bool:
         """Whether the per-game DXVK toggle is enabled (default on)."""
         return bool(self.dxvk_row.get_active())
@@ -451,6 +504,11 @@ class GameForm(Gtk.Box):
         runner = self.runner()
         config: dict = {
             "gamescope": self.gamescope(),
+            "gamescope_window_mode": self.gamescope_window_mode(),
+            "gamescope_game_res": self.gamescope_game_resolution(),
+            "gamescope_output_res": self.gamescope_output_resolution(),
+            "gamescope_relative_mouse": self.gamescope_relative_mouse.get_active(),
+            "gamescope_fps_limiter": self.gamescope_fps_limit(),
             "dxvk": self.dxvk(),
             "esync": self.esync(),
             "fsync": self.fsync(),
@@ -496,6 +554,11 @@ class GameForm(Gtk.Box):
         else:
             game.config.pop("runner", None)
         game.config["gamescope"] = self.gamescope()
+        game.config["gamescope_window_mode"] = self.gamescope_window_mode()
+        game.config["gamescope_game_res"] = self.gamescope_game_resolution()
+        game.config["gamescope_output_res"] = self.gamescope_output_resolution()
+        game.config["gamescope_relative_mouse"] = self.gamescope_relative_mouse.get_active()
+        game.config["gamescope_fps_limiter"] = self.gamescope_fps_limit()
         game.config["dxvk"] = self.dxvk()
         game.config["esync"] = self.esync()
         game.config["fsync"] = self.fsync()

@@ -285,7 +285,12 @@ def gamescope_wrap(config: dict, inner: list[str]) -> list[str]:
     flags, FSR sharpness, cursor grab.
     """
     args: list[str] = []
-    if config.get("gamescope_window_mode"):
+    game_res = str(config.get("gamescope_game_res") or "").lower()
+    if "x" in game_res:
+        width, _, height = game_res.partition("x")
+        if width.isdigit() and height.isdigit():
+            args += ["-w", width, "-h", height]
+    if config.get("gamescope_window_mode") not in (None, "", "windowed"):
         args.append(str(config["gamescope_window_mode"]))
     if config.get("gamescope_output_res"):
         width, _, height = str(config["gamescope_output_res"]).lower().partition("x")
@@ -293,6 +298,8 @@ def gamescope_wrap(config: dict, inner: list[str]) -> list[str]:
             args += ["-W", width, "-H", height]
     if config.get("gamescope_fps_limiter"):
         args += ["-r", str(config["gamescope_fps_limiter"])]
+    if config.get("gamescope_relative_mouse"):
+        args.append("--force-grab-cursor")
     if config.get("gamescope_flags"):
         args += shlex.split(str(config["gamescope_flags"]))
     if config.get("gamescope_fsr_sharpness"):

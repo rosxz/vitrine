@@ -25,6 +25,7 @@ from .auth import GOG_CLIENT_ID, GogTokenStore
 #: Environment override for the bundled gogdl, mirroring VITRINE_LEGENDARY.
 GOGDL_ENV = "VITRINE_GOGDL"
 NOTHING_TO_DO = "Nothing to do"
+GOGDL_CONFIG_ENV = "GOGDL_CONFIG_PATH"
 
 
 class GogdlError(Exception):
@@ -33,7 +34,7 @@ class GogdlError(Exception):
 
 def reported_nothing_to_do(output: Iterable[str]) -> bool:
     """Return whether gogdl reported that a previous download is complete."""
-    return any(NOTHING_TO_DO in line.strip() for line in output)
+    return any(line.strip() == f"{NOTHING_TO_DO}." for line in output)
 
 
 def gogdl_binary() -> str:
@@ -139,6 +140,59 @@ def download_command(
     return cmd
 
 
+def manifest_path(game_id: str) -> str:
+    """Return gogdl's global manifest path for a product."""
+    config_root = os.environ.get(GOGDL_CONFIG_ENV)
+    if not config_root:
+        config_root = os.path.join(
+            os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+            "heroic_gogdl",
+        )
+    return os.path.join(config_root, "manifests", str(game_id))
+
+
+def manifest_data(game_id: str) -> dict:
+    """Read gogdl's persisted product manifest, if one exists."""
+    try:
+        with open(manifest_path(game_id), encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def has_manifest(game_id: str) -> bool:
+    return bool(manifest_data(game_id))
+
+
+def repair_command(
+    game_id: str,
+    install_path: str,
+    auth_config: str,
+    *,
+    platform: str = "windows",
+    skip_dlcs: bool = True,
+    max_workers: int = 4,
+) -> list[str]:
+    """Build gogdl's verification/repair command for an existing manifest."""
+    cmd = [
+        gogdl_binary(),
+        "--auth-config-path",
+        auth_config,
+        "repair",
+        str(game_id),
+        "--path",
+        install_path,
+        "--platform",
+        platform,
+        "--max-workers",
+        str(max_workers),
+    ]
+    if skip_dlcs:
+        cmd.append("--skip-dlcs")
+    return cmd
+
+
 def import_info(game_id: str, install_path: str, auth_config: str) -> dict:
     """Return ``gogdl import`` structured info for an installed game.
 
@@ -222,7 +276,28 @@ def find_game_dir(game_id: str, install_path: str) -> str | None:
         sub = os.path.join(install_path, entry)
         if os.path.isdir(sub) and os.path.isfile(os.path.join(sub, marker)):
             return sub
+    install_directory = manifest_data(game_id).get("installDirectory")
+    if install_directory:
+        candidate = os.path.join(install_path, str(install_directory))
+        if os.path.isdir(candidate):
+            return candidate
     return None
+
+
+def find_executable(install_path: str) -> str | None:
+    """Find a likely game executable in a gogdl depot install."""
+    if not os.path.isdir(install_path):
+        return None
+    candidates: list[str] = []
+    for root, _dirs, files in os.walk(install_path):
+        for name in files:
+            if not name.lower().endswith(".exe"):
+                continue
+            lowered = name.casefold()
+            if any(skip in lowered for skip in ("setup", "install", "unins", "redist", "dxsetup")):
+                continue
+            candidates.append(os.path.join(root, name))
+    return sorted(candidates, key=lambda path: ("launcher" in os.path.basename(path).casefold(), path))[0] if candidates else None
 
 
 def install_dir(slug: str) -> str:

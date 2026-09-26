@@ -350,6 +350,32 @@ def test_gogdl_download_command_and_install_dir(tmp_path: Path, monkeypatch: pyt
     assert "--skip-dlcs" in cmd
 
 
+def test_gogdl_repair_uses_existing_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from vitrine.sources.gog import gogdl as gogdl_mod
+
+    monkeypatch.setenv(gogdl_mod.GOGDL_ENV, "/opt/gogdl")
+    monkeypatch.setenv(gogdl_mod.GOGDL_CONFIG_ENV, str(tmp_path / "config"))
+    manifest = tmp_path / "config" / "manifests" / "1443428641"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text('{"installDirectory": "Game"}')
+
+    assert gogdl_mod.has_manifest("1443428641") is True
+    cmd = gogdl_mod.repair_command("1443428641", "/tmp/inst/Game", "/tmp/auth.json")
+    assert cmd[0] == "/opt/gogdl"
+    assert cmd[4] == "1443428641"
+    assert "repair" in cmd
+
+
+def test_gogdl_finds_depot_executable_without_info_marker(tmp_path: Path) -> None:
+    from vitrine.sources.gog import gogdl as gogdl_mod
+
+    game_dir = tmp_path / "Game"
+    game_dir.mkdir()
+    (game_dir / "setup.exe").write_text("")
+    (game_dir / "Game.exe").write_text("")
+    assert gogdl_mod.find_executable(str(game_dir)) == str(game_dir / "Game.exe")
+
+
 def test_gogdl_executable_from_info(tmp_path: Path) -> None:
     from vitrine.sources.gog import gogdl as gogdl_mod
 
@@ -377,6 +403,7 @@ def test_gogdl_reports_already_downloaded() -> None:
 
     assert gogdl_mod.reported_nothing_to_do(["Downloading", "Nothing to do."]) is True
     assert gogdl_mod.reported_nothing_to_do(["Nothing to do. extra"]) is False
+    assert gogdl_mod.reported_nothing_to_do(["Nothing to do"]) is False
 
 
 def test_token_needs_refresh_logic(tmp_path: Path) -> None:
