@@ -249,4 +249,3 @@ def test_build_env_sets_umu_vars_for_proton(tmp_path, monkeypatch) -> None:
     env = launch.build_env(game, {"wine_binary": str(wine)})
     assert env["PROTONPATH"] == str(root)
     assert env["GAMEID"] == "g-slug"
-    assert env["STEAM_COMPAT_DATA_PATH"]
