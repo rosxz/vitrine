@@ -136,18 +136,19 @@ def build_env(game: Game, config: dict) -> dict[str, str]:
 
         configure_wine_environment(env, wine_binary)
         env = driver_env(env)
-    else:
-        from .gpu import discover
+    # This was causing issues with certain games, exiting with exit code 3
+    #else:
+    #    from .gpu import discover
 
-        # For umu/pressure-vessel we must NOT inject the app's Nix LD_LIBRARY_PATH
-        # (it breaks the Steam Runtime sandbox). Only surface the driver env vars
-        # that don't mutate the loader search path.
-        found = discover()
-        if found.icd_json:
-            env.setdefault("VK_ICD_FILENAMES", found.icd_json)
-        if found.dri_dir:
-            env.setdefault("LIBGL_DRIVERS_PATH", found.dri_dir)
-            env.setdefault("MESA_DRIVER_PATH", found.dri_dir)
+    #    # For umu/pressure-vessel we must NOT inject the app's Nix LD_LIBRARY_PATH
+    #    # (it breaks the Steam Runtime sandbox). Only surface the driver env vars
+    #    # that don't mutate the loader search path.
+    #    found = discover()
+    #    if found.icd_json:
+    #        env.setdefault("VK_ICD_FILENAMES", found.icd_json)
+    #    if found.dri_dir:
+    #        env.setdefault("LIBGL_DRIVERS_PATH", found.dri_dir)
+    #        env.setdefault("MESA_DRIVER_PATH", found.dri_dir)
 
     overrides: list[str] = []
     if not config.get("dxvk", True):

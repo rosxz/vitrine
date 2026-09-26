@@ -118,9 +118,6 @@ def umu_env(
     env["WINEPREFIX"] = os.path.expanduser(prefix)
     if proton_path:
         env["PROTONPATH"] = proton_path
-    env["STEAM_COMPAT_DATA_PATH"] = env["WINEPREFIX"]
-    env["STEAM_COMPAT_INSTALL_PATH"] = os.path.expanduser(install_path or "~/Games")
-    env["STEAM_COMPAT_MOUNTS"] = env["STEAM_COMPAT_INSTALL_PATH"]
     if extra:
         # Never let extra override the core umu vars.
         for key, value in extra.items():
