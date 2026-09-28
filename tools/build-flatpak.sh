@@ -4,12 +4,12 @@
 # Requires: flatpak, flatpak-builder (and the org.gnome.Platform//50 +
 # org.gnome.Sdk//50 runtimes, which `flatpak --user install -y` via flathub).
 #
-# Output: dist-flatpak/io.github.crea.vitrine.flatpak
+# Output: dist-flatpak/io.github.rosxz.vitrine.flatpak
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-MANIFEST=packaging/flatpak/io.github.crea.vitrine.yml
-APP=io.github.crea.vitrine
+MANIFEST=packaging/flatpak/io.github.rosxz.vitrine.yml
+APP=io.github.rosxz.vitrine
 BRANCH=stable
 ARCH="$(uname -m)"
 REPO=.flatpak-repo

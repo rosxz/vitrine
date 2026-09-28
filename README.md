@@ -43,12 +43,12 @@ nix develop -c sh -c 'Xvfb :99 -screen 0 1280x800x24 & sleep 1; DISPLAY=:99 pyth
 
 ## Flatpak
 
-A shareable Flatpak bundle is prebuilt at `dist-flatpak/io.github.crea.vitrine.flatpak`.
+A shareable Flatpak bundle is prebuilt at `dist-flatpak/io.github.rosxz.vitrine.flatpak`.
 Friends install it with:
 
 ```sh
-flatpak --user install -y io.github.crea.vitrine.flatpak
-flatpak run io.github.crea.vitrine
+flatpak --user install -y io.github.rosxz.vitrine.flatpak
+flatpak run io.github.rosxz.vitrine
 ```
 
 It bundles legendary (Epic), gogdl (GOG), umu-launcher and the d3d_extras Wine

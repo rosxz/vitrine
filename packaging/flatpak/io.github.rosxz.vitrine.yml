@@ -1,4 +1,4 @@
-id: io.github.crea.vitrine
+id: io.github.rosxz.vitrine
 runtime: org.gnome.Platform
 runtime-version: "50"
 sdk: org.gnome.Sdk
@@ -95,10 +95,9 @@ modules:
     buildsystem: simple
     build-commands:
       - cp -r vitrine /app/share/vitrine/vitrine
-      - install -Dm644 packaging/flatpak/io.github.crea.vitrine.desktop /app/share/applications/io.github.crea.vitrine.desktop
-      - install -Dm644 packaging/flatpak/io.github.crea.vitrine.metainfo.xml /app/share/metainfo/io.github.crea.vitrine.metainfo.xml
-      - install -Dm644 packaging/flatpak/icons/io.github.crea.vitrine.png /app/share/icons/hicolor/512x512/apps/io.github.crea.vitrine.png
-      - install -Dm644 packaging/flatpak/icons/io.github.crea.vitrine.svg /app/share/icons/hicolor/scalable/apps/io.github.crea.vitrine.svg
+      - install -Dm644 packaging/flatpak/io.github.rosxz.vitrine.desktop /app/share/applications/io.github.rosxz.vitrine.desktop
+      - install -Dm644 packaging/flatpak/io.github.rosxz.vitrine.metainfo.xml /app/share/metainfo/io.github.rosxz.vitrine.metainfo.xml
+      - install -Dm644 packaging/flatpak/icons/io.github.rosxz.vitrine.png /app/share/icons/hicolor/512x512/apps/io.github.rosxz.vitrine.png
       - install -Dm755 packaging/flatpak/vitrine-run.sh /app/bin/vitrine
     sources:
       - type: dir
