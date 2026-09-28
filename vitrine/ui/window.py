@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import os
 import shlex
-import shutil
 import threading
 from collections.abc import Callable, Sequence
 from importlib import resources
@@ -998,42 +997,15 @@ class VitrineWindow(Adw.ApplicationWindow):
             self._uninstall_game(game, remove_prefix=(response == "files_prefix"))
 
     def _uninstall_game(self, game: Game, remove_prefix: bool) -> None:
-        """Uninstall a store game's files (+ prefix) and revert to not-installed."""
-        from ..sources.epic import legendary as lg
+        """Uninstall a store game's files (+ prefix) and revert to not-installed.
 
-        if game.source == "epic" and game.source_id and lg.is_installed():
-            # Legendary tracks its own installs; let it remove the files (and any
-            # leftover metadata) so it no longer reports the app as installed.
-            try:
-                lg.uninstall(game.source_id)
-            except Exception:  # noqa: BLE001
-                logger.exception("legendary uninstall failed for %s", game.name)
-                self.toasts.add_toast(Adw.Toast(title=f"Could not uninstall {game.name}"))
-                return
-        else:
-            install_dir = self._game_install_dir(game)
-            if install_dir:
-                try:
-                    shutil.rmtree(install_dir, ignore_errors=True)
-                except Exception:  # noqa: BLE001
-                    logger.exception("removing install dir for %s", game.name)
-
-        if remove_prefix:
-            from ..launch import wine_prefix_for
-
-            prefix = str(wine_prefix_for(game))
-            if os.path.isdir(prefix):
-                try:
-                    shutil.rmtree(prefix, ignore_errors=True)
-                except Exception:  # noqa: BLE001
-                    logger.exception("removing prefix for %s", game.name)
-
-        # Keep the library entry, but revert it to 'available, not installed'.
-        game.installed = False
-        if game.executable is not None:
-            game.executable = None
+        Delegates to the source's :class:`GameEntry` (Steam/Epic/GOG each know
+        how to remove their files), then reflects the library + UI state here.
+        """
         if game.id is not None:
-            self.library.update(game)
+            from ..entries import entry_for
+
+            entry_for(game, self).uninstall(remove_prefix=remove_prefix)
         self.reload()
         self._set_detail_game(None)
         self.toasts.add_toast(Adw.Toast(title=f"Uninstalled {game.name}"))
@@ -1392,27 +1364,9 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     def _game_install_dir(self, game: Game) -> str | None:
         """Resolve the directory where the game's files actually live."""
-        if game.source == "epic" and game.source_id:
-            try:
-                from ..sources.epic import legendary as lg
+        from ..entries import entry_for
 
-                if lg.is_installed():
-                    exe = lg.installed_executable(game.source_id)
-                    if exe:
-                        return os.path.dirname(exe)
-            except Exception:  # noqa: BLE001
-                logger.exception("resolving install dir for %s", game.name)
-        for candidate in (game.executable, game.working_dir):
-            if not candidate:
-                continue
-            directory = (
-                candidate
-                if os.path.isdir(candidate)
-                else (os.path.dirname(candidate) if os.path.isfile(candidate) else None)
-            )
-            if directory and os.path.isdir(directory):
-                return directory
-        return None
+        return entry_for(game, self).install_dir()
 
     def install_game(self, game: Game) -> None:
         """Install an owned but not-yet-installed store game (via its entry)."""

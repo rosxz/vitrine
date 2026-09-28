@@ -83,6 +83,47 @@ class GameEntry(ABC):
     def on_uninstall(self) -> None:
         raise NotImplementedError
 
+    def install_dir(self) -> str | None:
+        """The directory where this game's files live (``None`` if unknown)."""
+        import os
+
+        for candidate in (self.game.executable, self.game.working_dir):
+            if not candidate:
+                continue
+            directory = (
+                candidate if os.path.isdir(candidate) else os.path.dirname(candidate)
+            )
+            if directory and os.path.isdir(directory):
+                return directory
+        return None
+
+    def uninstall(self, remove_prefix: bool = False) -> None:
+        """Remove this game's files (+ prefix) and revert to not-installed."""
+        import shutil
+
+        install_dir = self.install_dir()
+        if install_dir:
+            try:
+                shutil.rmtree(install_dir, ignore_errors=True)
+            except OSError:  # pragma: no cover - best effort
+                pass
+
+        if remove_prefix:
+            from .launch import wine_prefix_for
+
+            prefix = str(wine_prefix_for(self.game))
+            if os.path.isdir(prefix):
+                try:
+                    shutil.rmtree(prefix, ignore_errors=True)
+                except OSError:  # pragma: no cover - best effort
+                    pass
+
+        # Keep the library entry, but revert it to 'available, not installed'.
+        self.game.installed = False
+        self.game.executable = None
+        if self.game.id is not None:
+            self.controller.library.update(self.game) if hasattr(self.controller, "library") else None
+
     def store_url(self) -> str | None:
         return None
 
@@ -241,6 +282,13 @@ class GogGameEntry(GameEntry):
             return None
         return f"https://www.gog.com/en/game/{self.game.catalog_slug or appid}"
 
+    def install_dir(self) -> str | None:
+        # GOG installs land in the gogdl depot dir recorded at install time.
+        configured = (self.game.config or {}).get("gog_install_dir")
+        if configured:
+            return str(configured)
+        return super().install_dir()
+
     def on_uninstall(self) -> None:
         self._prompt_uninstall()
 
@@ -265,6 +313,33 @@ class EpicGameEntry(GameEntry):
             stopper(self.game)
             return
         super().on_stop()
+
+    def install_dir(self) -> str | None:
+        from .sources.epic import legendary as lg
+
+        app = self.game.source_id or ""
+        if app and lg.is_installed():
+            try:
+                exe = lg.installed_executable(app)
+            except Exception:  # noqa: BLE001
+                exe = None
+            if exe:
+                return os.path.dirname(exe)
+        return super().install_dir()
+
+    def uninstall(self, remove_prefix: bool = False) -> None:
+        from .sources.epic import legendary as lg
+
+        app = self.game.source_id or ""
+        if app and lg.is_installed():
+            # Legendary tracks its own installs; let it remove the files so it
+            # no longer reports the app as installed.
+            try:
+                lg.uninstall(app)
+            except Exception:  # noqa: BLE001
+                self._toast(f"Could not uninstall {self.game.name}")
+                return
+        super().uninstall(remove_prefix)
 
     def launch(self) -> None:
         self._launch_epic()

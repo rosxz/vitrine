@@ -230,6 +230,31 @@ def test_playtime_policy_local_accumulates() -> None:
     assert game.playtime == pytest.approx(1.5)
 
 
+def test_install_dir_resolves_from_executable(tmp_path) -> None:
+    ctrl = _stub_controller()
+    game = _game("G", "gog", game_id=9)
+    game.executable = str(tmp_path / "game.exe")
+    assert entry_for(game, ctrl).install_dir() == str(tmp_path)
+
+
+def test_gog_install_dir_prefers_recorded_depot() -> None:
+    ctrl = _stub_controller()
+    game = _game("G", "gog", game_id=9)
+    game.config["gog_install_dir"] = "/depot/gogdir"
+    assert entry_for(game, ctrl).install_dir() == "/depot/gogdir"
+
+
+def test_uninstall_reverts_to_not_installed(monkeypatch) -> None:
+    ctrl = _stub_controller()
+    game = _game("G", "gog", game_id=9)
+    game.installed = True
+    game.executable = "/games/dir/game.exe"
+    monkeypatch.setattr("shutil.rmtree", lambda *a, **k: None)
+    entry_for(game, ctrl).uninstall(remove_prefix=False)
+    assert game.installed is False
+    assert game.executable is None
+
+
 def test_playtime_policy_local_ignores_zero() -> None:
     ctrl = _stub_controller()
     game = _game("G", "gog", game_id=9)
