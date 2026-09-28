@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from . import config, vdf  # noqa: F401
+from vitrine.sources.steam import config, vdf  # noqa: F401
 
 __all__ = ["config", "vdf"]

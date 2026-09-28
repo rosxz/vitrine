@@ -14,8 +14,8 @@ from __future__ import annotations
 import logging
 from urllib.parse import quote
 
-from .base import SLOT_HERO, SLOT_TILE, Art
-from .net import get_json
+from vitrine.artwork_providers.base import SLOT_HERO, SLOT_TILE, Art
+from vitrine.artwork_providers.net import get_json
 
 logger = logging.getLogger(__name__)
 

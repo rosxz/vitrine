@@ -18,8 +18,8 @@ from collections.abc import Callable
 
 from gi.repository import Gtk
 
-from ..library import Game
-from ..util import expand
+from vitrine.library import Game
+from vitrine.util import expand
 
 #: Browse button field keys.
 BROWSE_FIELDS = ("executable", "cover", "banner")

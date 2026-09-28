@@ -18,11 +18,11 @@ import re
 
 import requests
 
-from .. import paths
-from ..library import Game, Library
-from ..util import slugify
-from .base import Source, SourceGame, registry
-from .gog.auth import GogAuthError, GogTokenStore
+from vitrine import paths
+from vitrine.library import Game, Library
+from vitrine.util import slugify
+from vitrine.sources.base import Source, SourceGame, registry
+from vitrine.sources.gog.auth import GogAuthError, GogTokenStore
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +133,7 @@ class GogSource(Source):
 
     def _resolve_executable(self, game_id: str, root: str) -> str | None:
         """Best-effort absolute executable for an on-disk GOG game."""
-        from .gog import gogdl
+        from vitrine.sources.gog import gogdl
 
         auth_path = str(paths.cache_dir() / "gogdl-auth.json")
         info = gogdl.import_info(game_id, root, auth_path)
@@ -252,7 +252,7 @@ class GogSource(Source):
         a stale pre-refresh login), clears credentials and raises
         :class:`GogAuthError` so the UI prompts the user to sign in again.
         """
-        from .gog.auth import refresh_access_token
+        from vitrine.sources.gog.auth import refresh_access_token
 
         store = self._token_store()
         if store.needs_refresh():

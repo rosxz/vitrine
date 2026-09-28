@@ -15,9 +15,9 @@ gi.require_version("WebKit", "6.0")
 
 from gi.repository import Gtk  # noqa: E402
 
-from .epic_login_dialog import EpicLoginDialog
-from .gog_login_dialog import GogLoginDialog
-from .steam_login_dialog import SteamLoginDialog
+from vitrine.ui.epic_login_dialog import EpicLoginDialog
+from vitrine.ui.gog_login_dialog import GogLoginDialog
+from vitrine.ui.steam_login_dialog import SteamLoginDialog
 
 
 def make_login_dialog(source_id: str, store, on_complete, parent: Gtk.Window | None = None):

@@ -12,6 +12,6 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from .window import VitrineWindow
+from vitrine.ui.window import VitrineWindow
 
 __all__ = ["VitrineWindow"]

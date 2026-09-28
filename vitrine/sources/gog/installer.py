@@ -21,7 +21,7 @@ from typing import Any
 
 import requests
 
-from .auth import GogAuthError, GogTokenStore
+from vitrine.sources.gog.auth import GogAuthError, GogTokenStore
 
 logger = logging.getLogger(__name__)
 

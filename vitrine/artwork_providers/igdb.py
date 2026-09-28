@@ -14,8 +14,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from .base import Art
-from .net import post_json
+from vitrine.artwork_providers.base import Art
+from vitrine.artwork_providers.net import post_json
 
 logger = logging.getLogger(__name__)
 

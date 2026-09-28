@@ -12,7 +12,7 @@ from collections.abc import Callable
 
 from gi.repository import Adw, GObject, Gtk
 
-from ..downloads import DownloadJob
+from vitrine.downloads import DownloadJob
 
 
 class ExecutionLogWindow(Gtk.Window):

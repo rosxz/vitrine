@@ -10,8 +10,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from . import igdb, lutris, steam, steamgriddb
-from .base import Art, CandidateSet
+from vitrine.artwork_providers import igdb, lutris, steam, steamgriddb
+from vitrine.artwork_providers.base import Art, CandidateSet
 
 logger = logging.getLogger(__name__)
 

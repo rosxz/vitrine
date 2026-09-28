@@ -20,7 +20,7 @@ import shutil
 import time
 from collections.abc import Iterable
 
-from .auth import GOG_CLIENT_ID, GogTokenStore
+from vitrine.sources.gog.auth import GOG_CLIENT_ID, GogTokenStore
 
 #: Environment override for the bundled gogdl, mirroring VITRINE_LEGENDARY.
 GOGDL_ENV = "VITRINE_GOGDL"
@@ -302,6 +302,6 @@ def find_executable(install_path: str) -> str | None:
 
 def install_dir(slug: str) -> str:
     """Default depot install directory for a GOG game, under Vitrine's data dir."""
-    from ... import paths
+    from vitrine import paths
 
     return str(paths.data_dir() / "gog" / (slug or "game"))

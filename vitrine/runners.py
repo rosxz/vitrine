@@ -84,7 +84,7 @@ class Runner:
         """
         if not self.path:
             return False
-        from .launch import _is_proton_path
+        from vitrine.launch import _is_proton_path
 
         return _is_proton_path(self.path)
 
@@ -310,7 +310,7 @@ def _library_folders(steam_root: Path) -> list[Path]:
     if not root.is_file():
         return []
     try:
-        from .sources.steam.vdf import parse_vdf_file
+        from vitrine.sources.steam.vdf import parse_vdf_file
 
         parsed = parse_vdf_file(str(root))
     except Exception:  # noqa: BLE001 - a bad VDF must not break runner discovery

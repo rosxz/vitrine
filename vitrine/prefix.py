@@ -19,7 +19,7 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from .library import Game, Library
+from vitrine.library import Game, Library
 
 logger = logging.getLogger(__name__)
 
@@ -127,8 +127,8 @@ def recreate_prefix_for_game(
     on_finished: Callable[[Exception | None], None],
 ) -> None:
     """Resolve a game's runner on GTK's thread and rebuild its prefix in a worker."""
-    from .launch import wine_prefix_for
-    from .runners import load_runners_store, resolve_game_runner
+    from vitrine.launch import wine_prefix_for
+    from vitrine.runners import load_runners_store, resolve_game_runner
 
     try:
         config = game.merged_config(library.global_config())
@@ -304,7 +304,7 @@ def _kernel32_missing(root: Path) -> bool:
 
 def _run_wineboot(wine_binary: str, prefix: str, *, steam_run: bool) -> None:
     """Run ``wineboot`` on the (fresh) prefix to initialise it."""
-    from .gpu import driver_env
+    from vitrine.gpu import driver_env
 
     env = dict(os.environ)
     env["WINEPREFIX"] = os.path.expanduser(prefix)
@@ -358,7 +358,7 @@ def open_winecfg_command(
     env["WINEPREFIX"] = os.path.expanduser(prefix)
     env["WINEARCH"] = "win64"
     _ensure_library_path(env, ["/lib", "/lib64", "/usr/lib", "/usr/lib64"])
-    from .gpu import driver_env
+    from vitrine.gpu import driver_env
 
     env = driver_env(env)
     return command, env

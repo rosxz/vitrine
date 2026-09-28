@@ -14,10 +14,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import paths
-from .gpu import driver_env
-from .library import Game
-from .util import expand
+from vitrine import paths
+from vitrine.gpu import driver_env
+from vitrine.library import Game
+from vitrine.util import expand
 
 
 @dataclass
@@ -123,7 +123,7 @@ def build_env(game: Game, config: dict) -> dict[str, str]:
     wine_binary = str(config.get("wine_binary") or "wine")
     isolate = False
     if _is_proton(config):
-        from .wine import umu
+        from vitrine.wine import umu
 
         env = umu.umu_env(
             env["WINEPREFIX"],
@@ -133,7 +133,7 @@ def build_env(game: Game, config: dict) -> dict[str, str]:
         )
         isolate = True
     if not isolate:
-        from .prefix import configure_wine_environment
+        from vitrine.prefix import configure_wine_environment
 
         configure_wine_environment(env, wine_binary)
         env = driver_env(env)
@@ -201,7 +201,7 @@ def install_d3d_extras(prefix: str) -> str | None:
     for the DLLs that were installed, or ``None`` when d3d_extras is not
     available or nothing was installed. Errors are non-fatal (best effort).
     """
-    from .wine import d3d_extras
+    from vitrine.wine import d3d_extras
 
     try:
         installed = d3d_extras.install_to_prefix(prefix)
@@ -233,7 +233,7 @@ def wine_command(game: Game, config: dict) -> list[str]:
 
     wine_binary = str(config.get("wine_binary") or "wine")
     if _is_proton(config):
-        from .wine import umu
+        from vitrine.wine import umu
 
         command = umu.umu_command(executable, args) if executable else []
     else:
@@ -353,7 +353,7 @@ def build_launch_plan(game: Game, config: dict, runners_store: dict[str, str] | 
     # Resolve the selected runner (per-game or default) to a concrete wine
     # binary + Runner so ``build_env``/``wine_command`` classify Proton once.
     # Native games (game.runner == linux/native) leave config untouched.
-    from .runners import resolve_game_runner
+    from vitrine.runners import resolve_game_runner
 
     runner, wine_binary = resolve_game_runner(game, config, runners_store)
     if runner is not None:

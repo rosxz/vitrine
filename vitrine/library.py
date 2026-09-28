@@ -8,10 +8,10 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from .util import now, slugify
+from vitrine.util import now, slugify
 
 if TYPE_CHECKING:
-    from .sources.base import SourceGame
+    from vitrine.sources.base import SourceGame
 
 #: Setting key (boolean): open the live execution log window automatically for
 #: installs/launches across every source.

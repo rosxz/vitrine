@@ -24,8 +24,8 @@ gi.require_version("WebKit", "6.0")
 
 from gi.repository import Gio, GLib, Gtk, WebKit  # noqa: E402
 
-from ..sources.steam.auth import CookieJar, SteamAuthError, SteamTokenStore
-from .login_base import WebKitLoginDialog
+from vitrine.sources.steam.auth import CookieJar, SteamAuthError, SteamTokenStore
+from vitrine.ui.login_base import WebKitLoginDialog
 
 LOGIN_URL = "https://store.steampowered.com/login/?redir=/about"
 

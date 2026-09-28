@@ -31,11 +31,11 @@ from typing import Any
 import requests
 from PIL import Image
 
-from . import artwork_providers as providers
-from . import paths
-from .artwork_providers import igdb, steamgriddb
-from .artwork_providers.base import Art, CandidateSet
-from .util import slugify
+from vitrine import artwork_providers as providers
+from vitrine import paths
+from vitrine.artwork_providers import igdb, steamgriddb
+from vitrine.artwork_providers.base import Art, CandidateSet
+from vitrine.util import slugify
 
 logger = logging.getLogger(__name__)
 

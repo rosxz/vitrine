@@ -15,13 +15,13 @@ from __future__ import annotations
 
 import logging
 
-from .. import paths
-from ..library import Library
-from ..util import slugify
-from .base import Source, SourceGame, registry
-from .epic import config as epic_config
-from .epic import legendary as lg
-from .epic.auth import EpicAuthError, EpicTokenStore
+from vitrine import paths
+from vitrine.library import Library
+from vitrine.util import slugify
+from vitrine.sources.base import Source, SourceGame, registry
+from vitrine.sources.epic import config as epic_config
+from vitrine.sources.epic import legendary as lg
+from vitrine.sources.epic.auth import EpicAuthError, EpicTokenStore
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ class EpicSource(Source):
     def _all_games(self) -> list[SourceGame]:
         # Prefer legendary's list when it is installed and configured.
         games: list[SourceGame] = []
-        from .epic import auth as epic_auth
+        from vitrine.sources.epic import auth as epic_auth
 
         try:
             legendary_items = lg.list_games()

@@ -30,7 +30,7 @@ from typing import Any
 
 import requests
 
-from ..auth import CookieJar, JsonCredentialStore
+from vitrine.sources.auth import CookieJar, JsonCredentialStore
 
 logger = logging.getLogger(__name__)
 

@@ -18,8 +18,8 @@ from importlib import resources
 
 from gi.repository import Gtk
 
-from ..library import Game
-from ..util import format_lastplayed, human_playtime, initials
+from vitrine.library import Game
+from vitrine.util import format_lastplayed, human_playtime, initials
 
 #: Fixed hero height. Kept deliberately compact so the panel leaves room for the
 #: game list.

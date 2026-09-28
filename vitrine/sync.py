@@ -13,8 +13,8 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .sources import registry
-from .sources.base import Source
+from vitrine.sources import registry
+from vitrine.sources.base import Source
 
 logger = logging.getLogger(__name__)
 

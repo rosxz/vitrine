@@ -88,7 +88,7 @@ def extras_root() -> str | None:
     if override:
         return override if os.path.isdir(override) else None
     # Locate it under the data dir as a fallback (runtime download).
-    from .. import paths
+    from vitrine import paths
 
     candidate = paths.data_dir() / "d3d_extras"
     return str(candidate) if os.path.isdir(candidate) else None

@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..artwork import FORCE_REFRESH_SETTING
+from vitrine.artwork import FORCE_REFRESH_SETTING
 
 
 @dataclass(frozen=True)

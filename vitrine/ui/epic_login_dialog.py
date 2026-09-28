@@ -23,14 +23,14 @@ gi.require_version("WebKit", "6.0")
 
 from gi.repository import Gtk, WebKit  # noqa: E402
 
-from ..sources.epic import legendary as lg  # noqa: E402
-from ..sources.epic.auth import (  # noqa: E402
+from vitrine.sources.epic import legendary as lg  # noqa: E402
+from vitrine.sources.epic.auth import (  # noqa: E402
     EPIC_AUTH_URL,
     EPIC_REDIRECT_PREFIX,
     EpicTokenStore,
     obtain_token,
 )
-from .login_base import WebKitLoginDialog
+from vitrine.ui.login_base import WebKitLoginDialog
 
 
 class EpicLoginDialog(WebKitLoginDialog):

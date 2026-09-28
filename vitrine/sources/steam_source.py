@@ -24,12 +24,12 @@ import os
 
 import requests
 
-from .. import paths
-from ..library import Game, Library
-from ..util import slugify
-from .base import Source, SourceGame, registry
-from .steam import config as steam_config
-from .steam.auth import CookieJar, SteamAuthError, SteamTokenStore
+from vitrine import paths
+from vitrine.library import Game, Library
+from vitrine.util import slugify
+from vitrine.sources.base import Source, SourceGame, registry
+from vitrine.sources.steam import config as steam_config
+from vitrine.sources.steam.auth import CookieJar, SteamAuthError, SteamTokenStore
 
 logger = logging.getLogger(__name__)
 
@@ -270,7 +270,7 @@ class SteamSource(Source):
         return games
 
     def _game_from_manifest(self, manifest_path: str) -> SourceGame | None:
-        from .steam.vdf import parse_vdf_file
+        from vitrine.sources.steam.vdf import parse_vdf_file
 
         data = parse_vdf_file(manifest_path)
         state = data.get("AppState")
@@ -335,7 +335,7 @@ class SteamSource(Source):
 
     @staticmethod
     def _manifest_state(manifest_path: str) -> dict | None:
-        from .steam.vdf import parse_vdf_file
+        from vitrine.sources.steam.vdf import parse_vdf_file
 
         data = parse_vdf_file(manifest_path)
         state = data.get("AppState")

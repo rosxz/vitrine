@@ -15,7 +15,7 @@ import os
 import re
 from typing import Any
 
-from .vdf import parse_vdf_file
+from vitrine.sources.steam.vdf import parse_vdf_file
 
 #: Fallback locations of a Steam installation's main data directory.
 STEAM_DATA_DIRS = (

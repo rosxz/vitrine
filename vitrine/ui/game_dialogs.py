@@ -12,8 +12,8 @@ from collections.abc import Callable
 
 from gi.repository import Adw, GLib, Gtk
 
-from ..library import Game, Library
-from .game_form import GameForm, _LabeledEntry
+from vitrine.library import Game, Library
+from vitrine.ui.game_form import GameForm, _LabeledEntry
 
 _BROWSE_TITLES: dict[str, str] = {
     "executable": "Choose the game executable",
@@ -182,7 +182,7 @@ class _GameWindow(Gtk.Window):
         game = self._remove_game()
         if game is None:
             return
-        from .artwork_picker import ArtworkPickerWindow
+        from vitrine.ui.artwork_picker import ArtworkPickerWindow
 
         ArtworkPickerWindow(
             self.library,
@@ -391,7 +391,7 @@ GameSettingsDialog = GameSettingsWindow
 
 def _runner_form_args(library: Library) -> dict:
     """Build GameForm kwargs listing available runners + the global default."""
-    from ..runners import DEFAULT_PROTON_SETTING, list_runners, load_runners_store
+    from vitrine.runners import DEFAULT_PROTON_SETTING, list_runners, load_runners_store
 
     store = load_runners_store(library)
     default = str(library.setting(DEFAULT_PROTON_SETTING, "wine-64") or "wine-64")

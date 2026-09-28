@@ -25,7 +25,7 @@ gi.require_version("WebKit", "6.0")
 
 from gi.repository import GLib, Gtk  # noqa: E402
 
-from ..sources.gog.auth import (  # noqa: E402
+from vitrine.sources.gog.auth import (  # noqa: E402
     AUTH_REDIRECT_URI,
     AUTH_URL,
     GOG_CLIENT_ID,
@@ -33,7 +33,7 @@ from ..sources.gog.auth import (  # noqa: E402
     GogTokenStore,
     exchange_code_for_token,
 )
-from .login_base import WebKitLoginDialog
+from vitrine.ui.login_base import WebKitLoginDialog
 
 #: How often the dialog re-checks the current address for the login redirect.
 POLL_INTERVAL_MS = 300

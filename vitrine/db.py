@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import SCHEMA_VERSION, paths
+from vitrine import SCHEMA_VERSION, paths
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS games (

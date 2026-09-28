@@ -16,9 +16,9 @@ from collections.abc import Callable
 
 from gi.repository import Adw, Gdk, GdkPixbuf, Gtk
 
-from .. import artwork
-from ..artwork_providers import net
-from ..artwork_providers.base import Art, provider_label
+from vitrine import artwork
+from vitrine.artwork_providers import net
+from vitrine.artwork_providers.base import Art, provider_label
 
 logger = logging.getLogger(__name__)
 

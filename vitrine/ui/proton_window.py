@@ -14,8 +14,8 @@ import threading
 
 from gi.repository import Adw, Gtk
 
-from ..library import Library
-from ..runners import (
+from vitrine.library import Library
+from vitrine.runners import (
     DEFAULT_PROTON_SETTING,
     install_runner,
     list_runners,
@@ -149,7 +149,7 @@ class ProtonWindow(Gtk.Window):
 
     def _load_available(self) -> None:
         try:
-            from ..runners_source import available_runners
+            from vitrine.runners_source import available_runners
 
             available = available_runners()
         except Exception as exc:  # noqa: BLE001
@@ -200,7 +200,7 @@ class ProtonWindow(Gtk.Window):
         self._refresh_lists()
 
     def _install_available(self, entry: dict) -> None:
-        from ..runners_source import download_runner
+        from vitrine.runners_source import download_runner
 
         def _work() -> None:
             try:
