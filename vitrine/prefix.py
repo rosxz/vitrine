@@ -128,20 +128,14 @@ def recreate_prefix_for_game(
 ) -> None:
     """Resolve a game's runner on GTK's thread and rebuild its prefix in a worker."""
     from .launch import wine_prefix_for
-    from .runners import DEFAULT_PROTON_SETTING, get_runner, load_runners_store, resolve_runner
+    from .runners import load_runners_store, resolve_game_runner
 
     try:
         config = game.merged_config(library.global_config())
         store = load_runners_store(library)
-        runner_id = (
-            game.config.get("runner")
-            or library.setting(DEFAULT_PROTON_SETTING, None)
-            or config.get("runner")
-        )
-        wine_binary = resolve_runner(runner_id, store, config.get("wine_binary"))
-        runner = get_runner(runner_id, store)
+        runner, wine_binary = resolve_game_runner(game, config, store, library=library)
         prefix = str(wine_prefix_for(game))
-        steam_run = runner is not None and runner.kind == "proton"
+        steam_run = bool(runner and runner.is_proton)
     except Exception as exc:  # noqa: BLE001 - return lookup failures to the UI
         on_finished(exc)
         return

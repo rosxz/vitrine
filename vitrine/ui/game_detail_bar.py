@@ -47,6 +47,7 @@ class GameDetailBar(Gtk.Box):
         self._on_favorite = on_favorite
         self._game: Game | None = None
         self._expanded = True
+        self._downloading = False
 
         self.set_css_classes(["vitrine-detail"])
 
@@ -238,9 +239,14 @@ class GameDetailBar(Gtk.Box):
         self._refresh_favorite()
 
     def set_running(self, elapsed_seconds: float | None) -> None:
-        """Reflect the currently-running state on the play button."""
+        """Reflect the currently-running state on the play button.
+
+        The label is only overridden for a running session; while a game is
+        downloading (``_downloading``), the ticker must not clobber its
+        "Downloading…" label back to "Play".
+        """
         self._refresh_meta()
-        if self._game is not None:
+        if self._game is not None and not self._downloading:
             if elapsed_seconds is None:
                 self._play_button.set_label("Play")
             else:
@@ -251,6 +257,7 @@ class GameDetailBar(Gtk.Box):
 
     def set_downloading(self, downloading: bool) -> None:
         """Lock and recolor the play button while this game is downloading."""
+        self._downloading = downloading
         for widget in (self._play_button, self._settings_button):
             widget.set_sensitive(not downloading)
         if downloading:

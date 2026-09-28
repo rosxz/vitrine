@@ -52,6 +52,13 @@ class Runtime:
         with self._lock:
             return self._game
 
+    def elapsed(self) -> float:
+        """Seconds since the game started, or 0.0."""
+        with self._lock:
+            if self._started_at:
+                return max(0.0, time.monotonic() - self._started_at)
+            return 0.0
+
     def start(
         self,
         game: Game,
@@ -76,16 +83,18 @@ class Runtime:
             plan = launch.build_launch_plan(game, config, runners_store)
             if on_plan is not None:
                 on_plan(plan)
+            # Prepare the prefix for non-native games. The plan already resolved
+            # the runner; use it for the proton (steam-run) flag so classification
+            # happens exactly once.
             if game.runner not in (None, "", "linux", "native"):
-                wine_binary = launch.resolve_runner(
-                    config.get("runner"), runners_store, config.get("wine_binary")
-                )
                 from .prefix import prepare_prefix
+                from .runners import resolve_game_runner
 
+                _runner, wine_path = resolve_game_runner(game, config, runners_store, library=None)
                 prepare_prefix(
-                    wine_binary,
+                    wine_path or (config.get("wine_binary") or "wine"),
                     plan.prefix or "",
-                    steam_run=launch._is_proton_path(wine_binary),
+                    steam_run=bool(plan.runner and plan.runner.is_proton),
                 )
             process = launch.launch(plan, capture=log is not None)
             self._process = process
@@ -112,11 +121,13 @@ class Runtime:
         except Exception:
             logger.exception("Error streaming output for %s", game.name)
 
-    def stop(self) -> None:
+    def stop(self, *, kill: bool = True) -> None:
         """Terminate the running game's whole process tree.
 
         Uses the /proc tree teardown rather than a bare SIGTERM: wrappers like
         gamescope can ignore a lone SIGTERM and leave an invisible window up.
+        ``kill`` is accepted for :class:`Session` interface compatibility and
+        defaults to force-close (wrappers must always be killed).
         """
         from . import procwatch
 

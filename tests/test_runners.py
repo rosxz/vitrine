@@ -119,9 +119,10 @@ def test_launch_plan_uses_resolved_runner(monkeypatch: pytest.MonkeyPatch) -> No
     from vitrine.launch import build_launch_plan
     from vitrine.library import Game
 
-    # Patch where launch.py actually looks it up.
+    # Patch where launch.py actually looks it up (runners.resolve_game_runner ->
+    # runners.resolve_runner).
     monkeypatch.setattr(
-        "vitrine.launch.resolve_runner",
+        "vitrine.runners.resolve_runner",
         lambda *a, **k: "/opt/wine-ge/bin/wine",
     )
     game = Game(name="G", executable="/bin/sh", runner="wine", config={"runner": "ge-proton-1"})

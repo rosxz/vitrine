@@ -65,14 +65,23 @@ class DownloadJob:
         self._thread = threading.Thread(target=self._run, daemon=True, name="vitrine-download")
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, *, kill: bool = False) -> None:
         process = self._process
         if process is not None:
-            process.terminate()
+            if kill:
+                process.kill()
+            else:
+                process.terminate()
 
     @property
     def is_running(self) -> bool:
         return self._process is not None and self._process.poll() is None
+
+    def is_active(self) -> bool:
+        return self.is_running
+
+    def elapsed(self) -> float:
+        return 0.0
 
     def wait(self, timeout: float | None = None) -> int | None:
         self._finished.wait(timeout)

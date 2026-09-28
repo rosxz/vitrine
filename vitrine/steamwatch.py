@@ -21,6 +21,8 @@ import signal
 import threading
 from collections.abc import Callable
 
+from . import procwatch
+
 logger = logging.getLogger(__name__)
 
 #: Seconds between /proc polls.
@@ -32,16 +34,6 @@ def _all_pids() -> list[int]:
         return [int(entry) for entry in os.listdir("/proc") if entry.isdigit()]
     except OSError:
         return []
-
-
-def _proc_argv(pid: int) -> list[str]:
-    """The argv of ``pid`` as decoded, whitespace-stripped tokens."""
-    try:
-        with open(f"/proc/{pid}/cmdline", "rb") as handle:
-            raw = handle.read()
-    except (OSError, ValueError):
-        return []
-    return [token.decode("utf-8", "replace") for token in raw.split(b"\x00") if token.strip()]
 
 
 def _proc_environ(pid: int) -> dict[str, str]:
@@ -75,12 +67,12 @@ def _proc_cwd(pid: int) -> str:
         return ""
 
 
-def _children(pid: int) -> list[int]:
-    try:
-        with open(f"/proc/{pid}/task/{pid}/children", encoding="utf-8") as handle:
-            return [int(token) for token in handle.read().split() if token.strip()]
-    except (OSError, ValueError):
-        return []
+# -- shared /proc plumbing ----------------------------------------------------
+# Delegation points so Steam watches the same process tree the local runner
+# does. Kept as module-level names so tests can monkeypatch them by name; the
+# implementations live in ``procwatch``.
+_proc_argv = procwatch.proc_argv
+_children = procwatch.children
 
 
 def _pid_matches(appid: str, pid: int, installdir: str | None = None) -> bool:
@@ -237,6 +229,15 @@ class SteamSessionWatcher:
         thread, self._thread = self._thread, None
         if thread is not None and thread.is_alive():
             thread.join(timeout=self.interval + 1.0)
+
+    def is_active(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def is_running(self) -> bool:
+        return self.is_active()
+
+    def elapsed(self) -> float:
+        return 0.0
 
     def _run(self) -> None:
         running = False

@@ -12,11 +12,11 @@ import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from . import paths
 from .gpu import driver_env
 from .library import Game
-from .runners import resolve_runner
 from .util import expand
 
 
@@ -28,6 +28,7 @@ class LaunchPlan:
     env: dict[str, str]
     working_dir: str | None = None
     prefix: str | None = None
+    runner: Any | None = None
 
     def pretty(self) -> str:
         return " ".join(shlex.quote(part) for part in self.command)
@@ -121,7 +122,7 @@ def build_env(game: Game, config: dict) -> dict[str, str]:
     # through umu's proper prefix/runtime setup.
     wine_binary = str(config.get("wine_binary") or "wine")
     isolate = False
-    if _is_proton_path(wine_binary):
+    if _is_proton(config):
         from .wine import umu
 
         env = umu.umu_env(
@@ -231,7 +232,7 @@ def wine_command(game: Game, config: dict) -> list[str]:
         return command + args
 
     wine_binary = str(config.get("wine_binary") or "wine")
-    if _is_proton_path(wine_binary):
+    if _is_proton(config):
         from .wine import umu
 
         command = umu.umu_command(executable, args) if executable else []
@@ -241,6 +242,20 @@ def wine_command(game: Game, config: dict) -> list[str]:
             command.append(executable)
         command += args
     return command
+
+
+def _is_proton(config: dict) -> bool:
+    """True when the resolved runner/config is a Proton build.
+
+    Prefers an explicitly resolved ``Runner`` (authoritative ``is_proton``);
+    falls back to the path heuristic against the wine binary for configs that
+    only carry a ``wine_binary`` path.
+    """
+    runner = config.get("_runner")
+    if runner is not None:
+        return bool(getattr(runner, "is_proton", False))
+    wine_binary = str(config.get("wine_binary") or "wine")
+    return _is_proton_path(wine_binary)
 
 
 def _is_proton_path(wine_binary: str) -> bool:
@@ -303,6 +318,9 @@ def gamescope_wrap(config: dict, inner: list[str]) -> list[str]:
         args.append("--force-grab-cursor")
     if config.get("gamescope_flags"):
         args += shlex.split(str(config["gamescope_flags"]))
+    # FSR sharpness is only applied when explicitly configured (Lutris sets it
+    # with an explicit value); no implicit default so a plain gamescope session
+    # stays uncluttered.
     if config.get("gamescope_fsr_sharpness"):
         args += ["--fsr-sharpness", str(config["gamescope_fsr_sharpness"])]
     if config.get("gamescope_force_grab_cursor"):
@@ -333,11 +351,13 @@ def build_launch_plan(game: Game, config: dict, runners_store: dict[str, str] | 
         working_dir = str(Path(executable).parent)
 
     # Resolve the selected runner (per-game or default) to a concrete wine
-    # binary so ``wine_command`` uses the right runner. Native games don't use
-    # wine, so leave their config untouched.
-    if not _is_native(game.runner):
-        resolved = resolve_runner(config.get("runner"), runners_store, config.get("wine_binary"))
-        effective = {**config, "wine_binary": resolved}
+    # binary + Runner so ``build_env``/``wine_command`` classify Proton once.
+    # Native games (game.runner == linux/native) leave config untouched.
+    from .runners import resolve_game_runner
+
+    runner, wine_binary = resolve_game_runner(game, config, runners_store)
+    if runner is not None:
+        effective = {**config, "wine_binary": wine_binary, "_runner": runner}
     else:
         effective = config
 
@@ -346,6 +366,7 @@ def build_launch_plan(game: Game, config: dict, runners_store: dict[str, str] | 
         env=build_env(game, effective),
         working_dir=working_dir,
         prefix=str(wine_prefix_for(game)),
+        runner=runner,
     )
 
 

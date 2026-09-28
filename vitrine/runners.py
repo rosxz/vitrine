@@ -74,6 +74,25 @@ class Runner:
     def is_preset(self) -> bool:
         return not self.path
 
+    @property
+    def is_proton(self) -> bool:
+        """Authoritative proton check: the strict dist-dir probe on the binary.
+
+        Sources of truth are reconciled here instead of letting callers each
+        guess (the looser substring heuristic in :func:`_looks_like_proton` vs
+        the strict :func:`launch._is_proton_path`). Presets are never proton.
+        """
+        if not self.path:
+            return False
+        from .launch import _is_proton_path
+
+        return _is_proton_path(self.path)
+
+    @property
+    def is_native(self) -> bool:
+        """A runner is never "native"; native games have no runner at all."""
+        return False
+
 
 def list_runners(runners_store: dict[str, str] | None = None) -> list[Runner]:
     """Return every known runner: presets first, then discovered ones.
@@ -369,6 +388,51 @@ def runner_path(runner_id: str, runners_store: dict[str, str] | None) -> str:
     """Absolute path to the runner's wine binary, or ``""`` if unknown."""
     runner = next((r for r in list_runners(runners_store) if r.id == runner_id), None)
     return runner.path if runner else ""
+
+
+def resolve_game_runner(
+    game: Any,
+    config: dict,
+    runners_store: dict[str, str] | None = None,
+    *,
+    default_setting: str | None = DEFAULT_PROTON_SETTING,
+    library: Any = None,
+) -> tuple[Runner | None, str]:
+    """Resolve the runner a game uses into a ``(runner, wine_binary)`` pair.
+
+    Precedence (Lutris-style), from most to least specific:
+    the game's own ``config["runner"]``, then the sidebar/global default runner
+    setting, then the merged global config default. Native games (runner id
+    ``linux``/``native``/unset *and* no wine) resolve to ``(None, wine)`` so
+    callers can skip prefix/wine machinery uniformly.
+
+    ``default_setting`` is the settings key holding the global default runner id
+    (used before falling back to ``config["runner"]``). ``library`` is optional;
+    when given it is consulted for the default setting, otherwise ``config`` is
+    the only source of a default.
+    """
+    runner_id = (
+        game.config.get("runner")
+        if isinstance(getattr(game, "config", None), dict)
+        else None
+    )
+    if not runner_id and library is not None and default_setting:
+        default_value = library.setting(default_setting, None)
+        if default_value:
+            runner_id = default_value
+    if not runner_id:
+        runner_id = config.get("runner")
+
+    runner = get_runner(runner_id, runners_store)
+    # Native games (game.runner is the platform: ``linux``/``native``/unset) carry
+    # no wine runner; return the fallback binary so callers can uniformly treat a
+    # None runner as "nothing to wrap".
+    game_runner = getattr(game, "runner", None)
+    if game_runner in (None, "", "linux", "native"):
+        return None, (config.get("wine_binary") or "") or _path_wine()
+    if runner is None:
+        return None, resolve_runner(runner_id, runners_store, config.get("wine_binary"))
+    return runner, resolve_runner(runner_id, runners_store, config.get("wine_binary"))
 
 
 def load_runners_store(library_store: Any) -> dict[str, str]:

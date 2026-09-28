@@ -77,31 +77,13 @@ def _gamescope_wrap(config: dict, command: list[str]) -> list[str]:
 
     Gamescope provides a nested virtual display + GPU context, the standard way
     to run Windows games under Wayland. It must run on the host compositor (not
-    inside a bwrap) so its output window is actually visible. Options come from
-    the per-game/global ``config``; only enabled gamescope is passed here.
+    inside a bwrap) so its output window is actually visible. Degates to the
+    single :func:`launch.gamescope_wrap` implementation so gamescope flag
+    handling is consistent for every source.
     """
-    args: list[str] = ["gamescope"]
-    game_res = str(config.get("gamescope_game_res") or "").lower()
-    if "x" in game_res:
-        width, _, height = game_res.partition("x")
-        if width.isdigit() and height.isdigit():
-            args += ["-w", width, "-h", height]
-    if config.get("gamescope_window_mode") not in (None, "", "windowed"):
-        args.append(str(config["gamescope_window_mode"]))
-    if config.get("gamescope_output_res"):
-        width, _, height = str(config["gamescope_output_res"]).lower().partition("x")
-        if width.isdigit() and height.isdigit():
-            args += ["-W", width, "-H", height]
-    if config.get("gamescope_fps_limiter"):
-        args += ["-r", str(config["gamescope_fps_limiter"])]
-    if config.get("gamescope_relative_mouse"):
-        args.append("--force-grab-cursor")
-    # FSR upscaling (opt-in per game). Gamescope applies a sharpness filter while
-    # upscaling from a lower internal resolution to the output.
-    if config.get("fsr", True):
-        sharpness = str(config.get("gamescope_fsr_sharpness") or 4)
-        args += ["--fsr-sharpness", sharpness]
-    return args + ["--", *command]
+    from ..launch import gamescope_wrap as _shared_gamescope_wrap
+
+    return _shared_gamescope_wrap(config, command)
 
 
 def _tiles_for(library_view, game) -> list:
@@ -207,6 +189,12 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         self._ticker: int | None = None
         self.setup_running_ticker()
+
+        # Unified session/bookkeeping coordinator (GUI-free). Installs register
+        # here; the running-game slots are folded onto it in the GameEntry step.
+        from ..session import SessionManager
+
+        self.sessions: SessionManager = SessionManager()
 
         # Active downloads keyed by game id (drives tile/detail download state).
         self._downloads: dict[int, object] = {}
@@ -841,12 +829,14 @@ class VitrineWindow(Adw.ApplicationWindow):
         )
         if game.id is not None:
             self._downloads[game.id] = job
+            self.sessions.add_install(game, job)
         return job
 
     def _set_downloading_ui(self, game: Game, active: bool) -> None:
         """Reflect download state on the tile and detail bar."""
         if game.id is not None and not active:
             self._downloads.pop(game.id, None)
+            self.sessions.remove_install(game)
         for tile in _tiles_for(self.library_view, game):
             tile.set_downloading(active)
         if self.detail_bar.game() is game:
@@ -1326,7 +1316,7 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         from ..downloads import run_download
         from ..library import DEBUG_LOG_SETTING, DUMP_LAUNCH_ENV_SETTING
-        from ..runners import DEFAULT_PROTON_SETTING, get_runner, load_runners_store, resolve_runner
+        from ..runners import has_x11_driver, load_runners_store, resolve_game_runner
         from .log_window import ExecutionLogWindow
 
         # Resolve the game's configured Wine/Proton runner: per-game override
@@ -1334,16 +1324,9 @@ class VitrineWindow(Adw.ApplicationWindow):
         # is the merged global config default.
         config = game.merged_config(self.library.global_config())
         store = load_runners_store(self.library)
-        runner_id = (
-            game.config.get("runner")
-            or self.library.setting(DEFAULT_PROTON_SETTING, None)
-            or config.get("runner")
-        )
-        wine_bin = resolve_runner(runner_id, store, config.get("wine_binary"))
-        runner = get_runner(runner_id, store)
-        is_proton = runner is not None and runner.kind == "proton"
+        runner, wine_bin = resolve_game_runner(game, config, store, library=self.library)
+        is_proton = bool(runner and runner.is_proton)
         from ..launch import wine_prefix_for
-        from ..runners import has_x11_driver
 
         if not has_x11_driver(wine_bin) and os.environ.get("WAYLAND_DISPLAY"):
             self.toasts.add_toast(
@@ -1574,17 +1557,11 @@ class VitrineWindow(Adw.ApplicationWindow):
         import subprocess
 
         from ..prefix import open_winecfg_command, prepare_prefix
-        from ..runners import DEFAULT_PROTON_SETTING, get_runner, load_runners_store, resolve_runner
+        from ..runners import load_runners_store, resolve_game_runner
         config = game.merged_config(self.library.global_config())
         store = load_runners_store(self.library)
-        runner_id = (
-            game.config.get("runner")
-            or self.library.setting(DEFAULT_PROTON_SETTING, None)
-            or config.get("runner")
-        )
-        wine_bin = resolve_runner(runner_id, store, config.get("wine_binary"))
-        runner = get_runner(runner_id, store)
-        is_proton = runner is not None and runner.kind == "proton"
+        runner, wine_bin = resolve_game_runner(game, config, store, library=self.library)
+        is_proton = bool(runner and runner.is_proton)
         from ..launch import wine_prefix_for
 
         wine_prefix = str(wine_prefix_for(game))
