@@ -12,6 +12,11 @@ finish-args:
   - --socket=pulseaudio
   # GPU drivers are supplied by the system via Flatpak's Mesa/GL extension.
   - --device=dri
+  # 32-bit Wine/Proton games need multilib: allow 32-bit processes + full device
+  # access (32-bit and 64-bit GL). Mirrors the Lutris flatpak recipe.
+  - --allow=multiarch
+  - --device=all
+  - --allow=devel
   # Games and prefixes live under the user's home; the launcher must read and
   # write them. Steam libraries under ~/.local/share/Steam (native) and
   # ~/.var/app/com.valvesoftware.Steam (Flatpak Steam) are covered by this.
@@ -25,6 +30,15 @@ finish-args:
 build-options:
   build-args:
     - --share=network
+
+# 32-bit compatibility layer for Proton/Wine (mirrors the Lutris flatpak).
+# Flatpak binds this extension into the app; we pre-create the mountpoint dir so
+# bwrap can bind it at runtime.
+add-extensions:
+  org.freedesktop.Platform.Compat.i386:
+    directory: lib/i386-linux-gnu
+    version: "26.08"
+    autodelete: false
 
 modules:
   - name: python-requirements
@@ -95,6 +109,9 @@ modules:
     buildsystem: simple
     build-commands:
       - cp -r vitrine /app/share/vitrine/vitrine
+      # Pre-create the 32-bit compat mountpoint so the Compat.i386 extension can
+      # bind into it at runtime (otherwise bwrap can't mkdir it and games fail).
+      - mkdir -p /app/lib/i386-linux-gnu
       - install -Dm644 packaging/flatpak/io.github.rosxz.vitrine.desktop /app/share/applications/io.github.rosxz.vitrine.desktop
       - install -Dm644 packaging/flatpak/io.github.rosxz.vitrine.metainfo.xml /app/share/metainfo/io.github.rosxz.vitrine.metainfo.xml
       - install -Dm644 packaging/flatpak/icons/io.github.rosxz.vitrine.png /app/share/icons/hicolor/512x512/apps/io.github.rosxz.vitrine.png
