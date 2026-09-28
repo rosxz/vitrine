@@ -1067,25 +1067,16 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.toasts.add_toast(Adw.Toast(title=f"Updated {game.name}"))
 
     def on_game_removed(self, game: Game) -> None:
-        """'Remove' action for a game.
+        """'Remove' action for a game, delegated to its source entry.
 
         Local games are fully removed from the library (Vitrine owns them). Steam
-        games are handed to Steam itself (``steam://uninstall/<appid>``) -- Steam
-        manages its own install files, so no local prompt is shown. Other store
-        games (GOG/Epic) revert to *available but not installed*: we uninstall the
-        files on disk (and optionally the prefix, after a confirmation) but keep
-        the library entry so it stays reinstallable.
+        games are handed to Steam itself (``steam://uninstall/<appid>``). Other
+        store games (GOG/Epic) revert to *available but not installed*: we ask
+        whether to delete the prefix, uninstall the files, and keep the entry.
         """
-        if game.source == "local":
-            self.library.remove(game.id) if game.id is not None else None
-            self.reload()
-            self._set_detail_game(None)
-            self.toasts.add_toast(Adw.Toast(title=f"Removed {game.name}"))
-            return
-        if game.source == "steam":
-            self._uninstall_steam_game(game)
-            return
-        self._prompt_uninstall(game)
+        from ..entries import entry_for
+
+        entry_for(game, self).on_uninstall()
 
     def _uninstall_steam_game(self, game: Game) -> None:
         """Uninstall a Steam game through Steam itself (no local prompt).
@@ -1184,31 +1175,23 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.toasts.add_toast(Adw.Toast(title=f"Uninstalled {game.name}"))
 
     def on_game_activated(self, game: Game) -> None:
-        # Clicking a game that is currently running toggles it off: the "Playing"
-        # hero/tile acts as a Stop button (force-closes the game and its wrapper,
-        # e.g. gamescope). Compared by identity of the library entry, not object
-        # instance -- tiles are rebuilt after reloads with fresh Game objects.
+        # Every source shares the same Play flow: stop-if-running, else install,
+        # else launch. The per-source behaviour lives in GameEntry subclasses.
+        from ..entries import entry_for
+
+        entry_for(game, self).on_launch()
+
+    def is_game_running(self, game: Game) -> bool:
+        """Whether ``game`` is the entry currently running (identity-aware)."""
         running = self.runtime.running_game or self._steam_running_game or self._epic_running_game
-        if running is not None and self._is_same_game(running, game):
-            self._stop_game()
-            return
-        # Every Steam game launches through Steam itself (steam://rungameid),
-        # installed or not -- for one that isn't installed locally, Steam will
-        # prompt to install it. Never route Steam games through the local
-        # Wine/Proton pipeline.
-        if game.source == "steam":
-            self._launch_steam_game(game)
-            return
-        # Owned-but-not-installed GOG/Epic titles have no local executable; route
-        # to install/store rather than launching `wine` with an empty program.
-        if game.source in ("gog", "epic") and not game.installed:
-            self.install_game(game)
-            return
-        # Installed Epic games launch through legendary (the storeless client
-        # that manages the game's online session), not the generic Wine pipeline.
-        if game.source == "epic":
-            self._launch_epic_game(game)
-            return
+        return running is not None and self._is_same_game(running, game)
+
+    def stop_game(self) -> None:
+        """Stop the currently-running game (any source)."""
+        self._stop_game()
+
+    def launch_local(self, game: Game) -> None:
+        """Generic Wine/Proton/native launch for local and installed GOG games."""
         if game.id is None:
             return
         if self._steam_running_game is not None or self._epic_running_game is not None:
@@ -1247,12 +1230,44 @@ class VitrineWindow(Adw.ApplicationWindow):
             self._running_started_monotonic = GLib.get_monotonic_time() / 1e6
         except GameAlreadyRunning as error:
             self.toasts.add_toast(Adw.Toast(title=str(error)))
-        except OSError as error:
-            logger.error("Failed to launch %s: %s", game.name, error)
-            self.toasts.add_toast(Adw.Toast(title=f"Failed to launch {game.name}: {error.strerror or error}"))
-        except Exception:
-            logger.exception("Failed to launch %s", game.name)
-            self.toasts.add_toast(Adw.Toast(title=f"Failed to launch {game.name}"))
+
+    def launch_steam(self, game: Game) -> None:
+        self._launch_steam_game(game)
+
+    def launch_epic(self, game: Game) -> None:
+        self._launch_epic_game(game)
+
+    def install_epic(self, game: Game) -> None:
+        self._install_epic_game(game)
+
+    def install_gog(self, game: Game) -> None:
+        self._install_gog_game(game)
+
+    def remove_local(self, game: Game) -> None:
+        """Remove a locally-added game from the library."""
+        self.library.remove(game.id) if game.id is not None else None
+        self.reload()
+        self._set_detail_game(None)
+        self.toasts.add_toast(Adw.Toast(title=f"Removed {game.name}"))
+
+    def prompt_uninstall(self, game: Game) -> None:
+        self._prompt_uninstall(game)
+
+    def uninstall_steam(self, game: Game) -> None:
+        self._uninstall_steam_game(game)
+
+    def store_url_for(self, game: Game) -> str | None:
+        """A correct store page URL per source (Steam/GOG/Epic)."""
+        appid = game.source_id or ""
+        if not appid:
+            return None
+        if game.source == "steam":
+            return f"https://store.steampowered.com/app/{appid}"
+        if game.source == "gog":
+            return f"https://www.gog.com/en/game/{game.catalog_slug or appid}"
+        if game.source == "epic":
+            return f"https://store.epicgames.com/p/{game.catalog_slug or appid}"
+        return None
 
     def _launch_steam_game(self, game: Game) -> None:
         """Launch a Steam game via Steam's run-game URI and watch its session.
@@ -1619,7 +1634,12 @@ class VitrineWindow(Adw.ApplicationWindow):
         """Open a store game's page in the system browser."""
         from gi.repository import Gio
 
-        url = f"https://store.steampowered.com/app/{game.source_id}"
+        from ..entries import entry_for
+
+        url = entry_for(game, self).store_url()
+        if not url:
+            self.toasts.add_toast(Adw.Toast(title=f"No store page for {game.name}"))
+            return
         try:
             Gio.AppInfo.launch_default_for_uri(url)
         except Exception as error:  # noqa: BLE001
@@ -1692,9 +1712,13 @@ class VitrineWindow(Adw.ApplicationWindow):
     def _context_items(self, game: Game) -> list[tuple[str, Callable[[], None]]]:
         """Right-click actions derived from the tile kind, not the active view.
 
-        A Steam game that isn't installed locally only has Properties/Store, and
-        cannot be removed (it lives in Steam's cloud library, not Vitrine's).
+        The launch/install/remove strategy now lives on the source's
+        :class:`GameEntry`, so this menu is derived from the entry's capabilities
+        instead of hardcoded ``game.source`` branches.
         """
+        from ..entries import entry_for
+
+        entry = entry_for(game, self)
         items: list[tuple[str, Callable[[], None]]] = [
             ("Properties", lambda: self.on_edit_game(game)),
         ]
@@ -1702,18 +1726,13 @@ class VitrineWindow(Adw.ApplicationWindow):
         items.append((fav_label, lambda: self.set_game_favorite(game, not game.favorite)))
         hide_label = "Unhide game" if game.hidden else "Hide game"
         items.append((hide_label, lambda: self.set_game_hidden(game, not game.hidden)))
-        if game.source == "steam" and not game.installed:
+        if not game.installed and entry.can_install():
+            items.append(("Install…", lambda: self.install_game(game)))
+        if entry.store_url() is not None:
             items.append(("Open store page", lambda: self.open_store_page(game)))
-            return items
-        if game.source != "local" and not game.installed:
-            # Owned but not installed: offer install for Epic/GOG, store link else.
-            if game.source in ("epic", "gog"):
-                items.append(("Install…", lambda: self.install_game(game)))
-            items.append(("Open store page", lambda: self.open_store_page(game)))
-            return items
-        # Locally installed (local games or installed store games).
-        label = "Remove from library" if game.source == "local" else "Uninstall…"
-        items.append((label, lambda: self.on_game_removed(game)))
+        if game.source == "local" or game.installed:
+            label = "Remove from library" if game.source == "local" else "Uninstall…"
+            items.append((label, lambda: self.on_game_removed(game)))
         return items
 
     def _open_directory(self, path: str) -> None:
@@ -1766,14 +1785,11 @@ class VitrineWindow(Adw.ApplicationWindow):
         return None
 
     def install_game(self, game: Game) -> None:
-        """Install an owned but not-yet-installed store game."""
-        if game.source == "epic":
-            self._install_epic_game(game)
-        elif game.source == "gog":
-            self._install_gog_game(game)
-        else:
-            self.open_store_page(game)
-            self.toasts.add_toast(Adw.Toast(title="No automated install for this source"))
+        """Install an owned but not-yet-installed store game (via its entry)."""
+        from ..entries import entry_for
+
+        entry = entry_for(game, self)
+        entry.on_install() if hasattr(entry, "on_install") else self.open_store_page(game)
 
     # -- runtime callbacks (come from a background thread) ----------------------
 
