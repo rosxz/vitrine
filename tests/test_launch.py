@@ -226,8 +226,8 @@ def test_proton_dist_dir_resolves(tmp_path) -> None:
 def test_wine_command_routes_proton_through_umu(
     tmp_path, monkeypatch
 ) -> None:
-    from vitrine.services import launch
     from vitrine.infra.wine import umu
+    from vitrine.services import launch
 
     root, wine = _fake_proton(tmp_path)
     monkeypatch.setenv(umu.UMU_ENV, "/opt/umu-run")
@@ -249,3 +249,56 @@ def test_build_env_sets_umu_vars_for_proton(tmp_path, monkeypatch) -> None:
     env = launch.build_env(game, {"wine_binary": str(wine)})
     assert env["PROTONPATH"] == str(root)
     assert env["GAMEID"] == "g-slug"
+
+
+def test_build_env_proton_cleans_d3d_extras_instead_of_installing(
+    tmp_path, monkeypatch
+) -> None:
+    """Proton owns the prefix and ships its own d3dcompiler DLLs, so a stale
+    d3d_extras file left by an earlier plain-Wine run makes copy_pfx symlink fail
+    with FileExistsError. build_env must remove leftovers, not install them."""
+
+    from vitrine.services import launch
+
+    root, wine = _fake_proton(tmp_path)
+    game = Game(name="G", runner="wine", slug="g-slug", executable="/games/G.exe")
+
+    removed: list[str] = []
+    installed: list[int] = []
+
+    def _remove(prefix):
+        removed.append(prefix)
+        return None
+
+    def _install(prefix):
+        installed.append(prefix)
+        return {"d3dx9_43.dll"}
+
+    monkeypatch.setattr(launch, "install_d3d_extras", _install)
+    from vitrine.infra.wine import d3d_extras
+
+    monkeypatch.setattr(d3d_extras, "remove_from_prefix", _remove)
+    env = launch.build_env(game, {"wine_binary": str(wine)})
+
+    assert removed == [str(launch.wine_prefix_for(game))]
+    assert installed == []
+    assert "WINEDLLOVERRIDES" not in env
+
+
+def test_build_env_plain_wine_installs_d3d_extras(monkeypatch) -> None:
+    """Non-Proton Wine builds still get d3d_extras seeded and a DLL override."""
+
+    from vitrine.services import launch
+
+    installed: list[int] = []
+
+    def _install(prefix):
+        installed.append(prefix)
+        return "d3dx9_43.dll=n"
+
+    monkeypatch.setattr(launch, "install_d3d_extras", _install)
+    game = Game(name="G", runner="wine", slug="g-slug", executable="/games/G.exe")
+    env = launch.build_env(game, {"wine_binary": "wine", "d3d_extras": True})
+
+    assert installed == [str(launch.wine_prefix_for(game))]
+    assert "d3dx9_43.dll=n" in env["WINEDLLOVERRIDES"]

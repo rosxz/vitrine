@@ -156,9 +156,17 @@ def build_env(game: Game, config: dict) -> dict[str, str]:
         overrides += ["d3d10core=n", "d3d11=n", "dxgi=n"]
     if not config.get("vkd3d", True):
         overrides.append("d3d12=n")
-    # DirectX 9/10/11 runtime DLLs (d3dx9_43, d3dcompiler_43, ...) that Wine
-    # doesn't bundle; without them old games fail with "d3dx9_43.dll not found".
-    if config.get("d3d_extras", True):
+    if _is_proton(config):
+        # Proton owns the prefix (copy_pfx seeds it) and ships its own
+        # d3dcompiler/d3dx DLLs; pre-writing d3d_extras as real files makes
+        # Proton's copy_pfx os.symlink fail with FileExistsError. Instead remove
+        # any d3d_extras left over from an earlier plain-Wine run.
+        from vitrine.infra.wine import d3d_extras
+
+        d3d_extras.remove_from_prefix(env["WINEPREFIX"])
+    elif config.get("d3d_extras", True):
+        # DirectX 9/10/11 runtime DLLs (d3dx9_43, d3dcompiler_43, ...) that Wine
+        # doesn't bundle; without them old games fail with "d3dx9_43.dll not found".
         d3d = install_d3d_extras(env["WINEPREFIX"])
         if d3d:
             overrides.append(d3d)
