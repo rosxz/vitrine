@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build a shareable Vitrine Flatpak bundle.
 #
-# Requires: flatpak, flatpak-builder (and the org.gnome.Platform//50 +
-# org.gnome.Sdk//50 runtimes, which `flatpak --user install -y` via flathub).
+# Requires: flatpak, flatpak-builder, appstream (for the appstreamcli compose
+# step that finalises the metadata), and the org.gnome.Platform//50 +
+# org.gnome.Sdk//50 runtimes.
 #
 # Output: dist-flatpak/io.github.rosxz.vitrine.flatpak
 set -euo pipefail
@@ -10,7 +11,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 MANIFEST=packaging/flatpak/io.github.rosxz.vitrine.yml
 APP=io.github.rosxz.vitrine
-BRANCH=stable
+BRANCH=master
 ARCH="$(uname -m)"
 REPO=.flatpak-repo
 BUILDDIR=.flatpak-build/
@@ -23,26 +24,12 @@ if ! flatpak --user list --runtime 2>/dev/null | grep -q "GNOME Application Plat
   flatpak --user install -y flathub org.gnome.Platform/x86_64/50 org.gnome.Sdk/x86_64/50
 fi
 
+# The normal flatpak-builder finish step runs `appstreamcli compose`; install it
+# (via nix) so the metadata (add-extensions, multiarch) is finalised properly.
+export PATH="$(nix-shell -p appstream --quiet --run 'echo "$PATH"'):$PATH"
+
 echo "Building (this can take a while)..."
-flatpak-builder --repo="$REPO" "$BUILDDIR" "$MANIFEST" || {
-  echo "Note: if the build failed only at 'appstreamcli compose' (missing runtime"
-  echo "tool), the manual finish/export path below still works."
-  echo "Running manual finish/export instead..."
-  flatpak-builder --force-clean --build-only --repo="$REPO" "$BUILDDIR" "$MANIFEST"
-  flatpak build-finish \
-    --command=vitrine \
-    --share=ipc \
-    --socket=wayland \
-    --socket=fallback-x11 \
-    --device=dri \
-    --share=network \
-    --filesystem=home \
-    --talk-name=org.freedesktop.Notifications \
-    '--talk-name=org.freedesktop.portal.*' \
-    '--talk-name=org.freedesktop.portal.Flatpak' \
-    "$BUILDDIR"
-  flatpak build-export --arch="$ARCH" --no-update-summary "$REPO" "$BUILDDIR" "$BRANCH"
-}
+flatpak-builder --repo="$REPO" --default-branch="$BRANCH" "$BUILDDIR" "$MANIFEST"
 
 echo "Bundling..."
 mkdir -p dist-flatpak
