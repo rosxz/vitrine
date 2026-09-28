@@ -496,8 +496,9 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         return registry.get(source_id)(self.library).games_needing_artwork()
 
-    def _gog_finish_install(self, game: Game, output: Sequence[str] = ()) -> None:
-        """Mark a GOG game installed after a successful depot download.
+    def finish_gog_install(self, game: Game, output: Sequence[str] = ()) -> None:
+        """Mark a GOG game installed after a successful depot download (controller
+        primitive, invoked by the GOG entry's install-finished strategy).
 
         If gogdl produced no game files (e.g. it was handed a bad token and
         stalled, or the depot had nothing to write), fall back to the
@@ -713,26 +714,22 @@ class VitrineWindow(Adw.ApplicationWindow):
         """Install finished (or failed): clear download state and toast."""
         job = self._downloads.get(game.id) if game.id is not None else None
         output = list(getattr(job, "line_buffer", ()))
-        is_gog = game.source == "gog"
         from ..sources.gog import gogdl
 
-        already_downloaded = is_gog and gogdl.reported_nothing_to_do(output)
+        already_downloaded = game.source == "gog" and gogdl.reported_nothing_to_do(output)
         self._set_downloading_ui(game, False)
         if returncode != 0 and not already_downloaded:
             self.toasts.add_toast(Adw.Toast(title=f"Install failed for {game.name} ({returncode})"))
             return
-        # Re-sync installed state so legendary's (now-installed) games mark the
-        # library rows as installed and route to Launch instead of Install.
-        try:
-            if game.source == "epic":
-                from ..sources.epic_source import EpicSource
+        # Delegate post-install work (re-sync installed / resolve executable) to
+        # the source's GameEntry strategy, which knows how to finish its install.
+        from ..entries import entry_for
 
-                EpicSource(self.library).sync_installed()
-            elif is_gog:
-                self._gog_finish_install(game, output)
+        try:
+            entry_for(game, self).on_install_finished(returncode, output)
         except Exception:  # noqa: BLE001
-            logger.exception("sync_installed after install failed")
-        if not is_gog:
+            logger.exception("install finish failed for %s", game.name)
+        if game.source != "gog":
             # GOG's own completion shows its toast/reload.
             self.reload()
             self.toasts.add_toast(Adw.Toast(title=f"Installed {game.name}"))

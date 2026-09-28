@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import os
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 
 from .library import Game
 
@@ -69,6 +70,16 @@ class GameEntry(ABC):
 
     def on_install(self) -> None:
         raise NotImplementedError
+
+    def on_install_finished(self, returncode: int, output: Sequence[str] = ()) -> bool:
+        """Post-install work after a download job ends with ``returncode``.
+
+        ``output`` is the job's accumulated log lines. Store subclasses override
+        this to reconcile their installed state (e.g. Epic re-syncs legendary,
+        GOG resolves the executable from its depot). Returns True unless the
+        install should be considered failed.
+        """
+        return True
 
     def on_stop(self) -> None:
         """Stop the running session for this game (default: local runner)."""
@@ -225,6 +236,12 @@ class GogGameEntry(GameEntry):
     def on_install(self) -> None:
         self._install_gog()
 
+    def on_install_finished(self, returncode: int, output: Sequence[str] = ()) -> bool:
+        finisher = getattr(self.controller, "finish_gog_install", None)
+        if callable(finisher):
+            finisher(self.game, output)
+        return True
+
     def _install_gog(self) -> None:
         from .sources.gog import gogdl
         from .sources.gog_source import GogSource
@@ -313,6 +330,14 @@ class EpicGameEntry(GameEntry):
             stopper(self.game)
             return
         super().on_stop()
+
+    def on_install_finished(self, returncode: int, output: Sequence[str] = ()) -> bool:
+        # Re-sync installed state so legendary's (now-installed) games mark the
+        # library rows as installed and route to Launch instead of Install.
+        from .sources.epic_source import EpicSource
+
+        EpicSource(self.controller.library).sync_installed()
+        return True
 
     def install_dir(self) -> str | None:
         from .sources.epic import legendary as lg
