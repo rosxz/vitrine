@@ -43,6 +43,17 @@ add-extensions:
     directory: lib/i386-linux-gnu
     version: "26.08"
     autodelete: false
+  # 32-bit Mesa GL+Vulkan drivers for Wine/Proton games. The Compat.i386
+  # extension only ships the 32-bit libc runtime + Vulkan loader; it has NO ICD,
+  # so 32-bit D3D9/Vulkan games fail at DxvkInstance::createInstance while
+  # 64-bit ones work. GL32.default provides the actual 32-bit drivers mounted
+  # under .../GL/<vendor>/. Version matches the Compat.i386 branch (26.08).
+  org.freedesktop.Platform.GL32.default:
+    directory: lib/i386-linux-gnu/GL
+    version: "26.08"
+    subdirectories: true
+    autodelete: false
+    no-autodownload: true
 
 modules:
   - name: python-requirements

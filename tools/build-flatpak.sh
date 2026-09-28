@@ -26,10 +26,10 @@ fi
 
 # The normal flatpak-builder finish step runs `appstreamcli compose`; install it
 # (via nix) so the metadata (add-extensions, multiarch) is finalised properly.
-export PATH="$(nix-shell -p appstream --quiet --run 'echo "$PATH"'):$PATH"
+export PATH="$(nix-shell -p flatpak-builder -p appstream --quiet --run 'echo "$PATH"'):$PATH"
 
 echo "Building (this can take a while)..."
-flatpak-builder --repo="$REPO" --default-branch="$BRANCH" "$BUILDDIR" "$MANIFEST"
+flatpak-builder --force-clean --repo="$REPO" --default-branch="$BRANCH" "$BUILDDIR" "$MANIFEST"
 
 echo "Bundling..."
 mkdir -p dist-flatpak

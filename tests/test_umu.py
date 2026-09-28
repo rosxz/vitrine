@@ -120,3 +120,77 @@ def test_discover_xauthority_finds_mutter_file(monkeypatch: pytest.MonkeyPatch, 
     auth.write_text("auth")
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     assert umu._discover_xauthority() == str(auth)
+
+
+def test_flatpak_icd_rewrites_misdeclared_gl32_library_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Inside the Flatpak the GL32 extension's ICD JSON points at
+    .../GL/default/lib/... but the drivers mount at .../GL/lib/... . The helper
+    must rewrite the JSON to the real driver and publish it to the loader's
+    default search dir, so 32-bit DXVK can create a Vulkan instance."""
+    import json
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / ".var/app/io.github.rosxz.vitrine/data"))
+    monkeypatch.setenv("HOME", str(home))
+
+    gl = tmp_path / "gl"
+    icd_dir = gl / "lib" / "vulkan" / "icd.d"
+    icd_dir.mkdir(parents=True)
+    (gl / "lib" / "libvulkan_intel.so").write_bytes(b"ELF-driver")
+    real = json.dumps(
+        {
+            "ICD": {
+                "api_version": "1.4.354",
+                "library_arch": "32",
+                "library_path": "/app/lib/i386-linux-gnu/GL/default/lib/libvulkan_intel.so",
+            },
+            "file_format_version": "1.0.1",
+        }
+    )
+    (icd_dir / "intel_icd.i686.json").write_text(real)
+
+    monkeypatch.setattr(umu, "_GL32_DIRS", (str(gl),))
+    env: dict[str, str] = {}
+    umu._fix_flatpak_32bit_icd(env)
+
+    out = home / ".local" / "share" / "vulkan" / "icd.d" / "intel_icd.i686.json"
+    assert out.exists()
+    fixed = json.loads(out.read_text())
+    assert fixed["ICD"]["library_path"] == str(gl / "lib" / "libvulkan_intel.so")
+
+
+def test_flatpak_icd_skipped_outside_sandbox(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """No-op when not running under a Flatpak (native NixOS runs): nothing is
+    written and no VK_ICD_FILENAMES is injected, keeping NixOS behaviour."""
+    import json
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
+    monkeypatch.setenv("HOME", str(home))
+
+    gl = tmp_path / "gl"
+    icd_dir = gl / "lib" / "vulkan" / "icd.d"
+    icd_dir.mkdir(parents=True)
+    (gl / "lib" / "libvulkan_intel.so").write_bytes(b"ELF-driver")
+    (icd_dir / "intel_icd.i686.json").write_text(
+        json.dumps(
+            {
+                "ICD": {
+                    "api_version": "1.4.354",
+                    "library_arch": "32",
+                    "library_path": "/app/lib/i386-linux-gnu/GL/default/lib/libvulkan_intel.so",
+                }
+            }
+        )
+    )
+
+    monkeypatch.setattr(umu, "_GL32_DIRS", (str(gl),))
+    env: dict[str, str] = {}
+    umu._fix_flatpak_32bit_icd(env)
+    # Not a flatpak: helper must be inert.
+    assert not (home / ".local" / "share" / "vulkan").exists()
+    assert "VK_ICD_FILENAMES" not in env
