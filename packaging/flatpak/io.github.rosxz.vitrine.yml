@@ -8,7 +8,11 @@ finish-args:
   - --share=ipc
   - --share=network
   - --socket=wayland
-  - --socket=fallback-x11
+  # Expose X11 unconditionally (not just as a fallback): Proton/Wine games
+  # present via Xwayland and hang at wine boot with no X socket. Under a Wayland
+  # session `fallback-x11` drops the X11 socket entirely, leaving the sandbox
+  # without an X server.
+  - --socket=x11
   - --socket=pulseaudio
   # GPU drivers are supplied by the system via Flatpak's Mesa/GL extension.
   - --device=dri
