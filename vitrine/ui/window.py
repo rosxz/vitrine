@@ -645,97 +645,6 @@ class VitrineWindow(Adw.ApplicationWindow):
             logger.exception("Epic sync failed")
             self.toasts.add_toast(Adw.Toast(title=f"Epic sync failed: {error}"))
 
-    def _install_epic_game(self, game: Game) -> None:
-        """Install an Epic game through legendary, tracked as a download."""
-        from ..sources.epic import legendary as lg
-
-        app = game.source_id or ""
-        if not app:
-            self.toasts.add_toast(Adw.Toast(title=f"No Epic app id for {game.name}"))
-            return
-        if not lg.is_installed():
-            self.toasts.add_toast(
-                Adw.Toast(title="Legendary is required to install Epic games. Install 'legendary' first.")
-            )
-            return
-        if game.id is not None and game.id in self._downloads:
-            self.toasts.add_toast(Adw.Toast(title=f"{game.name} is already downloading"))
-            return
-
-        if not lg.is_authenticated():
-            self.toasts.add_toast(
-                Adw.Toast(title=f"{game.name}: legendary is not signed in to Epic. Sign in via cog → Epic first.")
-            )
-            return
-        command = [lg.legendary_binary(), *lg.install_command(app)]
-        self._start_download(game, command)
-        GLib.idle_add(self._set_downloading_ui, game, True)
-
-    def _install_gog_game(self, game: Game) -> None:
-        """Install a GOG game via its depot (gogdl), tracked as a download.
-
-        Mirrors Lutris/Heroic: download the game files directly from the GOG
-        CDN/depot manifest into a known directory, then mark it installed. This
-        is non-interactive (unlike the offline installer) and reliable.
-        """
-        from ..sources.gog import gogdl
-        from ..sources.gog_source import GogSource
-        from ..util import slugify
-
-        game_id = game.source_id or ""
-        if not game_id:
-            self.toasts.add_toast(Adw.Toast(title=f"No GOG id for {game.name}"))
-            return
-        if not gogdl.is_installed():
-            self.toasts.add_toast(
-                Adw.Toast(title="gogdl is required to install GOG games. Install 'gogdl' first.")
-            )
-            return
-        source = GogSource(self.library)
-        if not source.is_authenticated():
-            self.toasts.add_toast(Adw.Toast(title="Sign in to GOG first (cog → GOG)"))
-            return
-        if game.id is not None and game.id in self._downloads:
-            self.toasts.add_toast(Adw.Toast(title=f"{game.name} is already downloading"))
-            return
-
-        try:
-            # Refresh the GOG token before handing it to gogdl: gogdl hangs on
-            # an expired token (secure_link 401 -> infinite retry).
-            source.ensure_fresh_token()
-        except Exception as exc:  # noqa: BLE001
-            self.toasts.add_toast(Adw.Toast(title=f"GOG session expired — sign in again ({exc})"))
-            return
-
-        store = source.login_token_store()
-        from .. import paths
-
-        try:
-            auth_path = str(paths.cache_dir() / "gogdl-auth.json")
-            # Token was just refreshed by ensure_fresh_token; tell gogdl it is
-            # brand-new so its expiry check uses the current token.
-            gogdl.write_auth_config_now(store, auth_path)
-            install_path = gogdl.install_dir(game.slug or slugify(game.name))
-            if gogdl.has_manifest(game_id):
-                install_directory = gogdl.manifest_data(game_id).get("installDirectory")
-                repair_path = os.path.join(install_path, str(install_directory)) if install_directory else install_path
-                os.makedirs(repair_path, exist_ok=True)
-                command = gogdl.repair_command(game_id, repair_path, auth_path)
-            else:
-                command = gogdl.download_command(game_id, install_path, auth_path)
-        except Exception as exc:  # noqa: BLE001
-            self.toasts.add_toast(Adw.Toast(title=f"Could not start GOG install for {game.name}: {exc}"))
-            return
-        os.makedirs(install_path, exist_ok=True)
-        # Remember where this game's files land so launch/_finish know it.
-        game.config["gog_install_dir"] = install_path
-        game.config["gog_id"] = game_id
-        if game.id is not None:
-            self.library.update(game)
-        self._start_download(game, command, timeout=GOGDL_DOWNLOAD_TIMEOUT)
-        GLib.idle_add(self._set_downloading_ui, game, True)
-        self.toasts.add_toast(Adw.Toast(title=f"Downloading {game.name}…"))
-
     def _gog_finish_install(self, game: Game, output: Sequence[str] = ()) -> None:
         """Mark a GOG game installed after a successful depot download.
 
@@ -841,6 +750,101 @@ class VitrineWindow(Adw.ApplicationWindow):
             tile.set_downloading(active)
         if self.detail_bar.game() is game:
             self.detail_bar.set_downloading(active)
+
+    # -- controller primitives (used by per-source GameEntry strategies) -------
+
+    def toast(self, title: str) -> None:
+        """Show a toast on the main thread."""
+        self.toasts.add_toast(Adw.Toast(title=title))
+
+    def log_window(self, title: str):
+        """Open a debug log window honoring the debug-log setting, else None."""
+        from ..library import DEBUG_LOG_SETTING
+
+        if not self.library.setting(DEBUG_LOG_SETTING, False):
+            return None
+        from .log_window import ExecutionLogWindow
+
+        window = ExecutionLogWindow(title, parent=self)
+        window.present()
+        return window
+
+    def installing(self, game: Game) -> bool:
+        """Whether a tracked install/launch download exists for ``game``."""
+        return self.sessions.installing(game) or (game.id is not None and game.id in self._downloads)
+
+    def gogdl_timeout(self) -> float:
+        return GOGDL_DOWNLOAD_TIMEOUT
+
+    def start_install_command(self, game: Game, command: list[str], *, timeout: float | None = None) -> None:
+        """Start a tracked install download for ``game`` (controller primitive)."""
+        self._start_download(game, command, timeout=timeout)
+        GLib.idle_add(self._set_downloading_ui, game, True)
+
+    def run_owned_launch(
+        self,
+        game: Game,
+        command: list[str],
+        env: dict,
+        cwd: str | None = None,
+        *,
+        proton: bool,
+        exe: str | None = None,
+        wine_bin: str | None = None,
+        wine_prefix: str | None = None,
+    ) -> None:
+        """Supervise a game executable launch (generic controller primitive).
+
+        Shared execution for every store that runs the game itself (currently
+        Epic via legendary/umu). ``proton`` selects the launch mode — a direct
+        Popen (umu) versus a tracked download job (legendary with system wine) —
+        and routes running-state, playtime-on-exit and the log window uniformly.
+        The per-source command/env building lives in the GameEntry strategy.
+        """
+        from ..downloads import run_download
+        from ..library import DUMP_LAUNCH_ENV_SETTING
+
+        if self.library.setting(DUMP_LAUNCH_ENV_SETTING, False):
+            self._dump_launch(command, env)
+        log = self.log_window(f"Launching {game.name}")
+        if log is not None:
+            log.append_line("$ " + shlex.join(command))
+
+        if proton:
+            import subprocess
+
+            capture = log is not None
+            proc = subprocess.Popen(
+                command,
+                env=env,
+                cwd=cwd or (os.path.dirname(exe) if exe else None),
+                stdout=subprocess.PIPE if capture else None,
+                stderr=subprocess.STDOUT if capture else None,
+                text=True,
+                bufsize=1,
+            )
+            if game.id is not None:
+                self._downloads[game.id] = proc
+            self._set_epic_running(game)
+            threading.Thread(
+                target=self._watch_proton_proc,
+                args=(proc, game, log, exe, wine_bin, wine_prefix),
+                daemon=True,
+                name="vitrine-epic-watch",
+            ).start()
+            self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name}"))
+        else:
+            self._set_epic_running(game)
+            job = run_download(
+                command,
+                env=env,
+                cwd=cwd,
+                on_line=log.append_line if log is not None else None,
+                done=lambda _rc, g=game: self._marshal(lambda: self._epic_playtime_exit(g)),
+            )
+            if game.id is not None:
+                self._downloads[game.id] = job
+            self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name} via legendary"))
 
     def _update_download_progress(self, game: Game, fraction: float) -> None:
         for tile in _tiles_for(self.library_view, game):
@@ -1234,15 +1238,6 @@ class VitrineWindow(Adw.ApplicationWindow):
     def launch_steam(self, game: Game) -> None:
         self._launch_steam_game(game)
 
-    def launch_epic(self, game: Game) -> None:
-        self._launch_epic_game(game)
-
-    def install_epic(self, game: Game) -> None:
-        self._install_epic_game(game)
-
-    def install_gog(self, game: Game) -> None:
-        self._install_gog_game(game)
-
     def remove_local(self, game: Game) -> None:
         """Remove a locally-added game from the library."""
         self.library.remove(game.id) if game.id is not None else None
@@ -1255,19 +1250,6 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     def uninstall_steam(self, game: Game) -> None:
         self._uninstall_steam_game(game)
-
-    def store_url_for(self, game: Game) -> str | None:
-        """A correct store page URL per source (Steam/GOG/Epic)."""
-        appid = game.source_id or ""
-        if not appid:
-            return None
-        if game.source == "steam":
-            return f"https://store.steampowered.com/app/{appid}"
-        if game.source == "gog":
-            return f"https://www.gog.com/en/game/{game.catalog_slug or appid}"
-        if game.source == "epic":
-            return f"https://store.epicgames.com/p/{game.catalog_slug or appid}"
-        return None
 
     def _launch_steam_game(self, game: Game) -> None:
         """Launch a Steam game via Steam's run-game URI and watch its session.
@@ -1308,214 +1290,6 @@ class VitrineWindow(Adw.ApplicationWindow):
         )
         self.steam_watcher.start()
         self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name} via Steam"))
-
-    def _launch_epic_game(self, game: Game) -> None:
-        """Launch an installed Epic game through legendary, with a live log."""
-        from ..sources.epic import legendary as lg
-
-        app = game.source_id or ""
-        if not app:
-            self.toasts.add_toast(Adw.Toast(title=f"No Epic app id for {game.name}"))
-            return
-        if not lg.is_installed():
-            self.toasts.add_toast(
-                Adw.Toast(title="Legendary is required to run Epic games. Install 'legendary' first.")
-            )
-            return
-        if game.id is not None and game.id in self._downloads:
-            self.toasts.add_toast(Adw.Toast(title=f"{game.name} is already launching"))
-            return
-        if self.runtime.running or self._steam_running_game is not None or self._epic_running_game is not None:
-            self.toasts.add_toast(Adw.Toast(title="Another game is already running"))
-            return
-
-        from ..downloads import run_download
-        from ..library import DEBUG_LOG_SETTING, DUMP_LAUNCH_ENV_SETTING
-        from ..runners import has_x11_driver, load_runners_store, resolve_game_runner
-        from .log_window import ExecutionLogWindow
-
-        # Resolve the game's configured Wine/Proton runner: per-game override
-        # wins, otherwise the sidebar's "Default Proton" selection; last resort
-        # is the merged global config default.
-        config = game.merged_config(self.library.global_config())
-        store = load_runners_store(self.library)
-        runner, wine_bin = resolve_game_runner(game, config, store, library=self.library)
-        is_proton = bool(runner and runner.is_proton)
-        from ..launch import wine_prefix_for
-
-        if not has_x11_driver(wine_bin) and os.environ.get("WAYLAND_DISPLAY"):
-            self.toasts.add_toast(
-                Adw.Toast(
-                    title=(
-                        f"{game.name}: the selected wine has no X11 driver (Wayland-only). "
-                        "Pick a Proton runner (e.g. Proton 11.0) from the per-game settings."
-                    )
-                )
-            )
-
-        wine_prefix = str(wine_prefix_for(game))
-        exe: str | None = None
-
-        # Ensure the prefix is ready and its architecture matches the runner.
-        # A fresh/incompatible prefix is initialised (wineboot) in the background
-        # so the game launches on a valid, correctly-arched prefix. For Proton
-        # games we now hand the prefix to umu-run, which performs its own full
-        # setup, so a manual wineboot is unnecessary (and would fight umu).
-        if is_proton:
-            from ..launch import _proton_dist_dir
-            from ..prefix import stop_wineserver
-            from ..wine import umu
-
-            try:
-                umu.umu_binary()
-            except umu.UmuError as exc:
-                self.toasts.add_toast(Adw.Toast(title=str(exc)))
-                return
-            stop_wineserver(wine_bin, wine_prefix, steam_run=True)
-            # For launching, legendary is only needed to resolve the installed
-            # executable; the game itself runs through umu-run (steam-run wrapped,
-            # clean env) which we've verified works on NixOS. Legendary's own
-            # --wrapper/--no-wine path doesn't spawn reliably under steam-run.
-            exe = lg.installed_executable(app)
-            if not exe:
-                self.toasts.add_toast(
-                    Adw.Toast(title=f"Could not find the installed executable for {game.name}")
-                )
-                return
-            command = umu.umu_command(exe)
-            env = umu.umu_env(
-                wine_prefix,
-                proton_path=_proton_dist_dir(wine_bin)
-                or os.path.dirname(os.path.dirname(os.path.expanduser(wine_bin))),
-                game_id=app,
-                install_path=os.path.dirname(exe),
-            )
-            # Do NOT apply driver_env here: its Nix LD_LIBRARY_PATH breaks
-            # pressure-vessel. In particular, never surface VK_ICD_FILENAMES --
-            # pointing the Vulkan loader at the Nix mesa ICD that pressure-vessel
-            # doesn't stage in its sandbox makes DXVK fail to init and the game
-            # exits without opening a window. The GL driver paths are safe to
-            # carry for legacy wined3d titles.
-            from ..gpu import discover as _gpu_discover
-
-            _gpu = _gpu_discover()
-            if _gpu.dri_dir:
-                env.setdefault("LIBGL_DRIVERS_PATH", _gpu.dri_dir)
-                env.setdefault("MESA_DRIVER_PATH", _gpu.dri_dir)
-            from ..launch import install_d3d_extras
-
-            d3d = install_d3d_extras(wine_prefix)
-            if d3d:
-                env.setdefault("WINEDLLOVERRIDES", "")
-                env["WINEDLLOVERRIDES"] = (
-                    env["WINEDLLOVERRIDES"] + ";" if env["WINEDLLOVERRIDES"] else ""
-                ) + d3d
-            # Per-game DXVK toggle: off forces Proton to Wine's built-in D3D
-            # translators instead of the Vulkan DXVK renderer.
-            if not config.get("dxvk", True):
-                off = "d3d10core=n;d3d11=n;dxgi=n"
-                env.setdefault("WINEDLLOVERRIDES", "")
-                env["WINEDLLOVERRIDES"] = (
-                    (env["WINEDLLOVERRIDES"] + ";") if env["WINEDLLOVERRIDES"] else ""
-                ) + off
-            # Per-game esync/fsync/FSR/EasyAntiCheat switches (same flags the
-            # local/Wine path applies).
-            from ..launch import apply_performance_env
-
-            apply_performance_env(env, config)
-            # Per-game environment variables + locale override (Lutris-style).
-            for key, value in (config.get("env") or {}).items():
-                if key:
-                    env[str(key)] = str(value)
-            if config.get("locale"):
-                env["LANG"] = str(config["locale"])
-                env["LC_ALL"] = str(config["locale"])
-            # umu_command already wraps in steam-run so pressure-vessel can build
-            # its sandbox.
-        else:
-            from ..prefix import prepare_prefix
-
-            try:
-                prepare_prefix(wine_bin, wine_prefix, steam_run=False)
-            except ValueError as exc:
-                self.toasts.add_toast(Adw.Toast(title=str(exc)))
-                return
-            env = dict(os.environ)
-            env["WINEARCH"] = "win64"
-            env["WINEDLLOVERRIDES"] = "winemenubuilder.exe=d"
-            env = apply_gpu_env(env)
-            # DirectX 9/10/11 runtime DLLs so old games work under Wine.
-            from ..launch import install_d3d_extras
-
-            d3d_overrides = install_d3d_extras(wine_prefix)
-            if d3d_overrides:
-                env["WINEDLLOVERRIDES"] += ";" + d3d_overrides
-
-            command = [lg.legendary_binary(), *lg.launch_command(app, wine_bin=wine_bin, wine_prefix=wine_prefix)]
-
-        # Gamescope is opt-in per game. The launch command form that actually
-        # presents the window on Wayland is 'steam-run umu-run <exe>' with a clean
-        # env and the game's cwd; wrapping umu in gamescope breaks it.
-        if config.get("gamescope", False):
-            command = _gamescope_wrap(config, command)
-
-        if self.library.setting(DEBUG_LOG_SETTING, False):
-            log = ExecutionLogWindow(f"Launching {game.name}", parent=self)
-            log.present()
-            log.append_line("$ " + shlex.join(command))
-        else:
-            log = None
-        if is_proton:
-            # Launch Proton games the same way manual runs do -- a direct
-            # subprocess (not a piped download job), the clean umu env, and the
-            # game directory as cwd. This is what reliably presents the game
-            # window on Wayland. Watch it in the background to clear the launch
-            # state on exit.
-            import subprocess
-
-            if self.library.setting(DUMP_LAUNCH_ENV_SETTING, False):
-                self._dump_launch(command, env)
-            # When the debug log is open, capture the game's output and send it
-            # to the log window so errors are visible there too. Otherwise leave
-            # stdio inherited (so the detached game doesn't block on a full pipe).
-            capture = log is not None
-            proc = subprocess.Popen(
-                command,
-                env=env,
-                cwd=os.path.dirname(exe) if exe else None,
-                stdout=subprocess.PIPE if capture else None,
-                stderr=subprocess.STDOUT if capture else None,
-                text=True,
-                bufsize=1,
-            )
-            if game.id is not None:
-                self._downloads[game.id] = proc
-            self._set_epic_running(game)
-            threading.Thread(
-                target=self._watch_proton_proc,
-                args=(proc, game, log, exe, wine_bin, wine_prefix),
-                daemon=True,
-                name="vitrine-epic-watch",
-            ).start()
-            self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name}"))
-        else:
-            self._set_epic_running(game)
-            job = run_download(
-                command,
-                env=env,
-                cwd=os.path.dirname(exe) if is_proton and exe else None,
-                on_line=log.append_line if log is not None else None,
-                # The game is running under the wrapper; on exit, record local
-                # playtime and revert the Playing state (no manual refresh).
-                done=lambda _rc, g=game: self._marshal(lambda: self._epic_playtime_exit(g)),
-            )
-            if game.id is not None:
-                self._downloads[game.id] = job
-            self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name} via legendary"))
-
-    def _clear_launch_state(self, game_id: int | None) -> None:
-        if game_id is not None:
-            self._downloads.pop(game_id, None)
 
     def _watch_proton_proc(
         self,

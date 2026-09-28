@@ -2,32 +2,31 @@
 
 Every game — whether it came from the local library, Steam, GOG or Epic — is
 wrapped in a :class:`GameEntry` whose shared ``on_launch()`` skeleton owns the
-uniform *Window → Game → Play → launch* flow. Source differences (Steam hands
-off to a ``steam://`` URI, Epic goes through legendary, GOG/local use the local
-runner) are expressed as overrides on subclasses, so callers no longer switch
-on ``game.source``.
+uniform *Window → Game → Play → launch* flow. Each subclass contains the real
+per-source strategy: how to build the launch command/URI, whether an owned-but-
+not-installed title can be installed here, and its store URL.
 
-A ``GameEntry`` is intentionally thin: it holds the library entry plus a duck-
-typed ``controller`` (the window in the desktop app) that provides the concrete,
-GTK-coupled side-effects (toasts, download state, process supervision). Keeping
-``controller`` behind a small protocol keeps this module GUI-free and testable
-with a stub.
+A ``GameEntry`` builds commands, URIs and envs itself (pure, GUI-free) and
+delegates only the *execution* to a duck-typed ``controller`` (the window),
+which provides generic primitives like "run this command under a log window",
+"start a tracked download", "toast a message", or "open a URI".
 """
 
 from __future__ import annotations
 
+import logging
+import os
 from abc import ABC, abstractmethod
 
 from .library import Game
 
+logger = logging.getLogger(__name__)
+
 
 class GameEntry(ABC):
-    """Base for a game's launch/install/uninstall behaviour, specialised per kind.
+    """Strategy for one game's launch/install/store behaviour, per source."""
 
-    Subclasses override the protected hooks; the shared flow lives in
-    :meth:`on_launch`. ``controller`` is duck-typed and must provide whatever a
-    subclass needs (``sessions``, ``toasts``, ``library``, ``runtime``, …).
-    """
+    source_id: str = "local"
 
     def __init__(self, game: Game, controller) -> None:
         self.game = game
@@ -36,11 +35,7 @@ class GameEntry(ABC):
     # -- shared flow -----------------------------------------------------------
 
     def on_launch(self) -> None:
-        """Uniform *Play* handling: stop-if-running, else install, else launch.
-
-        This is the single entry point the UI calls for every source — clicking
-        the Play button on a tile or in the hero bar ends here.
-        """
+        """Uniform *Play* handling: stop-if-running, else install, else launch."""
         if self.is_running():
             self.on_stop()
             return
@@ -50,15 +45,10 @@ class GameEntry(ABC):
         self.launch()
 
     def is_running(self) -> bool:
-        """Whether this exact game is the one currently running.
-
-        Prefers a controller-provided identity check (the window compares by
-        library id, then source/source_id, then name); falls back to the
-        SessionManager's id-based check.
-        """
-        controller_running = getattr(self.controller, "is_game_running", None)
-        if callable(controller_running):
-            return bool(controller_running(self.game))
+        """Whether this exact game is the one currently running."""
+        running = getattr(self.controller, "is_game_running", None)
+        if callable(running):
+            return bool(running(self.game))
         sessions = getattr(self.controller, "sessions", None)
         if sessions is not None and hasattr(sessions, "is_running"):
             return bool(sessions.is_running(self.game))
@@ -81,18 +71,13 @@ class GameEntry(ABC):
         raise NotImplementedError
 
     def on_stop(self) -> None:
-        """Stop the running session for this game."""
-        controller_stop = getattr(self.controller, "stop_game", None)
-        if callable(controller_stop):
-            controller_stop()
+        stop = getattr(self.controller, "stop_game", None)
+        if callable(stop):
+            stop()
             return
         sessions = getattr(self.controller, "sessions", None)
         if sessions is not None and hasattr(sessions, "stop_running"):
             sessions.stop_running()
-            return
-        runtime = getattr(self.controller, "runtime", None)
-        if runtime is not None:
-            runtime.stop()
 
     def on_uninstall(self) -> None:
         raise NotImplementedError
@@ -100,18 +85,50 @@ class GameEntry(ABC):
     def store_url(self) -> str | None:
         return None
 
-    def install_dir(self) -> str | None:
-        return None
+    def _prompt_uninstall(self) -> None:
+        """Default store uninstall: ask the controller to confirm then remove."""
+        prompter = getattr(self.controller, "prompt_uninstall", None)
+        if callable(prompter):
+            prompter(self.game)
+            return
+        raise NotImplementedError("controller has no prompt_uninstall")
+
+    # -- controller convenience -------------------------------------------------
+
+    def _toast(self, title: str) -> None:
+        toast = getattr(self.controller, "toast", None)
+        if callable(toast):
+            toast(title)
+
+    def _log_window(self, title: str):
+        """Open (or return None) a debug log window per the debug-log setting.
+
+        The controller owns the setting check and GTK window; this returns the
+        log sink (or None) the launch can feed lines into.
+        """
+        opener = getattr(self.controller, "log_window", None)
+        return opener(title) if callable(opener) else None
+
+    def _open_log(self, log, line: str) -> None:
+        if log is not None and hasattr(log, "append_line"):
+            log.append_line(line)
+
+    def _marshal(self, fn) -> None:
+        marshal = getattr(self.controller, "marshal", None)
+        if callable(marshal):
+            marshal(fn)
+
+    def _library(self):
+        return getattr(self.controller, "library", None)
 
 
 # ---------------------------------------------------------------------------
-# Per-source specialisations. Each chooses the controller operation it needs;
-# the heavy, GTK-coupled side-effects live on the controller (the window).
+# Local games
 # ---------------------------------------------------------------------------
 
 
 class LocalGameEntry(GameEntry):
-    """Hand-added games: installed locally, launched via the local runner."""
+    """Hand-added games: installed locally, launched via the generic runner."""
 
     source_id = "local"
 
@@ -119,14 +136,27 @@ class LocalGameEntry(GameEntry):
         return False
 
     def launch(self) -> None:
-        self.controller.launch_local(self.game)
+        runner = getattr(self.controller, "launch_local", None)
+        if callable(runner):
+            runner(self.game)
+            return
+        raise NotImplementedError("controller has no launch_local")
 
     def on_uninstall(self) -> None:
-        self.controller.remove_local(self.game)
+        remover = getattr(self.controller, "remove_local", None)
+        if callable(remover):
+            remover(self.game)
+            return
+        self._library().remove(self.game.id) if self.game.id is not None else None
+
+
+# ---------------------------------------------------------------------------
+# GOG games
+# ---------------------------------------------------------------------------
 
 
 class GogGameEntry(GameEntry):
-    """GOG games: genically native or run through the local Wine pipeline."""
+    """GOG games: installed ones run via the generic runner; installs use gogdl."""
 
     source_id = "gog"
 
@@ -134,20 +164,83 @@ class GogGameEntry(GameEntry):
         return True
 
     def launch(self) -> None:
-        self.controller.launch_local(self.game)
+        runner = getattr(self.controller, "launch_local", None)
+        if callable(runner):
+            runner(self.game)
+            return
+        raise NotImplementedError("controller has no launch_local")
 
     def on_install(self) -> None:
-        self.controller.install_gog(self.game)
+        self._install_gog()
 
-    def on_uninstall(self) -> None:
-        self.controller.prompt_uninstall(self.game)
+    def _install_gog(self) -> None:
+        from .sources.gog import gogdl
+        from .sources.gog_source import GogSource
+        from .sources.steam_source import SteamAuthError  # noqa: F401
+        from .util import slugify
+
+        game_id = self.game.source_id or ""
+        if not game_id:
+            self._toast(f"No GOG id for {self.game.name}")
+            return
+        if not gogdl.is_installed():
+            self._toast("gogdl is required to install GOG games. Install 'gogdl' first.")
+            return
+        library = self._library()
+        source = GogSource(library)
+        if not source.is_authenticated():
+            self._toast("Sign in to GOG first (cog → GOG)")
+            return
+        if self.controller.installing(self.game):
+            self._toast(f"{self.game.name} is already downloading")
+            return
+        try:
+            source.ensure_fresh_token()
+        except Exception as exc:  # noqa: BLE001
+            self._toast(f"GOG session expired — sign in again ({exc})")
+            return
+
+        store = source.login_token_store()
+        from . import paths
+
+        try:
+            auth_path = str(paths.cache_dir() / "gogdl-auth.json")
+            gogdl.write_auth_config_now(store, auth_path)
+            install_path = gogdl.install_dir(self.game.slug or slugify(self.game.name))
+            if gogdl.has_manifest(game_id):
+                install_directory = gogdl.manifest_data(game_id).get("installDirectory")
+                repair_path = os.path.join(install_path, str(install_directory)) if install_directory else install_path
+                os.makedirs(repair_path, exist_ok=True)
+                command = gogdl.repair_command(game_id, repair_path, auth_path)
+            else:
+                command = gogdl.download_command(game_id, install_path, auth_path)
+        except Exception as exc:  # noqa: BLE001
+            self._toast(f"Could not start GOG install for {self.game.name}: {exc}")
+            return
+        os.makedirs(install_path, exist_ok=True)
+        self.game.config["gog_install_dir"] = install_path
+        self.game.config["gog_id"] = game_id
+        library.update(self.game) if self.game.id is not None else None
+        self.controller.start_install_command(self.game, command, timeout=self.controller.gogdl_timeout())
+        self._toast(f"Downloading {self.game.name}…")
 
     def store_url(self) -> str | None:
-        return self.controller.store_url_for(self.game)
+        appid = self.game.source_id or ""
+        if not appid:
+            return None
+        return f"https://www.gog.com/en/game/{self.game.catalog_slug or appid}"
+
+    def on_uninstall(self) -> None:
+        self._prompt_uninstall()
+
+
+# ---------------------------------------------------------------------------
+# Epic games
+# ---------------------------------------------------------------------------
 
 
 class EpicGameEntry(GameEntry):
-    """Epic games: launch/install via legendary (storeless client)."""
+    """Epic games: install/launch via legendary (storeless client)."""
 
     source_id = "epic"
 
@@ -155,20 +248,153 @@ class EpicGameEntry(GameEntry):
         return True
 
     def launch(self) -> None:
-        self.controller.launch_epic(self.game)
+        self._launch_epic()
+
+    def _launch_epic(self) -> None:
+        from .launch import _proton_dist_dir, install_d3d_extras, wine_prefix_for
+        from .runners import has_x11_driver, load_runners_store, resolve_game_runner
+        from .sources.epic import legendary as lg
+        from .wine import umu
+
+        app = self.game.source_id or ""
+        if not app:
+            self._toast(f"No Epic app id for {self.game.name}")
+            return
+        if not lg.is_installed():
+            self._toast("Legendary is required to run Epic games. Install 'legendary' first.")
+            return
+        if self.controller.installing(self.game):
+            self._toast(f"{self.game.name} is already launching")
+            return
+
+        library = self._library()
+        config = self.game.merged_config(library.global_config())
+        store = load_runners_store(library)
+        runner, wine_bin = resolve_game_runner(self.game, config, store, library=library)
+        is_proton = bool(runner and runner.is_proton)
+        wine_prefix = str(wine_prefix_for(self.game))
+
+        if not has_x11_driver(wine_bin) and os.environ.get("WAYLAND_DISPLAY"):
+            self._toast(
+                f"{self.game.name}: the selected wine has no X11 driver (Wayland-only). "
+                "Pick a Proton runner from the per-game settings."
+            )
+            return
+
+        if is_proton:
+            try:
+                umu.umu_binary()
+            except umu.UmuError as exc:
+                self._toast(str(exc))
+                return
+            from .prefix import stop_wineserver
+
+            stop_wineserver(wine_bin, wine_prefix, steam_run=True)
+            exe = lg.installed_executable(app)
+            if not exe:
+                self._toast(f"Could not find the installed executable for {self.game.name}")
+                return
+            command = umu.umu_command(exe)
+            env = umu.umu_env(
+                wine_prefix,
+                proton_path=_proton_dist_dir(wine_bin)
+                or os.path.dirname(os.path.dirname(os.path.expanduser(wine_bin))),
+                game_id=app,
+                install_path=os.path.dirname(exe),
+            )
+            # Do NOT apply the Nix driver env here (breaks pressure-vessel);
+            # only carry the GL driver paths for legacy wined3d titles.
+            from .gpu import discover as _gpu_discover
+
+            _gpu = _gpu_discover()
+            if _gpu.dri_dir:
+                env.setdefault("LIBGL_DRIVERS_PATH", _gpu.dri_dir)
+                env.setdefault("MESA_DRIVER_PATH", _gpu.dri_dir)
+            d3d = install_d3d_extras(wine_prefix)
+            if d3d:
+                env.setdefault("WINEDLLOVERRIDES", "")
+                env["WINEDLLOVERRIDES"] = (env["WINEDLLOVERRIDES"] + ";" if env["WINEDLLOVERRIDES"] else "") + d3d
+            if not config.get("dxvk", True):
+                off = "d3d10core=n;d3d11=n;dxgi=n"
+                env.setdefault("WINEDLLOVERRIDES", "")
+                env["WINEDLLOVERRIDES"] = (env["WINEDLLOVERRIDES"] + ";" if env["WINEDLLOVERRIDES"] else "") + off
+            from .launch import apply_performance_env
+
+            apply_performance_env(env, config)
+            for key, value in (config.get("env") or {}).items():
+                if key:
+                    env[str(key)] = str(value)
+            if config.get("locale"):
+                env["LANG"] = str(config["locale"])
+                env["LC_ALL"] = str(config["locale"])
+            from .launch import gamescope_wrap
+
+            if config.get("gamescope", False):
+                command = gamescope_wrap(config, command)
+            self.controller.run_owned_launch(
+                self.game, command, env, os.path.dirname(exe),
+                proton=True, exe=exe, wine_bin=wine_bin, wine_prefix=wine_prefix,
+            )
+        else:
+            from .prefix import prepare_prefix
+
+            try:
+                prepare_prefix(wine_bin, wine_prefix, steam_run=False)
+            except ValueError as exc:
+                self._toast(str(exc))
+                return
+            env = dict(os.environ)
+            env["WINEARCH"] = "win64"
+            env["WINEDLLOVERRIDES"] = "winemenubuilder.exe=d"
+            from .gpu import driver_env
+
+            env = driver_env(env)
+            d3d_overrides = install_d3d_extras(wine_prefix)
+            if d3d_overrides:
+                env["WINEDLLOVERRIDES"] += ";" + d3d_overrides
+            command = [lg.legendary_binary(), *lg.launch_command(app, wine_bin=wine_bin, wine_prefix=wine_prefix)]
+            self.controller.run_owned_launch(self.game, command, env, None, proton=False)
 
     def on_install(self) -> None:
-        self.controller.install_epic(self.game)
+        self._install_epic()
 
-    def on_uninstall(self) -> None:
-        self.controller.prompt_uninstall(self.game)
+    def _install_epic(self) -> None:
+        from .sources.epic import legendary as lg
+
+        app = self.game.source_id or ""
+        if not app:
+            self._toast(f"No Epic app id for {self.game.name}")
+            return
+        if not lg.is_installed():
+            self._toast("Legendary is required to install Epic games. Install 'legendary' first.")
+            return
+        if self.controller.installing(self.game):
+            self._toast(f"{self.game.name} is already downloading")
+            return
+        if not lg.is_authenticated():
+            self._toast(f"{self.game.name}: legendary is not signed in to Epic. Sign in via cog → Epic first.")
+            return
+        self.game.executable = lg.installed_executable(app) or self.game.executable
+        command = [lg.legendary_binary(), *lg.install_command(app)]
+        self.controller.start_install_command(self.game, command)
 
     def store_url(self) -> str | None:
-        return self.controller.store_url_for(self.game)
+        appid = self.game.source_id or ""
+        if not appid:
+            return None
+        return f"https://store.epicgames.com/p/{self.game.catalog_slug or appid}"
+
+    def on_uninstall(self) -> None:
+        self._prompt_uninstall()
+
+
+# ---------------------------------------------------------------------------
+# Steam games
+# ---------------------------------------------------------------------------
 
 
 class SteamGameEntry(GameEntry):
-    """Steam games: hand-off to Steam itself (``steam://rungameid``)."""
+    """Steam games: handed off to Steam itself (``steam://rungameid``)."""
 
     source_id = "steam"
 
@@ -181,19 +407,33 @@ class SteamGameEntry(GameEntry):
         return False
 
     def launch(self) -> None:
-        self.controller.launch_steam(self.game)
+        launcher = getattr(self.controller, "launch_steam", None)
+        if callable(launcher):
+            launcher(self.game)
+            return
+        raise NotImplementedError("controller has no launch_steam")
 
     def on_install(self) -> None:
-        # Steam owns installs; tapping an uninstalled Steam game just launches
-        # it (Steam prompts to install). No separate install step.
-        self.controller.launch_steam(self.game)
+        # Steam owns installs; tapping an uninstalled Steam game just launches it.
+        self.launch()
 
     def on_uninstall(self) -> None:
-        self.controller.uninstall_steam(self.game)
+        uninstaller = getattr(self.controller, "uninstall_steam", None)
+        if callable(uninstaller):
+            uninstaller(self.game)
+            return
+        raise NotImplementedError("controller has no uninstall_steam")
 
     def store_url(self) -> str | None:
-        return self.controller.store_url_for(self.game)
+        appid = self.game.source_id or ""
+        if not appid:
+            return None
+        return f"https://store.steampowered.com/app/{appid}"
 
+
+# ---------------------------------------------------------------------------
+# Registry / factory
+# ---------------------------------------------------------------------------
 
 _ENTRIES: dict[str, type[GameEntry]] = {}
 
@@ -209,6 +449,5 @@ def entry_for(game: Game, controller) -> GameEntry:
     return cls(game, controller)
 
 
-# Register the built-in entry kinds.
 for _cls in (LocalGameEntry, GogGameEntry, EpicGameEntry, SteamGameEntry):
     register_entry(_cls)
