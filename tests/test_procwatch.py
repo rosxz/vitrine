@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vitrine import procwatch
+from vitrine.infra import procwatch
 
 # 1 (gamescope) -> 2 (gamescopereaper) -> 3 (wine) -> 4 (wineserver)
 TREE: dict[int, list[int]] = {1: [2], 2: [3], 3: [4], 4: []}

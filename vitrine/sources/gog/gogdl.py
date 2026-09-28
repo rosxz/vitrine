@@ -302,6 +302,6 @@ def find_executable(install_path: str) -> str | None:
 
 def install_dir(slug: str) -> str:
     """Default depot install directory for a GOG game, under Vitrine's data dir."""
-    from vitrine import paths
+    from vitrine.infra import paths
 
     return str(paths.data_dir() / "gog" / (slug or "game"))

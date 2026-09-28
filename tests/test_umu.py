@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vitrine.wine import umu
+from vitrine.infra.wine import umu
 
 
 def test_umu_binary_uses_env_override(monkeypatch: pytest.MonkeyPatch) -> None:

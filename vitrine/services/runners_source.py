@@ -17,7 +17,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from vitrine import paths
+from vitrine.infra import paths
 
 logger = logging.getLogger(__name__)
 

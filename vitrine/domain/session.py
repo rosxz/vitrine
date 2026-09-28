@@ -19,7 +19,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from vitrine.library import Game
+from vitrine.services.library import Game
 
 logger = logging.getLogger(__name__)
 

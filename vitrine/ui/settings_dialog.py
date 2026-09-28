@@ -13,10 +13,10 @@ from collections.abc import Callable
 
 from gi.repository import Adw, GLib, Gtk
 
-from vitrine import artwork
-from vitrine.artwork_providers import PROVIDER_IDS
-from vitrine.artwork_providers.base import provider_label
-from vitrine.library import (
+from vitrine.services import artwork
+from vitrine.services.artwork_providers import PROVIDER_IDS
+from vitrine.services.artwork_providers.base import provider_label
+from vitrine.services.library import (
     DEBUG_LOG_SETTING,
     DUMP_LAUNCH_ENV_SETTING,
     SHOW_DETAIL_SETTING,
@@ -361,8 +361,8 @@ class SettingsWindow(Gtk.Window):
         return _row_widget(box)
 
     def _on_test_providers(self, _button: Gtk.Button) -> None:
-        from vitrine.artwork_providers import igdb as igdb_mod
-        from vitrine.artwork_providers import steamgriddb as sgdb_mod
+        from vitrine.services.artwork_providers import igdb as igdb_mod
+        from vitrine.services.artwork_providers import steamgriddb as sgdb_mod
 
         self._flush_secrets()  # save typed-but-not-Entered credentials first
         creds = artwork.load_credentials(self.library)

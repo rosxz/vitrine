@@ -57,7 +57,7 @@ def test_tile_loads_cover_and_falls_back_when_absent() -> None:
 
     from gi.repository import GdkPixbuf
 
-    from vitrine.library import Game
+    from vitrine.services.library import Game
     from vitrine.ui.library_view import GameTile
 
     cover = os.path.join(tempfile.mkdtemp(), "cover.png")
@@ -91,7 +91,7 @@ def test_store_not_installed_tiles_keep_translucent_class() -> None:
     even after a selection change resets their css classes."""
     if not Gtk.init_check():
         pytest.skip("requires a display to construct tiles")
-    from vitrine.library import Game
+    from vitrine.services.library import Game
     from vitrine.ui.library_view import GameTile
 
     for source in ("steam", "gog", "epic"):
@@ -106,7 +106,7 @@ def test_matrix_of_tiles_labels_game_tile_coverage() -> None:
     """Check each GameTile is created without loading its cover eagerly."""
     if not Gtk.init_check():
         pytest.skip("requires a display to construct tiles")
-    from vitrine.library import Game
+    from vitrine.services.library import Game
     from vitrine.ui.library_view import GameTile
 
     for source in ("local", "steam"):
@@ -133,8 +133,8 @@ def test_save_button_invokes_callback_with_game() -> None:
     with the clicked Button (a prior name shadowing bug passed the widget)."""
     if not Gtk.init_check():
         pytest.skip("requires a display to construct windows")
-    from vitrine import db
-    from vitrine.library import Game, Library
+    from vitrine.infra import db
+    from vitrine.services.library import Game, Library
     from vitrine.ui.game_dialogs import GameSettingsDialog
 
     conn = db.connect(":memory:")

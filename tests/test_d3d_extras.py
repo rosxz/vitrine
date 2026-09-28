@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from vitrine.wine import d3d_extras
+from vitrine.infra.wine import d3d_extras
 
 
 @pytest.fixture

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from vitrine import db
-from vitrine.library import Game, Library
+from vitrine.infra import db
+from vitrine.services.library import Game, Library
 
 
 def _connection_with_v1_schema() -> sqlite3.Connection:

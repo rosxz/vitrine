@@ -13,8 +13,8 @@ from collections.abc import Callable, Iterable
 
 from gi.repository import Adw, GLib, GObject, Gtk
 
-from vitrine.library import Game
-from vitrine.util import human_playtime, initials
+from vitrine.infra.util import human_playtime, initials
+from vitrine.services.library import Game
 
 #: Max lines a game name spans before it is truncated with an ellipsis.
 NAME_MAX_LINES = 2

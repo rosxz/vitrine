@@ -11,8 +11,8 @@ from __future__ import annotations
 import logging
 from urllib.parse import urlencode
 
-from vitrine.artwork_providers.base import Art
-from vitrine.artwork_providers.net import get_json
+from vitrine.services.artwork_providers.base import Art
+from vitrine.services.artwork_providers.net import get_json
 
 logger = logging.getLogger(__name__)
 

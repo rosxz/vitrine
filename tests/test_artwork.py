@@ -7,8 +7,9 @@ import io
 import pytest
 from PIL import Image
 
-from vitrine import artwork, db
-from vitrine.library import Game, Library
+from vitrine.services import artwork
+from vitrine.infra import db
+from vitrine.services.library import Game, Library
 
 
 @pytest.fixture

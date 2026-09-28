@@ -12,7 +12,7 @@ from collections.abc import Callable
 
 from gi.repository import Adw, GLib, Gtk
 
-from vitrine.library import Game, Library
+from vitrine.services.library import Game, Library
 from vitrine.ui.game_form import GameForm, _LabeledEntry
 
 _BROWSE_TITLES: dict[str, str] = {
@@ -274,7 +274,7 @@ class PrefixRecreateWindow(Gtk.Window):
 
         header = Adw.HeaderBar()
         header.set_title_widget(
-            Adw.WindowTitle(title=f"Re-create Wine prefix", subtitle="")
+            Adw.WindowTitle(title="Re-create Wine prefix", subtitle="")
         )
         header.set_show_end_title_buttons(True)
         cancel = Gtk.Button(label="Cancel")
@@ -391,7 +391,7 @@ GameSettingsDialog = GameSettingsWindow
 
 def _runner_form_args(library: Library) -> dict:
     """Build GameForm kwargs listing available runners + the global default."""
-    from vitrine.runners import DEFAULT_PROTON_SETTING, list_runners, load_runners_store
+    from vitrine.services.runners import DEFAULT_PROTON_SETTING, list_runners, load_runners_store
 
     store = load_runners_store(library)
     default = str(library.setting(DEFAULT_PROTON_SETTING, "wine-64") or "wine-64")

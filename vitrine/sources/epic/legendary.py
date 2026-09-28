@@ -32,7 +32,7 @@ def install_dir() -> str:
     live under Vitrine's data dir instead of legendary's own ``~/Games``
     default.
     """
-    from vitrine import paths
+    from vitrine.infra import paths
     
     return str(paths.data_dir() / "egs")
 

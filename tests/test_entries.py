@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import pytest
 
-from vitrine.entries import (
+from vitrine.domain.entry import (
     EpicGameEntry,
     GogGameEntry,
     LocalGameEntry,
     SteamGameEntry,
     entry_for,
 )
-from vitrine.library import Game
+from vitrine.services.library import Game
 
 
 class _StubController:
@@ -144,7 +144,7 @@ def test_gog_not_installed_starts_install(monkeypatch) -> None:
     monkeypatch.setattr("vitrine.sources.gog.gogdl.download_command", lambda _id, path, auth: ["gogdl", "download", _id])  # noqa: E501
     monkeypatch.setattr("vitrine.sources.gog.gogdl.install_dir", lambda slug: "/tmp/gog")
     monkeypatch.setattr("vitrine.sources.gog.gogdl.write_auth_config_now", lambda _store, _path: "/tmp/auth")
-    monkeypatch.setattr("vitrine.util.slugify", lambda name: "g")
+    monkeypatch.setattr("vitrine.infra.util.slugify", lambda name: "g")
     entry_for(_game("G", "gog", installed=False), ctrl).on_launch()
     assert any(call.startswith("start_install_command:G:gogdl download") for call in ctrl.calls)
 
@@ -156,9 +156,9 @@ def test_epic_installed_launches_via_legendary(monkeypatch) -> None:
     monkeypatch.setattr("vitrine.sources.epic.legendary.installed_executable", lambda _app: "/games/E.exe")
     monkeypatch.setattr("vitrine.sources.epic.legendary.launch_command", lambda *_a, **_k: ["legendary", "launch", "E"])
     monkeypatch.setattr("vitrine.sources.epic.legendary.legendary_binary", lambda: "/bin/legendary")
-    monkeypatch.setattr("vitrine.runners.has_x11_driver", lambda _w: True)
-    monkeypatch.setattr("vitrine.runners.resolve_game_runner", lambda *_a, **_k: (None, "/bin/wine"))
-    monkeypatch.setattr("vitrine.prefix.prepare_prefix", lambda *_a, **_k: None)
+    monkeypatch.setattr("vitrine.services.runners.has_x11_driver", lambda _w: True)
+    monkeypatch.setattr("vitrine.services.runners.resolve_game_runner", lambda *_a, **_k: (None, "/bin/wine"))
+    monkeypatch.setattr("vitrine.infra.prefix.prepare_prefix", lambda *_a, **_k: None)
     entry_for(_game("E", "epic", installed=True), ctrl).on_launch()
     assert any(call.startswith("run_owned_launch:E:") for call in ctrl.calls)
 

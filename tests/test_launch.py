@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from vitrine import launch
-from vitrine.library import Game
+from vitrine.services import launch
+from vitrine.services.library import Game
 
 
 def game(**kwargs) -> Game:
@@ -137,7 +137,7 @@ def test_plan_reports_working_directory_next_to_the_executable() -> None:
 
 
 def test_plan_debug_lines_report_exact_proton_command(tmp_path, monkeypatch) -> None:
-    from vitrine.wine import umu
+    from vitrine.infra.wine import umu
 
     root, wine = _fake_proton(tmp_path)
     monkeypatch.setenv(umu.UMU_ENV, "/opt/umu-run")
@@ -167,7 +167,7 @@ def test_empty_config_values_do_not_wrap(value) -> None:
 
 
 def test_detect_gog_executable_skips_installers(tmp_path) -> None:
-    from vitrine.launch import detect_gog_executable
+    from vitrine.services.launch import detect_gog_executable
 
     root = tmp_path / "p"
     (root / "drive_c" / "Program Files").mkdir(parents=True)
@@ -179,7 +179,7 @@ def test_detect_gog_executable_skips_installers(tmp_path) -> None:
 
 
 def test_detect_gog_executable_prefers_gog_games_dir(tmp_path) -> None:
-    from vitrine.launch import detect_gog_executable
+    from vitrine.services.launch import detect_gog_executable
 
     root = tmp_path / "p"
     (root / "drive_c" / "GOG Games" / "HuniePop").mkdir(parents=True)
@@ -189,7 +189,7 @@ def test_detect_gog_executable_prefers_gog_games_dir(tmp_path) -> None:
 
 
 def test_detect_gog_executable_none_when_empty(tmp_path) -> None:
-    from vitrine.launch import detect_gog_executable
+    from vitrine.services.launch import detect_gog_executable
 
     assert detect_gog_executable(tmp_path / "missing") is None
 
@@ -206,7 +206,7 @@ def _fake_proton(tmp_path):
 
 
 def test_is_proton_path_detects_proton(tmp_path) -> None:
-    from vitrine.launch import _is_proton_path
+    from vitrine.services.launch import _is_proton_path
 
     root, wine = _fake_proton(tmp_path)
     assert _is_proton_path(str(wine)) is True
@@ -217,7 +217,7 @@ def test_is_proton_path_detects_proton(tmp_path) -> None:
 
 
 def test_proton_dist_dir_resolves(tmp_path) -> None:
-    from vitrine.launch import _proton_dist_dir
+    from vitrine.services.launch import _proton_dist_dir
 
     root, wine = _fake_proton(tmp_path)
     assert _proton_dist_dir(str(wine)) == str(root)
@@ -226,8 +226,8 @@ def test_proton_dist_dir_resolves(tmp_path) -> None:
 def test_wine_command_routes_proton_through_umu(
     tmp_path, monkeypatch
 ) -> None:
-    from vitrine import launch
-    from vitrine.wine import umu
+    from vitrine.services import launch
+    from vitrine.infra.wine import umu
 
     root, wine = _fake_proton(tmp_path)
     monkeypatch.setenv(umu.UMU_ENV, "/opt/umu-run")
@@ -242,7 +242,7 @@ def test_wine_command_routes_proton_through_umu(
 
 
 def test_build_env_sets_umu_vars_for_proton(tmp_path, monkeypatch) -> None:
-    from vitrine import launch
+    from vitrine.services import launch
 
     root, wine = _fake_proton(tmp_path)
     game = Game(name="G", runner="wine", slug="g-slug", executable="/games/G.exe")

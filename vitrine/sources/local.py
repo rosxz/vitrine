@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vitrine.library import Library
-from vitrine.util import expand
+from vitrine.infra.util import expand
+from vitrine.services.library import Library
 from vitrine.sources.base import Source, registry
 
 

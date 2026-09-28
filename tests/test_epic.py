@@ -333,8 +333,8 @@ def test_egs_manifests_dir_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 @pytest.fixture
 def library() -> object:
-    from vitrine import db
-    from vitrine.library import Library
+    from vitrine.infra import db
+    from vitrine.services.library import Library
 
     conn = db.connect(":memory:")
     db.initialize(conn)

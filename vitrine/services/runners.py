@@ -18,9 +18,10 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from vitrine.domain.runner import Runner
 
 logger = logging.getLogger(__name__)
 
@@ -62,36 +63,6 @@ EXTRA_RUNNER_DIRS = (
 #: Typical wine executables inside a runner directory.
 _WINE_BINS = ("bin/wine", "bin/wine64", "bin/wine32", "files/bin/wine", "wine", "tools/wine/wine64")
 
-
-@dataclass(frozen=True)
-class Runner:
-    id: str
-    name: str
-    path: str  # absolute path to the wine binary (or "" for presets)
-    kind: str = "wine"  # "wine" | "proton"
-
-    @property
-    def is_preset(self) -> bool:
-        return not self.path
-
-    @property
-    def is_proton(self) -> bool:
-        """Authoritative proton check: the strict dist-dir probe on the binary.
-
-        Sources of truth are reconciled here instead of letting callers each
-        guess (the looser substring heuristic in :func:`_looks_like_proton` vs
-        the strict :func:`launch._is_proton_path`). Presets are never proton.
-        """
-        if not self.path:
-            return False
-        from vitrine.launch import _is_proton_path
-
-        return _is_proton_path(self.path)
-
-    @property
-    def is_native(self) -> bool:
-        """A runner is never "native"; native games have no runner at all."""
-        return False
 
 
 def list_runners(runners_store: dict[str, str] | None = None) -> list[Runner]:

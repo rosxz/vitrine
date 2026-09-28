@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from vitrine.library import Game
+from vitrine.services.library import Game
 from vitrine.sources.gog.auth import GogAuthError, GogCookieJar, GogTokenStore
 from vitrine.sources.gog_source import USER_SETTING, GogSource
 
@@ -58,8 +58,8 @@ def test_unauthenticated_store_reports_false(tmp_path: Path) -> None:
 
 @pytest.fixture
 def library(tmp_path: Path) -> object:
-    from vitrine import db
-    from vitrine.library import Library
+    from vitrine.infra import db
+    from vitrine.services.library import Library
 
     conn = db.connect(":memory:")
     db.initialize(conn)

@@ -8,9 +8,9 @@ import time
 
 import pytest
 
-from vitrine import db
-from vitrine.library import Game, Library
-from vitrine.running import GameAlreadyRunning, Runtime
+from vitrine.infra import db
+from vitrine.services.library import Game, Library
+from vitrine.infra.running import GameAlreadyRunning, Runtime
 
 SLEEP = shutil.which("sleep")
 pytestmark = pytest.mark.skipif(not SLEEP, reason="a 'sleep' executable is required")
@@ -116,8 +116,8 @@ if __name__ == "__main__":
 def test_wait_for_exit_tears_down_lingering_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:
     """When a gamescope wrapper outlives the game, _wait_for_exit must kill it
     so the Playing state reverts."""
-    from vitrine import procwatch
-    from vitrine.running import Runtime
+    from vitrine.infra import procwatch
+    from vitrine.infra.running import Runtime
 
     calls = {"term": 0, "kill": 0, "presence": 0}
     monkeypatch.setattr(procwatch, "is_wrapper", lambda pid: True)
@@ -149,8 +149,8 @@ def test_wait_for_exit_never_tears_down_before_game_seen(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Never kill before a real game process appeared (e.g. slow Wine boot)."""
-    from vitrine import procwatch
-    from vitrine.running import Runtime
+    from vitrine.infra import procwatch
+    from vitrine.infra.running import Runtime
 
     term = []
     monkeypatch.setattr(procwatch, "is_wrapper", lambda pid: True)
@@ -177,8 +177,8 @@ def test_wait_for_exit_never_tears_down_before_game_seen(
 
 def test_wait_for_exit_plain_game_just_waits(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unwrapped games (wine/native) block on wait(); never force-killed."""
-    from vitrine import procwatch
-    from vitrine.running import Runtime
+    from vitrine.infra import procwatch
+    from vitrine.infra.running import Runtime
 
     kills = []
     monkeypatch.setattr(procwatch, "is_wrapper", lambda pid: False)
@@ -203,7 +203,7 @@ def test_stop_force_kills_stubborn_process(library: Library) -> None:
     wrapper), so the Playing state can always be torn down."""
     import sys
 
-    from vitrine.running import Runtime
+    from vitrine.infra.running import Runtime
 
     script = (
         "import signal, time;"
@@ -238,7 +238,7 @@ def test_log_callback_streams_output(library: Library) -> None:
     """The debug-log path: a log callback receives the game's stdout lines."""
     import sys
 
-    from vitrine.running import Runtime
+    from vitrine.infra.running import Runtime
 
     script = "print('hello-vitrine'); import time; time.sleep(0.2)"
     game = library.add(

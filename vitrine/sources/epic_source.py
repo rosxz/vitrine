@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import logging
 
-from vitrine import paths
-from vitrine.library import Library
-from vitrine.util import slugify
+from vitrine.infra import paths
+from vitrine.infra.util import slugify
+from vitrine.services.library import Library
 from vitrine.sources.base import Source, SourceGame, registry
 from vitrine.sources.epic import config as epic_config
 from vitrine.sources.epic import legendary as lg

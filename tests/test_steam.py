@@ -200,8 +200,8 @@ def test_token_store_corrupt_file(tmp_path: Path) -> None:
 # -- SteamSource integration -----------------------------------------------------
 
 def _library(tmp_path: Path):
-    from vitrine import db
-    from vitrine.library import Library
+    from vitrine.infra import db
+    from vitrine.services.library import Library
 
     conn = db.connect(":memory:")
     db.initialize(conn)
@@ -223,7 +223,7 @@ def test_steam_source_syncs_with_auth(
 
     library = _library(steam_root)
     monkeypatch.setattr(steam_config, "find_steam_root", lambda: str(steam_root))
-    from vitrine import artwork as artwork_mod
+    from vitrine.services import artwork as artwork_mod
 
     monkeypatch.setattr(artwork_mod, "refresh_game_artwork", lambda _lib, game, force=False: False)
     monkeypatch.setattr(SteamSource, "_owned_games", lambda self, store: [
@@ -265,7 +265,7 @@ def test_steam_source_promotes_provider_art_and_lists_missing(
 
     library = _library(steam_root)
     monkeypatch.setattr(steam_config, "find_steam_root", lambda: str(steam_root))
-    from vitrine.library import Game
+    from vitrine.services.library import Game
 
     # Seed one pre-existing Steam row still carrying the old "local" default.
     library.add(
@@ -291,8 +291,8 @@ def test_steam_source_promotes_provider_art_and_lists_missing(
 def test_games_needing_artwork_force_refresh_setting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """With the global "refresh all" setting on, already-artworked games are
     returned too so a source refresh re-pulls them."""
-    from vitrine import artwork
-    from vitrine.library import Game
+    from vitrine.services import artwork
+    from vitrine.services.library import Game
     from vitrine.sources.steam_source import SteamSource
 
     library = _library(monkeypatch)
@@ -469,9 +469,9 @@ def test_sync_installed_tolerates_absent_numbers(tmp_path: Path, monkeypatch: py
     from vitrine.sources.steam_source import SteamSource
 
     monkeypatch.setattr(ss_mod.paths, "secret_dir", lambda: tmp_path)
-    conn = __import__("vitrine.db", fromlist=["connect"]).connect(":memory:")
-    __import__("vitrine.db", fromlist=["initialize"]).initialize(conn)
-    lib = __import__("vitrine.library", fromlist=["Library"]).Library(conn)
+    conn = __import__("vitrine.infra.db", fromlist=["connect"]).connect(":memory:")
+    __import__("vitrine.infra.db", fromlist=["initialize"]).initialize(conn)
+    lib = __import__("vitrine.services.library", fromlist=["Library"]).Library(conn)
     lib.merge_source_games(
         "steam",
         [SourceGame(source="steam", appid="123", name="G", slug="g")],
@@ -501,7 +501,7 @@ def test_sync_installed_tolerates_absent_numbers(tmp_path: Path, monkeypatch: py
 # -- installed flag stays bool / prune on resync ---------------------------------
 
 def test_owned_installed_is_never_none() -> None:
-    from vitrine.library import Game
+    from vitrine.services.library import Game
 
     # The old expression bool(playtime) or item.get("playtime_2weeks") could be
     # None for a 0-playtime game missing playtime_2weeks -> int(None) crash.
@@ -519,8 +519,8 @@ def test_owned_installed_is_never_none() -> None:
 
 
 def test_prune_source_games_removes_only_uninstalled(tmp_path: Path) -> None:
-    from vitrine import db
-    from vitrine.library import Game, Library
+    from vitrine.infra import db
+    from vitrine.services.library import Game, Library
     from vitrine.sources.base import SourceGame
 
     conn = db.connect(":memory:")
@@ -546,8 +546,8 @@ def test_prune_source_games_removes_only_uninstalled(tmp_path: Path) -> None:
 
 
 def test_prune_source_games_removes_stale_installed_flag(tmp_path: Path) -> None:
-    from vitrine import db
-    from vitrine.library import Library
+    from vitrine.infra import db
+    from vitrine.services.library import Library
     from vitrine.sources.base import SourceGame
 
     conn = db.connect(":memory:")
@@ -590,8 +590,8 @@ def test_read_manifest_playtime_and_install_dir(
         "}",
     )
     monkeypatch.setattr(steam_config, "find_steam_root", lambda: str(steam_root))
-    from vitrine import db
-    from vitrine.library import Library
+    from vitrine.infra import db
+    from vitrine.services.library import Library
 
     conn = db.connect(":memory:")
     db.initialize(conn)
@@ -608,8 +608,8 @@ def test_web_playtime_falls_back_for_missing_manifest_field(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Some manifests carry no playtime_forever; the Web API supplies it."""
-    from vitrine import db
-    from vitrine.library import Library
+    from vitrine.infra import db
+    from vitrine.services.library import Library
     from vitrine.sources.base import SourceGame
     from vitrine.sources.steam_source import SteamSource
 

@@ -18,9 +18,10 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gio, GLib
 
-from vitrine import APP_ID, APP_NAME, paths
-from vitrine.db import connect, initialize
-from vitrine.library import Library
+from vitrine import APP_ID, APP_NAME
+from vitrine.infra import paths
+from vitrine.infra.db import connect, initialize
+from vitrine.services.library import Library
 from vitrine.ui import VitrineWindow
 from vitrine.ui.theme import ThemeManager
 

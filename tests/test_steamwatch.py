@@ -6,7 +6,7 @@ import threading
 
 import pytest
 
-from vitrine import steamwatch
+from vitrine.infra import steamwatch
 
 
 def test_appid_token_match(monkeypatch: pytest.MonkeyPatch) -> None:

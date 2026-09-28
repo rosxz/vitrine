@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import vitrine.gpu as gpu
+import vitrine.infra.gpu as gpu
 
 
 def _fake_mesa(tmp_path, tag):

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import time
 
-from vitrine.library import Game
-from vitrine.session import Session, SessionManager
+from vitrine.services.library import Game
+from vitrine.domain.session import Session, SessionManager
 
 
 class _StubSession(Session):

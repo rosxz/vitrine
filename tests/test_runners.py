@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from vitrine.runners import (
+from vitrine.services.runners import (
     DEFAULT_PROTON_SETTING,
     install_runner,
     list_runners,
@@ -21,7 +21,7 @@ from vitrine.runners import (
 @pytest.fixture
 def runners_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A fake Lutris-style runners dir with two Wine builds."""
-    import vitrine.runners as runners
+    import vitrine.services.runners as runners
 
     # A Wine build (bin/wine) in the wine-runner dir.
     wine_base = tmp_path / "wine_runners" / "wine-ge-8-26"
@@ -79,7 +79,7 @@ def test_store_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_resolve_default_uses_wine_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    import vitrine.runners as runners
+    import vitrine.services.runners as runners
 
     was = runners.shutil.which
     monkeypatch.setattr(runners.shutil, "which", lambda name: "/usr/bin/wine")
@@ -104,7 +104,7 @@ def test_install_and_remove_registration() -> None:
 
 
 def test_runner_path_resolves(runners_dir: Path) -> None:
-    from vitrine.runners import runner_path
+    from vitrine.services.runners import runner_path
 
     path = runner_path("wine-ge-8-26", {})
     assert path.endswith("bin/wine")
@@ -116,13 +116,13 @@ def test_default_proton_setting_key() -> None:
 
 
 def test_launch_plan_uses_resolved_runner(monkeypatch: pytest.MonkeyPatch) -> None:
-    from vitrine.launch import build_launch_plan
-    from vitrine.library import Game
+    from vitrine.services.launch import build_launch_plan
+    from vitrine.services.library import Game
 
     # Patch where launch.py actually looks it up (runners.resolve_game_runner ->
     # runners.resolve_runner).
     monkeypatch.setattr(
-        "vitrine.runners.resolve_runner",
+        "vitrine.services.runners.resolve_runner",
         lambda *a, **k: "/opt/wine-ge/bin/wine",
     )
     game = Game(name="G", executable="/bin/sh", runner="wine", config={"runner": "ge-proton-1"})
@@ -131,8 +131,8 @@ def test_launch_plan_uses_resolved_runner(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_run_game_non_native_starts_with_wine(runners_dir: Path) -> None:
-    from vitrine.launch import build_launch_plan
-    from vitrine.library import Game
+    from vitrine.services.launch import build_launch_plan
+    from vitrine.services.library import Game
 
     game = Game(name="G", executable="/opt/game.exe", runner="wine")
     plan = build_launch_plan(game, {"wine_binary": None}, {})
@@ -140,7 +140,7 @@ def test_run_game_non_native_starts_with_wine(runners_dir: Path) -> None:
     assert "/opt/game.exe" in plan.command
 
 def test_available_protons_parses_releases(monkeypatch: pytest.MonkeyPatch) -> None:
-    from vitrine.runners_source import _available_protons
+    from vitrine.services.runners_source import _available_protons
 
     class _Req:
         def __enter__(self):
@@ -175,7 +175,7 @@ def test_available_protons_parses_releases(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_runner_from_path_derives_name_and_kind(tmp_path: Path) -> None:
-    from vitrine.runners import _runner_from_path
+    from vitrine.services.runners import _runner_from_path
 
     # Proton build: …/Proton 11.0/files/bin/wine
     proton_dir = tmp_path / "Proton 11.0" / "files"
@@ -198,7 +198,7 @@ def test_runner_from_path_derives_name_and_kind(tmp_path: Path) -> None:
 
 
 def test_get_runner_finds_by_id_and_kind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from vitrine.runners import get_runner
+    from vitrine.services.runners import get_runner
 
     proton_dir = tmp_path / "Proton 12.0" / "files"
     (proton_dir / "bin").mkdir(parents=True)
@@ -213,7 +213,7 @@ def test_get_runner_finds_by_id_and_kind(tmp_path: Path, monkeypatch: pytest.Mon
 
 
 def test_has_x11_driver(tmp_path: Path) -> None:
-    from vitrine.runners import has_x11_driver
+    from vitrine.services.runners import has_x11_driver
 
     loc = tmp_path / "build" / "bin" / "wine"
     loc.parent.mkdir(parents=True)
@@ -232,7 +232,7 @@ def test_has_x11_driver(tmp_path: Path) -> None:
 
 def test_sidebar_default_proton_drives_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
     """Launch must honour the sidebar "Default Proton" when a game has no override."""
-    from vitrine.runners import DEFAULT_PROTON_SETTING, get_runner, resolve_runner
+    from vitrine.services.runners import DEFAULT_PROTON_SETTING, get_runner, resolve_runner
 
     class Lib:
         def __init__(self, d):

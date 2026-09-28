@@ -19,7 +19,7 @@ import os
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
-from vitrine.library import Game
+from vitrine.services.library import Game
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +120,7 @@ class GameEntry(ABC):
                 pass
 
         if remove_prefix:
-            from vitrine.launch import wine_prefix_for
+            from vitrine.services.launch import wine_prefix_for
 
             prefix = str(wine_prefix_for(self.game))
             if os.path.isdir(prefix):
@@ -243,10 +243,10 @@ class GogGameEntry(GameEntry):
         return True
 
     def _install_gog(self) -> None:
+        from vitrine.infra.util import slugify
         from vitrine.sources.gog import gogdl
         from vitrine.sources.gog_source import GogSource
         from vitrine.sources.steam_source import SteamAuthError  # noqa: F401
-        from vitrine.util import slugify
 
         game_id = self.game.source_id or ""
         if not game_id:
@@ -270,7 +270,7 @@ class GogGameEntry(GameEntry):
             return
 
         store = source.login_token_store()
-        from vitrine import paths
+        from vitrine.infra import paths
 
         try:
             auth_path = str(paths.cache_dir() / "gogdl-auth.json")
@@ -370,10 +370,10 @@ class EpicGameEntry(GameEntry):
         self._launch_epic()
 
     def _launch_epic(self) -> None:
-        from vitrine.launch import _proton_dist_dir, install_d3d_extras, wine_prefix_for
-        from vitrine.runners import has_x11_driver, load_runners_store, resolve_game_runner
+        from vitrine.infra.wine import umu
+        from vitrine.services.launch import _proton_dist_dir, install_d3d_extras, wine_prefix_for
+        from vitrine.services.runners import has_x11_driver, load_runners_store, resolve_game_runner
         from vitrine.sources.epic import legendary as lg
-        from vitrine.wine import umu
 
         app = self.game.source_id or ""
         if not app:
@@ -406,7 +406,7 @@ class EpicGameEntry(GameEntry):
             except umu.UmuError as exc:
                 self._toast(str(exc))
                 return
-            from vitrine.prefix import stop_wineserver
+            from vitrine.infra.prefix import stop_wineserver
 
             stop_wineserver(wine_bin, wine_prefix, steam_run=True)
             exe = lg.installed_executable(app)
@@ -423,7 +423,7 @@ class EpicGameEntry(GameEntry):
             )
             # Do NOT apply the Nix driver env here (breaks pressure-vessel);
             # only carry the GL driver paths for legacy wined3d titles.
-            from vitrine.gpu import discover as _gpu_discover
+            from vitrine.infra.gpu import discover as _gpu_discover
 
             _gpu = _gpu_discover()
             if _gpu.dri_dir:
@@ -437,7 +437,7 @@ class EpicGameEntry(GameEntry):
                 off = "d3d10core=n;d3d11=n;dxgi=n"
                 env.setdefault("WINEDLLOVERRIDES", "")
                 env["WINEDLLOVERRIDES"] = (env["WINEDLLOVERRIDES"] + ";" if env["WINEDLLOVERRIDES"] else "") + off
-            from vitrine.launch import apply_performance_env
+            from vitrine.services.launch import apply_performance_env
 
             apply_performance_env(env, config)
             for key, value in (config.get("env") or {}).items():
@@ -446,7 +446,7 @@ class EpicGameEntry(GameEntry):
             if config.get("locale"):
                 env["LANG"] = str(config["locale"])
                 env["LC_ALL"] = str(config["locale"])
-            from vitrine.launch import gamescope_wrap
+            from vitrine.services.launch import gamescope_wrap
 
             if config.get("gamescope", False):
                 command = gamescope_wrap(config, command)
@@ -455,7 +455,7 @@ class EpicGameEntry(GameEntry):
                 proton=True, exe=exe, wine_bin=wine_bin, wine_prefix=wine_prefix,
             )
         else:
-            from vitrine.prefix import prepare_prefix
+            from vitrine.infra.prefix import prepare_prefix
 
             try:
                 prepare_prefix(wine_bin, wine_prefix, steam_run=False)
@@ -465,7 +465,7 @@ class EpicGameEntry(GameEntry):
             env = dict(os.environ)
             env["WINEARCH"] = "win64"
             env["WINEDLLOVERRIDES"] = "winemenubuilder.exe=d"
-            from vitrine.gpu import driver_env
+            from vitrine.infra.gpu import driver_env
 
             env = driver_env(env)
             d3d_overrides = install_d3d_extras(wine_prefix)

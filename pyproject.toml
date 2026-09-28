@@ -22,8 +22,8 @@ dev = [
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["vitrine", "vitrine.sources", "vitrine.ui"]
+[tool.setuptools.packages.find]
+include = ["vitrine*"]
 
 [tool.ruff]
 line-length = 120

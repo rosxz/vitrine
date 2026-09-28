@@ -7,7 +7,7 @@ so it is a useful tile/hero fallback for Steam titles. Returns candidate lists
 
 from __future__ import annotations
 
-from vitrine.artwork_providers.base import Art
+from vitrine.services.artwork_providers.base import Art
 
 STEAM_CDN = "https://cdn.akamai.steamstatic.com/steam/apps/%s/%s"
 STEAM_CDN_SHARED = "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/%s/%s"

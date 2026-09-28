@@ -18,9 +18,9 @@ import re
 
 import requests
 
-from vitrine import paths
-from vitrine.library import Game, Library
-from vitrine.util import slugify
+from vitrine.infra import paths
+from vitrine.infra.util import slugify
+from vitrine.services.library import Game, Library
 from vitrine.sources.base import Source, SourceGame, registry
 from vitrine.sources.gog.auth import GogAuthError, GogTokenStore
 

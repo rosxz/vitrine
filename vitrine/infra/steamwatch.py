@@ -21,7 +21,7 @@ import signal
 import threading
 from collections.abc import Callable
 
-from vitrine import procwatch
+from vitrine.infra import procwatch
 
 logger = logging.getLogger(__name__)
 

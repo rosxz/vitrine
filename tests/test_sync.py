@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from vitrine import db
-from vitrine.library import Library
-from vitrine.sync import AuthRequired, SyncService
+from vitrine.infra import db
+from vitrine.services.library import Library
+from vitrine.services.sync import AuthRequired, SyncService
 
 
 @pytest.fixture

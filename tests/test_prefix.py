@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from vitrine.prefix import (
+from vitrine.infra.prefix import (
     detect_prefix_arch,
     open_winecfg_command,
     prepare_prefix,
@@ -154,7 +154,7 @@ def _fake_proton(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def test_proton_default_pfx_located(tmp_path: Path) -> None:
-    from vitrine.prefix import _proton_default_pfx
+    from vitrine.infra.prefix import _proton_default_pfx
 
     root, wine = _fake_proton(tmp_path)
     dp = _proton_default_pfx(str(wine))
@@ -162,7 +162,7 @@ def test_proton_default_pfx_located(tmp_path: Path) -> None:
 
 
 def test_seed_from_proton_absolutizes_builtin_symlinks(tmp_path: Path) -> None:
-    from vitrine.prefix import _seed_from_proton
+    from vitrine.infra.prefix import _seed_from_proton
 
     root, wine = _fake_proton(tmp_path)
     target = tmp_path / "prefix"
@@ -184,7 +184,7 @@ def test_seed_from_proton_absolutizes_builtin_symlinks(tmp_path: Path) -> None:
 
 
 def test_seed_returns_false_without_proton_pfx(tmp_path: Path) -> None:
-    from vitrine.prefix import _seed_from_proton
+    from vitrine.infra.prefix import _seed_from_proton
 
     wine = _fake_wine(tmp_path)  # plain wine layout, no default_pfx
     assert _seed_from_proton(str(wine), tmp_path / "prefix") is False

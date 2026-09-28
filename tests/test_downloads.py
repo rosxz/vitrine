@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from vitrine.downloads import DownloadJob, _extract_percent, run_download
+from vitrine.services.downloads import DownloadJob, _extract_percent, run_download
 
 
 def test_extract_percent() -> None:

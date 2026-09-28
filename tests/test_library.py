@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from vitrine import SCHEMA_VERSION, db
-from vitrine.library import DEFAULT_CONFIG, Game, Library
+from vitrine import SCHEMA_VERSION
+from vitrine.infra import db
+from vitrine.services.library import DEFAULT_CONFIG, Game, Library
 
 
 @pytest.fixture

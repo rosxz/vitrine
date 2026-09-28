@@ -16,8 +16,8 @@ import threading
 import time
 from collections.abc import Callable
 
-from vitrine import launch
-from vitrine.library import Game
+from vitrine.services import launch
+from vitrine.services.library import Game
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +87,8 @@ class Runtime:
             # the runner; use it for the proton (steam-run) flag so classification
             # happens exactly once.
             if game.runner not in (None, "", "linux", "native"):
-                from vitrine.prefix import prepare_prefix
-                from vitrine.runners import resolve_game_runner
+                from vitrine.infra.prefix import prepare_prefix
+                from vitrine.services.runners import resolve_game_runner
 
                 _runner, wine_path = resolve_game_runner(game, config, runners_store, library=None)
                 prepare_prefix(
@@ -129,7 +129,7 @@ class Runtime:
         ``kill`` is accepted for :class:`Session` interface compatibility and
         defaults to force-close (wrappers must always be killed).
         """
-        from vitrine import procwatch
+        from vitrine.infra import procwatch
 
         with self._lock:
             process = self._process
@@ -185,7 +185,7 @@ class Runtime:
         ``linger_polls`` polls -- so we never kill a game that is still coming
         up or running. Plain (unwrapped) games block on ``wait()`` like always.
         """
-        from vitrine import procwatch
+        from vitrine.infra import procwatch
 
         if not procwatch.is_wrapper(process.pid):
             return process.wait()

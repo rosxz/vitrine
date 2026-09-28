@@ -48,7 +48,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, GLib
 
 from vitrine.application import VitrineApplication
-from vitrine.library import Game
+from vitrine.domain.game import Game
 from vitrine.ui import VitrineWindow
 from vitrine.ui.game_dialogs import AddGameDialog, GameSettingsDialog
 from vitrine.ui.settings_dialog import SettingsDialog

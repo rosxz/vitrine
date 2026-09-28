@@ -12,9 +12,9 @@ from typing import TYPE_CHECKING
 
 from gi.repository import Adw, GLib, Gtk
 
-from vitrine.gpu import apply_gpu_env
-from vitrine.library import SHOW_DETAIL_SETTING, SHOW_HIDDEN, Game, Library
-from vitrine.running import GameAlreadyRunning, Runtime
+from vitrine.infra.gpu import apply_gpu_env
+from vitrine.infra.running import GameAlreadyRunning, Runtime
+from vitrine.services.library import SHOW_DETAIL_SETTING, SHOW_HIDDEN, Game, Library
 from vitrine.sources import registry
 from vitrine.sources.steam_source import SteamSource
 from vitrine.ui.game_detail_bar import GameDetailBar
@@ -73,7 +73,7 @@ def _gamescope_wrap(config: dict, command: list[str]) -> list[str]:
     single :func:`launch.gamescope_wrap` implementation so gamescope flag
     handling is consistent for every source.
     """
-    from vitrine.launch import gamescope_wrap as _shared_gamescope_wrap
+    from vitrine.services.launch import gamescope_wrap as _shared_gamescope_wrap
 
     return _shared_gamescope_wrap(config, command)
 
@@ -184,7 +184,7 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         # Unified session/bookkeeping coordinator (GUI-free). Installs register
         # here; the running-game slots are folded onto it in the GameEntry step.
-        from vitrine.session import SessionManager
+        from vitrine.domain.session import SessionManager
 
         self.sessions: SessionManager = SessionManager()
 
@@ -376,7 +376,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.reload()
 
     def _refresh_runner_dropdown(self) -> None:
-        from vitrine.runners import DEFAULT_PROTON_SETTING, list_runners, load_runners_store
+        from vitrine.services.runners import DEFAULT_PROTON_SETTING, list_runners, load_runners_store
 
         runners = list_runners(load_runners_store(self.library))
         self._runner_ids = [r.id for r in runners]
@@ -390,7 +390,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.default_runner_dropdown.connect("notify::selected", self._on_default_runner_selected)
 
     def _on_default_runner_selected(self, dropdown: Gtk.DropDown, _pspec: object) -> None:
-        from vitrine.runners import DEFAULT_PROTON_SETTING
+        from vitrine.services.runners import DEFAULT_PROTON_SETTING
 
         index = dropdown.get_selected()
         if 0 <= index < len(self._runner_ids):
@@ -468,7 +468,7 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     def _run_sync(self, source_id: str) -> None:
         """Refresh ``source_id`` through SyncService (auth-check + artwork)."""
-        from vitrine.sync import AuthRequired, SyncService
+        from vitrine.services.sync import AuthRequired, SyncService
 
         def on_toast(title: str) -> None:
             self.toasts.add_toast(Adw.Toast(title=title))
@@ -504,8 +504,8 @@ class VitrineWindow(Adw.ApplicationWindow):
         stalled, or the depot had nothing to write), fall back to the
         interactive offline installer.
         """
+        from vitrine.infra.util import slugify
         from vitrine.sources.gog import gogdl
-        from vitrine.util import slugify
 
         game_id = game.config.get("gog_id") or game.source_id or ""
         install_dir = game.config.get("gog_install_dir")
@@ -554,7 +554,7 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     def _gog_auth_path(self) -> str:
         """The gogdl auth-config path used by GOG installs."""
-        from vitrine import paths
+        from vitrine.infra import paths
 
         return str(paths.cache_dir() / "gogdl-auth.json")
 
@@ -564,8 +564,8 @@ class VitrineWindow(Adw.ApplicationWindow):
         self, game: Game, command: list[str], *, log: bool = True, timeout: float | None = None, cwd: str | None = None
     ) -> object:
         """Run ``command`` as a tracked download job, optionally streamed to a log."""
-        from vitrine.downloads import run_download
-        from vitrine.library import DEBUG_LOG_SETTING
+        from vitrine.services.downloads import run_download
+        from vitrine.services.library import DEBUG_LOG_SETTING
         from vitrine.ui.log_window import ExecutionLogWindow
 
         if log and self.library.setting(DEBUG_LOG_SETTING, False):
@@ -611,7 +611,7 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     def log_window(self, title: str):
         """Open a debug log window honoring the debug-log setting, else None."""
-        from vitrine.library import DEBUG_LOG_SETTING
+        from vitrine.services.library import DEBUG_LOG_SETTING
 
         if not self.library.setting(DEBUG_LOG_SETTING, False):
             return None
@@ -661,8 +661,8 @@ class VitrineWindow(Adw.ApplicationWindow):
         and routes running-state, playtime-on-exit and the log window uniformly.
         The per-source command/env building lives in the GameEntry strategy.
         """
-        from vitrine.downloads import run_download
-        from vitrine.library import DUMP_LAUNCH_ENV_SETTING
+        from vitrine.services.downloads import run_download
+        from vitrine.services.library import DUMP_LAUNCH_ENV_SETTING
 
         if self.library.setting(DUMP_LAUNCH_ENV_SETTING, False):
             self._dump_launch(command, env)
@@ -723,7 +723,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             return
         # Delegate post-install work (re-sync installed / resolve executable) to
         # the source's GameEntry strategy, which knows how to finish its install.
-        from vitrine.entries import entry_for
+        from vitrine.domain.entry import entry_for
 
         try:
             entry_for(game, self).on_install_finished(returncode, output)
@@ -744,7 +744,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         """Fetch artwork for many games on a worker pool, off the UI thread."""
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        from vitrine.artwork import fetch_game_artwork, load_context
+        from vitrine.services.artwork import fetch_game_artwork, load_context
 
         # Snapshot credentials + priority on the main thread; workers must not
         # touch the library's sqlite connection.
@@ -892,7 +892,7 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     def _on_refresh_artwork(self, game: Game) -> None:
         try:
-            from vitrine.artwork import refresh_game_artwork
+            from vitrine.services.artwork import refresh_game_artwork
 
             changed = refresh_game_artwork(self.library, game, force=True)
         except Exception as exc:  # noqa: BLE001 - surface as a toast, not a crash.
@@ -909,7 +909,7 @@ class VitrineWindow(Adw.ApplicationWindow):
     def _maybe_show_provider_hint(self) -> None:
         """One-time hint when no artwork provider key is configured."""
         try:
-            from vitrine.artwork import mark_provider_hint_shown, provider_hint_pending
+            from vitrine.services.artwork import mark_provider_hint_shown, provider_hint_pending
 
             if provider_hint_pending(self.library):
                 mark_provider_hint_shown(self.library)
@@ -934,7 +934,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         store games (GOG/Epic) revert to *available but not installed*: we ask
         whether to delete the prefix, uninstall the files, and keep the entry.
         """
-        from vitrine.entries import entry_for
+        from vitrine.domain.entry import entry_for
 
         entry_for(game, self).on_uninstall()
 
@@ -1000,7 +1000,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         how to remove their files), then reflects the library + UI state here.
         """
         if game.id is not None:
-            from vitrine.entries import entry_for
+            from vitrine.domain.entry import entry_for
 
             entry_for(game, self).uninstall(remove_prefix=remove_prefix)
         self.reload()
@@ -1010,7 +1010,7 @@ class VitrineWindow(Adw.ApplicationWindow):
     def on_game_activated(self, game: Game) -> None:
         # Every source shares the same Play flow: stop-if-running, else install,
         # else launch. The per-source behaviour lives in GameEntry subclasses.
-        from vitrine.entries import entry_for
+        from vitrine.domain.entry import entry_for
 
         entry_for(game, self).on_launch()
 
@@ -1032,8 +1032,8 @@ class VitrineWindow(Adw.ApplicationWindow):
             return
         config = game.merged_config(self.library.global_config())
         try:
-            from vitrine.library import DEBUG_LOG_SETTING
-            from vitrine.runners import load_runners_store
+            from vitrine.services.library import DEBUG_LOG_SETTING
+            from vitrine.services.runners import load_runners_store
 
             # Debug log window (local/GOG games): stream the game's output into
             # it so issues are visible regardless of source.
@@ -1044,7 +1044,7 @@ class VitrineWindow(Adw.ApplicationWindow):
                 log = ExecutionLogWindow(f"Launching {game.name}", parent=self)
                 log.present()
 
-            from vitrine.launch import LaunchPlan
+            from vitrine.services.launch import LaunchPlan
 
             def report_plan(plan: LaunchPlan) -> None:
                 if log is None:
@@ -1106,7 +1106,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.toasts.add_toast(Adw.Toast(title=f"Could not launch {game.name} via Steam"))
             return
 
-        from vitrine import steamwatch
+        from vitrine.infra import steamwatch
 
         source = SteamSource(self.library)
         installdir = source.installed_game_dir(appid)
@@ -1149,7 +1149,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         if log is not None:
             log.append_line(f"[launcher exited with code {returncode}]")
         if wine_binary and wine_prefix:
-            from vitrine.prefix import stop_wineserver
+            from vitrine.infra.prefix import stop_wineserver
 
             stop_wineserver(wine_binary, wine_prefix, steam_run=True)
         self._marshal(lambda: self._epic_playtime_exit(game))
@@ -1158,7 +1158,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         """Write the exact Proton launch command + environment to a log file for
         debugging window-presentation issues."""
         try:
-            from vitrine import paths
+            from vitrine.infra import paths
 
             dest = paths.cache_dir() / "proton-launch.env"
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1173,13 +1173,13 @@ class VitrineWindow(Adw.ApplicationWindow):
         """Open winecfg for the game's prefix so deps/drives can be configured."""
         import subprocess
 
-        from vitrine.prefix import open_winecfg_command, prepare_prefix
-        from vitrine.runners import load_runners_store, resolve_game_runner
+        from vitrine.infra.prefix import open_winecfg_command, prepare_prefix
+        from vitrine.services.runners import load_runners_store, resolve_game_runner
         config = game.merged_config(self.library.global_config())
         store = load_runners_store(self.library)
         runner, wine_bin = resolve_game_runner(game, config, store, library=self.library)
         is_proton = bool(runner and runner.is_proton)
-        from vitrine.launch import wine_prefix_for
+        from vitrine.services.launch import wine_prefix_for
 
         wine_prefix = str(wine_prefix_for(game))
         try:
@@ -1197,7 +1197,7 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     def _recreate_prefix(self, game: Game) -> None:
         """Open an independent confirmation window for rebuilding the prefix."""
-        from vitrine.prefix import recreate_prefix_for_game
+        from vitrine.infra.prefix import recreate_prefix_for_game
 
         def on_started() -> None:
             self._marshal(
@@ -1236,7 +1236,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         """Open a store game's page in the system browser."""
         from gi.repository import Gio
 
-        from vitrine.entries import entry_for
+        from vitrine.domain.entry import entry_for
 
         url = entry_for(game, self).store_url()
         if not url:
@@ -1252,7 +1252,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         running = self.sessions.running_game
         if running is None:
             return
-        from vitrine.entries import entry_for
+        from vitrine.domain.entry import entry_for
 
         entry_for(running, self).on_stop()
         self.toasts.add_toast(Adw.Toast(title=f"Stopping {running.name}"))
@@ -1315,7 +1315,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         :class:`GameEntry`, so this menu is derived from the entry's capabilities
         instead of hardcoded ``game.source`` branches.
         """
-        from vitrine.entries import entry_for
+        from vitrine.domain.entry import entry_for
 
         entry = entry_for(game, self)
         items: list[tuple[str, Callable[[], None]]] = [
@@ -1349,7 +1349,7 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     def _open_prefix_dir(self, game: Game) -> None:
         """Reveal the game's Wine/Proton prefix directory in the file manager."""
-        from vitrine.launch import wine_prefix_for
+        from vitrine.services.launch import wine_prefix_for
 
         self._open_directory(str(wine_prefix_for(game)))
 
@@ -1361,13 +1361,13 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     def _game_install_dir(self, game: Game) -> str | None:
         """Resolve the directory where the game's files actually live."""
-        from vitrine.entries import entry_for
+        from vitrine.domain.entry import entry_for
 
         return entry_for(game, self).install_dir()
 
     def install_game(self, game: Game) -> None:
         """Install an owned but not-yet-installed store game (via its entry)."""
-        from vitrine.entries import entry_for
+        from vitrine.domain.entry import entry_for
 
         entry = entry_for(game, self)
         entry.on_install() if hasattr(entry, "on_install") else self.open_store_page(game)
@@ -1390,7 +1390,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             log = self._launch_logs.pop(game.id, None) if game.id is not None else None
             if log is not None:
                 log.append_line(f"[launcher exited with code {returncode}]")
-            from vitrine.entries import entry_for
+            from vitrine.domain.entry import entry_for
 
             entry_for(game, self).record_exit(hours, returncode, self.library)
             self.reload()
@@ -1421,7 +1421,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             self._downloads.pop(game.id, None)
         self.sessions.end()
         if started:
-            from vitrine.entries import entry_for
+            from vitrine.domain.entry import entry_for
 
             entry_for(game, self).record_exit(started / 3600.0, None, self.library)
         self._refresh_running_state()
@@ -1431,7 +1431,7 @@ class VitrineWindow(Adw.ApplicationWindow):
     def stop_epic(self, game: Game) -> None:
         """Force-stop an Epic game under legendary: kill the tracked job/proc."""
         job = self._downloads.get(game.id) if game.id is not None else None
-        from vitrine.downloads import DownloadJob
+        from vitrine.services.downloads import DownloadJob
 
         if isinstance(job, DownloadJob):
             job.stop()
@@ -1442,7 +1442,7 @@ class VitrineWindow(Adw.ApplicationWindow):
     @staticmethod
     def _stop_process(proc) -> None:
         """SIGTERM then SIGKILL a child process tree."""
-        from vitrine import procwatch
+        from vitrine.infra import procwatch
 
         procwatch.terminate_tree(proc.pid)
         import time as _time
@@ -1460,7 +1460,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.sessions.end()
         self._refresh_running_state()
         self.toasts.add_toast(Adw.Toast(title=f"{game.name} closed"))
-        from vitrine.entries import entry_for
+        from vitrine.domain.entry import entry_for
 
         entry_for(game, self).record_exit(0.0, None, self.library)
 
@@ -1468,7 +1468,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         """Force-stop a Steam game: SIGTERM, then SIGKILL if it ignores it."""
         import time as _time
 
-        from vitrine import steamwatch
+        from vitrine.infra import steamwatch
 
         appid = game.source_id or (self.steam_watcher.appid if self.steam_watcher else "")
         installdir = self.steam_watcher.installdir if self.steam_watcher else None
