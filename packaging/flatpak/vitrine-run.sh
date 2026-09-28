@@ -12,4 +12,10 @@ export VITRINE_D3D_EXTRAS=/app/share/vitrine/d3d_extras
 export PYTHONPATH=/app/share/vitrine
 export PATH=/app/bin:$PATH
 
+# Use the bundled fontconfig so UI text follows the machine's own fonts (the
+# GNOME runtime's default DejaVu is heavier than most desktop hosts' UI font).
+if [ -f /app/share/vitrine/fonts.conf ]; then
+  export FONTCONFIG_FILE=/app/share/vitrine/fonts.conf
+fi
+
 exec /usr/bin/python3 -m vitrine "$@"

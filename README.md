@@ -60,6 +60,11 @@ Flatpak's Mesa/GL extension (just needs `--device=dri`). Rebuild it with:
 tools/build-flatpak.sh
 ```
 
+The Flatpak bundles a fontconfig override (`packaging/flatpak/fonts.conf`) so
+UI text follows the machine's own fonts instead of the GNOME runtime's heavier
+DejaVu default — on a typical desktop host this resolves to the system UI font
+(e.g. Source Han Sans on this NixOS setup).
+
 **Steam works out of the box.** A `steam://rungameid/<appid>` URI is handed to
 the host's own Steam through the OpenURI portal; the game actually runs on the
 host (with the host's Proton and GPU), so Vitrine never needs to launch Wine in
