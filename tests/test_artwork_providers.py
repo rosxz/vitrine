@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from vitrine.services import artwork
 from vitrine.infra import db
+from vitrine.services import artwork
 from vitrine.services.artwork_providers import base
 from vitrine.services.library import Game, Library
 
