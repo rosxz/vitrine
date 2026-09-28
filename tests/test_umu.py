@@ -34,6 +34,9 @@ def test_umu_env_is_clean_and_sets_protocol_vars(monkeypatch: pytest.MonkeyPatch
     assert env["WINEPREFIX"] == "/home/u/.local/share/vitrine/prefixes/game"
     assert env["PROTONPATH"] == "/proton"
     assert env["WINEARCH"] == "win64"
+    # The install dir is passed to umu so Proton maps the game drive.
+    assert env["STEAM_COMPAT_INSTALL_PATH"] == "/games/slug"
+    assert env["STEAM_COMPAT_MOUNTS"] == "/games/slug"
     assert "LD_LIBRARY_PATH" not in env
     assert "STEAM_RUNTIME_LIBRARY_PATH" not in env
     assert "/usr/bin:/bin" in env["PATH"]

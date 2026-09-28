@@ -118,6 +118,14 @@ def umu_env(
     env["WINEPREFIX"] = os.path.expanduser(prefix)
     if proton_path:
         env["PROTONPATH"] = proton_path
+    # Tell umu/Proton where the game actually lives so it maps the game drive.
+    # Without STEAM_COMPAT_INSTALL_PATH, Proton derives the parent path for the
+    # game drive from the executable location -- which under the Flatpak falls
+    # back to ~/.var/app/<id> and fails with "unable to use parent for game
+    # drive". Explicitly set the install dir (+ its parent mount) as documented.
+    if install_path:
+        env["STEAM_COMPAT_MOUNTS"] = install_path
+        env["STEAM_COMPAT_INSTALL_PATH"] = install_path
     if extra:
         # Never let extra override the core umu vars.
         for key, value in extra.items():
