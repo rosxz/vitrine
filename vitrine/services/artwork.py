@@ -410,7 +410,14 @@ def user_art_pairs(cset: CandidateSet) -> dict[str, dict[str, list[Art]]]:
 # --- credentials & provider priority -----------------------------------------
 
 def load_credentials(library: Any = None) -> dict[str, str]:
-    """Merge env + settings into an credentials dict for the providers."""
+    """Merge env + settings into an credentials dict for the providers.
+
+    Precedence: environment variables, then the app's own settings, then (as a
+    read-only fallback for the Flatpak, whose sandbox DB is separate from the
+    host profile) the host's ``~/.local/share/vitrine/library.db`` settings --
+    so artwork keys configured on the NixOS host are reused instead of the app
+    silently losing them and failing provider probes.
+    """
     creds = {
         "igdb_client_id": os.environ.get(ENV_IGDB_CLIENT_ID) or "",
         "igdb_client_secret": os.environ.get(ENV_IGDB_CLIENT_SECRET) or "",
@@ -426,7 +433,57 @@ def load_credentials(library: Any = None) -> dict[str, str]:
                 value = library.setting(setting_key)
                 if value:
                     creds[cred_key] = str(value)
+    # Flatpak fallback: read the host profile's settings DB (read-only). This
+    # only applies inside a Flatpak sandbox (its $XDG_DATA_HOME is redirected to
+    # the sandbox), so native runs and tests are unaffected.
+    if os.environ.get("XDG_DATA_HOME", "").find(".var/app/") >= 0:
+        for cred_key, setting_key in (
+            ("igdb_client_id", IGDB_CLIENT_ID_SETTING),
+            ("igdb_client_secret", IGDB_CLIENT_SECRET_SETTING),
+            ("steamgriddb_key", STEAMGRIDDB_KEY_SETTING),
+        ):
+            if not creds[cred_key]:
+                value = _host_setting(setting_key)
+                if value:
+                    creds[cred_key] = value
     return creds
+
+
+def _host_setting(key: str) -> str:
+    """Read ``key`` from the host's vitrine settings DB, or ``""``.
+
+    Used by the Flatpak build where ``$XDG_DATA_HOME`` is redirected into the
+    sandbox (``~/.var/app/<id>/data``); the host profile's DB lives at the
+    corresponding ``~/.local/share/vitrine/library.db``. Pure read-only.
+    """
+    import pathlib
+    import sqlite3
+
+    xdg_data = os.environ.get("XDG_DATA_HOME", "")
+    if ".var/app/" in xdg_data and xdg_data.rstrip("/").endswith("data"):
+        var_app_data = pathlib.Path(xdg_data.rstrip("/"))   # ~/.var/app/<id>/data
+        # Up to the user home: data -> <id> -> app -> .var -> home
+        db_path = var_app_data.parents[3] / ".local" / "share" / "vitrine" / "library.db"
+    else:
+        db_path = pathlib.Path.home() / ".local" / "share" / "vitrine" / "library.db"
+    try:
+        if not db_path.is_file():
+            return ""
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        finally:
+            conn.close()
+        if not row or not row[0]:
+            return ""
+        import json as _json
+
+        try:
+            return str(_json.loads(row[0]))
+        except (ValueError, TypeError):
+            return str(row[0])
+    except Exception:  # noqa: BLE001 - never block artwork on a host read
+        return ""
 
 
 def load_priority(library: Any = None) -> tuple[list[str], list[str]]:

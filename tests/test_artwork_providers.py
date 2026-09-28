@@ -226,3 +226,34 @@ def test_fetch_respects_dim_and_never_upscales(
     # Banner cropped to 16:9 → 1600x900 → capped by 720 → 720x405.
     assert banner.width <= 720 and banner.height <= 720
     assert abs(banner.width / banner.height - artwork.BANNER_RATIO) <= 1e-3
+
+def test_load_credentials_flatpak_falls_back_to_host_db(
+    library: Library, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Inside a Flatpak sandbox, missing keys are read from the host profile DB."""
+    host_dir = tmp_path / ".local" / "share" / "vitrine"
+    host_dir.mkdir(parents=True)
+    from vitrine.infra import db as infra_db
+
+    conn = infra_db.connect(host_dir / "library.db")
+    infra_db.initialize(conn)
+    from vitrine.services.library import Library as L
+
+    L(conn).set_setting("igdb_client_id", "hostid")
+    L(conn).set_setting("igdb_client_secret", "hostsecret")
+    conn.close()
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / ".var/app/io.x/data"))
+    from vitrine.services import artwork
+
+    # Library has no keys -> host fallback supplies them.
+    library.set_setting("igdb_client_id", "")
+    library.set_setting("igdb_client_secret", "")
+    creds = artwork.load_credentials(library)
+    assert creds["igdb_client_id"] == "hostid"
+    assert creds["igdb_client_secret"] == "hostsecret"
+
+    # An explicit library key takes precedence over the host fallback.
+    library.set_setting("igdb_client_id", "localid")
+    creds = artwork.load_credentials(library)
+    assert creds["igdb_client_id"] == "localid"
