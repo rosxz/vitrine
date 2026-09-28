@@ -93,6 +93,16 @@ class GameEntry(ABC):
             return
         raise NotImplementedError("controller has no prompt_uninstall")
 
+    def record_exit(self, hours: float, returncode: int | None, library) -> None:
+        """Record playtime for a finished session.
+
+        The default policy accumulates wall-clock hours locally (used by local,
+        GOG and Epic games, which have no authoritative server value). Steam
+        overrides this to read the value Steam itself maintains.
+        """
+        if hours > 0:
+            library.record_playtime(self.game, hours)
+
     # -- controller convenience -------------------------------------------------
 
     def _toast(self, title: str) -> None:
@@ -430,10 +440,14 @@ class SteamGameEntry(GameEntry):
             return None
         return f"https://store.steampowered.com/app/{appid}"
 
-
-# ---------------------------------------------------------------------------
-# Registry / factory
-# ---------------------------------------------------------------------------
+    def record_exit(self, hours: float, returncode: int | None, library) -> None:
+        # Steam is the authoritative owner of its playtime. We don't accumulate
+        # wall-clock hours locally; instead the controller refreshes the value
+        # Steam wrote (manifest / Web API) after the session ends. The controller
+        # is Duck-typed and may override ``steam_playtime_refresh``.
+        refresh = getattr(self.controller, "steam_playtime_refresh", None)
+        if callable(refresh):
+            refresh(self.game)
 
 _ENTRIES: dict[str, type[GameEntry]] = {}
 

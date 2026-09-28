@@ -8,6 +8,8 @@ the downloaded CLI internals.
 
 from __future__ import annotations
 
+import pytest
+
 from vitrine.entries import (
     EpicGameEntry,
     GogGameEntry,
@@ -65,6 +67,9 @@ class _StubController:
     def uninstall_steam(self, game: Game) -> None:
         self.calls.append(f"uninstall_steam:{game.name}")
 
+    def steam_playtime_refresh(self, game: Game) -> None:
+        self.calls.append(f"steam_playtime_refresh:{game.name}")
+
 
 class _StubLibrary:
     def global_config(self) -> dict:
@@ -75,6 +80,9 @@ class _StubLibrary:
 
     def update(self, game: Game) -> None:
         pass
+
+    def record_playtime(self, game: Game, hours: float) -> None:
+        game.playtime = float(getattr(game, "playtime", 0.0)) + hours
 
 
 def _game(name: str, source: str, installed: bool = True, game_id: int = 1, source_id: str = "s1") -> Game:
@@ -181,6 +189,28 @@ def test_store_url_is_per_source() -> None:
     assert entry_for(_game("S", "steam", game_id=9, source_id="570"), _stub_controller()).store_url() == (
         "https://store.steampowered.com/app/570"
     )
+
+
+def test_playtime_policy_local_accumulates() -> None:
+    ctrl = _stub_controller()
+    game = _game("G", "gog", game_id=9)
+    entry_for(game, ctrl).record_exit(1.5, 0, ctrl.library)
+    assert game.playtime == pytest.approx(1.5)
+
+
+def test_playtime_policy_local_ignores_zero() -> None:
+    ctrl = _stub_controller()
+    game = _game("G", "gog", game_id=9)
+    entry_for(game, ctrl).record_exit(0.0, 0, ctrl.library)
+    assert game.playtime == 0.0
+
+
+def test_playtime_policy_steam_refreshes_authoritative() -> None:
+    ctrl = _stub_controller()
+    game = _game("S", "steam", game_id=9)
+    entry_for(game, ctrl).record_exit(5.0, 0, ctrl.library)
+    assert game.playtime == 0.0  # Steam does not accumulate locally
+    assert ctrl.calls == ["steam_playtime_refresh:S"]
 
 
 class _FakeGogSource:

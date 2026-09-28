@@ -103,12 +103,15 @@ class SessionManager:
     def elapsed(self) -> float:
         return self._active.elapsed() if self._active is not None else 0.0
 
-    def begin(self, game: Game, session: Session) -> None:
-        """Start watching ``game`` as the single running game under ``session``.
+    def begin(self, game: Game, session: Session | None = None) -> None:
+        """Start watching ``game`` as the single running game.
 
-        The caller is responsible for having already started the underlying
-        process. If another game is running it is not auto-stopped; callers
-        should check :meth:`running_game` / :meth:`is_busy` first.
+        ``session`` is the (optional) supervising session used by
+        :meth:`stop_running`; a source that ignores the manager's stop (e.g.
+        Steam kills via its own watcher) can pass ``None`` and dispatch stop
+        itself. The caller is responsible for having already started the
+        underlying process and for checking :meth:`running_game` /
+        :meth:`is_busy` first.
         """
         self._active = RunningSession(game=game, session=session, started_monotonic=time.monotonic())
         logger.info("SessionManager: now running %s", game.name)
@@ -140,10 +143,11 @@ class SessionManager:
             return False
         self._active = None
         logger.info("SessionManager: stopping %s", active.game.name)
-        try:
-            active.session.stop(kill=kill)
-        except Exception:  # noqa: BLE001 - a session must not block the UI
-            logger.exception("stop failed for %s", active.game.name)
+        if active.session is not None:
+            try:
+                active.session.stop(kill=kill)
+            except Exception:  # noqa: BLE001 - a session must not block the UI
+                logger.exception("stop failed for %s", active.game.name)
         return True
 
     # -- installs --------------------------------------------------------------

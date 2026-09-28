@@ -202,8 +202,6 @@ class VitrineWindow(Adw.ApplicationWindow):
         # watcher is non-None while we are tracking one, and the game is surfaced
         # through the running-game/elapsed plumbing so the ticker shows "Playing".
         self.steam_watcher = None
-        self._steam_running_game: Game | None = None
-        self._epic_running_game: Game | None = None
         self._launch_logs: dict[int, ExecutionLogWindow] = {}
 
         self.reload()
@@ -1187,7 +1185,7 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     def is_game_running(self, game: Game) -> bool:
         """Whether ``game`` is the entry currently running (identity-aware)."""
-        running = self.runtime.running_game or self._steam_running_game or self._epic_running_game
+        running = self.sessions.running_game
         return running is not None and self._is_same_game(running, game)
 
     def stop_game(self) -> None:
@@ -1198,8 +1196,8 @@ class VitrineWindow(Adw.ApplicationWindow):
         """Generic Wine/Proton/native launch for local and installed GOG games."""
         if game.id is None:
             return
-        if self._steam_running_game is not None or self._epic_running_game is not None:
-            self.toasts.add_toast(Adw.Toast(title="Close the running Steam game first"))
+        if self.sessions.running_game is not None:
+            self.toasts.add_toast(Adw.Toast(title="Close the running game first"))
             return
         config = game.merged_config(self.library.global_config())
         try:
@@ -1231,7 +1229,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.runtime.start(game, config, load_runners_store(self.library),
                                log=log.append_line if log is not None else None,
                                on_plan=plan_reporter)
-            self._running_started_monotonic = GLib.get_monotonic_time() / 1e6
+            self.sessions.begin(game, self.runtime)
         except GameAlreadyRunning as error:
             self.toasts.add_toast(Adw.Toast(title=str(error)))
 
@@ -1262,7 +1260,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         """
         from gi.repository import Gio
 
-        if self.steam_watcher is not None or self.runtime.running or self._epic_running_game is not None:
+        if self.sessions.running_game is not None:
             self.toasts.add_toast(Adw.Toast(title="Another game is already running"))
             return
         appid = game.source_id or ""
@@ -1421,16 +1419,17 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.toasts.add_toast(Adw.Toast(title=f"Could not open store page for {game.name}"))
 
     def _stop_game(self) -> None:
-        if self._epic_running_game is not None:
-            self._stop_epic_game()
+        running = self.sessions.running_game
+        if running is None:
             return
-        if self._steam_running_game is not None:
-            self._stop_steam_game()
+        if running.source == "epic":
+            self._stop_epic_game(running)
             return
-        game = self.runtime.running_game
+        if running.source == "steam":
+            self._stop_steam_game(running)
+            return
         self.runtime.stop()
-        if game is not None:
-            self.toasts.add_toast(Adw.Toast(title=f"Stopping {game.name}"))
+        self.toasts.add_toast(Adw.Toast(title=f"Stopping {running.name}"))
 
     # -- selection -------------------------------------------------------------
 
@@ -1579,10 +1578,13 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     def _on_game_exited(self, game: Game, hours: float, returncode: int) -> None:
         def apply() -> bool:
+            self.sessions.end()
             log = self._launch_logs.pop(game.id, None) if game.id is not None else None
             if log is not None:
                 log.append_line(f"[launcher exited with code {returncode}]")
-            self.library.record_playtime(game, hours)
+            from ..entries import entry_for
+
+            entry_for(game, self).record_exit(hours, returncode, self.library)
             self.reload()
             status = "exited" if returncode == 0 else f"exited with code {returncode}"
             self.toasts.add_toast(Adw.Toast(title=f"{game.name} {status}"))
@@ -1593,40 +1595,33 @@ class VitrineWindow(Adw.ApplicationWindow):
     # -- Steam session (watched via /proc, no local process) -------------------
 
     def _on_steam_game_started(self, game: Game) -> None:
-        self._steam_running_game = game
-        self._running_started_monotonic = GLib.get_monotonic_time() / 1e6
+        self.sessions.begin(game)
         self.toasts.add_toast(Adw.Toast(title=f"Playing {game.name}"))
 
     # -- Epic session (launched via legendary, playtime tracked locally) --------
 
     def _set_epic_running(self, game: Game) -> None:
         """Mark an Epic game as the running session so the ticker shows Playing."""
-        self._epic_running_game = game
-        self._running_started_monotonic = GLib.get_monotonic_time() / 1e6
+        self.sessions.begin(game)
         self.toasts.add_toast(Adw.Toast(title=f"Playing {game.name}"))
 
     def _epic_playtime_exit(self, game: Game) -> None:
         """The Epic-launched process ended: accumulate local playtime (offline,
         like GOG) and revert the Playing state."""
-        started = self._running_started_monotonic
-        if started:
-            hours = (GLib.get_monotonic_time() / 1e6 - started) / 3600.0
-            if hours > 0:
-                self.library.record_playtime(game, hours)
+        started = self.sessions.elapsed()
         if game.id is not None:
             self._downloads.pop(game.id, None)
-        if self._epic_running_game is not None:
-            self._epic_running_game = None
-        self._running_started_monotonic = None
+        self.sessions.end()
+        if started:
+            from ..entries import entry_for
+
+            entry_for(game, self).record_exit(started / 3600.0, None, self.library)
         self._refresh_running_state()
         self.reload()
         self.toasts.add_toast(Adw.Toast(title=f"{game.name} closed"))
 
-    def _stop_epic_game(self) -> None:
+    def _stop_epic_game(self, game: Game) -> None:
         """Force-stop an Epic game under legendary: kill the tracked job/proc."""
-        game = self._epic_running_game
-        if game is None:
-            return
         job = self._downloads.get(game.id) if game.id is not None else None
         from ..downloads import DownloadJob
 
@@ -1654,13 +1649,23 @@ class VitrineWindow(Adw.ApplicationWindow):
         if self.steam_watcher is not None:
             self.steam_watcher.stop()
         self.steam_watcher = None
-        self._steam_running_game = None
-        self._running_started_monotonic = None
+        self.sessions.end()
         self._refresh_running_state()
         self.toasts.add_toast(Adw.Toast(title=f"{game.name} closed"))
-        threading.Thread(target=self._steam_playtime_refresh, args=(game,), daemon=True).start()
+        from ..entries import entry_for
 
-    def _steam_playtime_refresh(self, game: Game) -> None:
+        entry_for(game, self).record_exit(0.0, None, self.library)
+
+    def steam_playtime_refresh(self, game: Game) -> None:
+        """Read Steam's authoritative playtime for ``game`` after it exits.
+
+        Runs on a daemon thread (the controller may call it from the entry's
+        playtime policy); prefers the freshly-written local manifest and falls
+        back to the Steam Web API.
+        """
+        threading.Thread(target=self._steam_playtime_refresh_worker, args=(game,), daemon=True).start()
+
+    def _steam_playtime_refresh_worker(self, game: Game) -> None:
         from ..sources.steam_source import SteamSource
 
         appid = game.source_id or ""
@@ -1695,11 +1700,8 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.reload()
         self.toasts.add_toast(Adw.Toast(title=f"Updated playtime for {game.name}"))
 
-    def _stop_steam_game(self) -> None:
+    def _stop_steam_game(self, game: Game) -> None:
         """Force-stop a Steam game: SIGTERM, then SIGKILL if it ignores it."""
-        game = self._steam_running_game
-        if game is None:
-            return
         import time as _time
 
         from .. import steamwatch
@@ -1724,20 +1726,17 @@ class VitrineWindow(Adw.ApplicationWindow):
             self._refresh_running_state()
             return GLib.SOURCE_CONTINUE
 
-        self._running_started_monotonic = None
         self._ticker = GLib.timeout_add_seconds(1, tick)
 
     def _refresh_running_state(self) -> None:
         """Push the current running state to every tile and the hero bar.
 
-        Always refreshes the detail/heard button so a session that ended (e.g. a
+        Always refreshes the detail/hero button so a session that ended (e.g. a
         Steam game quit from the game's own menu, leaving no running game) resets
         its label from "Playing · …" back to "Play".
         """
-        game = self.runtime.running_game or self._steam_running_game or self._epic_running_game
-        elapsed = None
-        if game is not None and self._running_started_monotonic:
-            elapsed = (GLib.get_monotonic_time() / 1e6) - self._running_started_monotonic
+        game = self.sessions.running_game
+        elapsed = self.sessions.elapsed() if game is not None else None
         for tile in self._all_tiles():
             tile.set_running(elapsed if tile.game is game else None)
         if self.detail_bar.game() is game or game is None:

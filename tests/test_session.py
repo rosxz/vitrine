@@ -79,6 +79,25 @@ def test_stop_running_with_nothing_returns_false() -> None:
     assert mgr.stop_running() is False
 
 
+def test_begin_without_session_is_indicator_only() -> None:
+    """Sources that kill via their own watcher pass no session (e.g. Steam)."""
+    mgr = SessionManager(on_exit=None)
+    game = _game()
+    mgr.begin(game)  # session is optional
+    assert mgr.running_game is game
+    assert mgr.is_running(game)
+    assert mgr.stop_running() is True  # no session to stop, but slot clears
+    assert mgr.running_game is None
+
+
+def test_elapsed_live_without_session() -> None:
+    mgr = SessionManager()
+    mgr.begin(_game())
+    time.sleep(0.01)
+    assert 0.0 < mgr.elapsed() < 5.0
+    mgr.end()
+
+
 def test_installs_tracked_by_game_id() -> None:
     mgr = SessionManager()
     game = _game(game_id=42)
