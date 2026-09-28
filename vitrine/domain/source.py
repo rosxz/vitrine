@@ -144,6 +144,15 @@ class Source:
         write their ``account_setting``.
         """
 
+    def complete_login(self, *extras) -> None:
+        """Persist the resolved account after a login dialog succeeds.
+
+        ``extras`` are the provider-specific values the login dialog passes back
+        (e.g. Epic's account id, GOG's user id). The default just remembers the
+        account; sources that need an explicit id persist it here.
+        """
+        self.remember_account()
+
     def clear_account(self) -> None:
         """Forget the remembered account id (set it to None)."""
         if self.account_setting and self.requires_auth:

@@ -49,3 +49,19 @@ def test_sync_local_returns_zero(library: Library) -> None:
     assert result.source == "local"
     assert result.count == len(library.games(source="local"))
     assert result.pending_artwork == 0
+
+def test_complete_login_persists_account_id(library: Library) -> None:
+    """A login dialog resolving the account must persist it for the next sync
+    (otherwise Epic/GOG need a second login to fill the library)."""
+    from vitrine.sources import registry
+
+    e = registry.get("epic")(library)
+    e.complete_login("acct-999")
+    assert library.setting("epic_account_id") == "acct-999"
+
+    g = registry.get("gog")(library)
+    g.complete_login("user-777")
+    assert library.setting("gog_user_id") == "user-777"
+
+    # Local has no account; must not crash.
+    registry.get("local")(library).complete_login("x")

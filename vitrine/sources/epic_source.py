@@ -46,6 +46,18 @@ class EpicSource(Source):
         if self.account_id:
             self.library.set_setting(ACCOUNT_SETTING, self.account_id)
 
+    def complete_login(self, *extras) -> None:
+        """Persist the resolved Epic account id after login.
+
+        The login dialog resolves the real account (extras[0]) and saves our
+        token under it; here we record the id so the next sync authenticates
+        immediately (fixing the double-login where ACCOUNT_SETTING stayed empty).
+        """
+        account = extras[0] if extras else ""
+        if account:
+            self.account_id = str(account)
+        self.remember_account()
+
     # -- Source API -----------------------------------------------------------
 
     def is_configured(self) -> bool:

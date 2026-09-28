@@ -59,6 +59,12 @@ class GogSource(Source):
         if self.user_id:
             self.library.set_setting(USER_SETTING, self.user_id)
 
+    def complete_login(self, *extras) -> None:
+        user = extras[0] if extras else ""
+        if user:
+            self.user_id = str(user)
+        self.remember_account()
+
     # -- Source API -----------------------------------------------------------
 
     def is_configured(self) -> bool:

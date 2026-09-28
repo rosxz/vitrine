@@ -57,6 +57,8 @@ class GogLoginDialog(WebKitLoginDialog):
         self.store = store
         self._captured_user_id: str | None = None
         self._handled_code: str | None = None
+        # Set the target before the base loads the webview.
+        self.login_url = self._auth_url()
         super().__init__(on_complete=on_complete, parent=parent)
 
     def poll_interval_ms(self) -> int:

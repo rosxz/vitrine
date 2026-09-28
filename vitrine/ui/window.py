@@ -448,7 +448,7 @@ class VitrineWindow(Adw.ApplicationWindow):
                 return
             self.toasts.add_toast(Adw.Toast(title=f"{source.name} sign-in complete"))
             # A login reveals the real account; persist it and refresh.
-            source.remember_account()
+            source.complete_login(*extras)
             self._run_sync(source_id)
 
         store = source.auth_store()

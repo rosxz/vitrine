@@ -121,11 +121,26 @@ class EpicLoginDialog(WebKitLoginDialog):
             if last_error is None:
                 last_error = exc
 
-        # Resolve the account id from legendary's saved session or our store.
+        # Resolve the account id from our exchange, legendary's saved session,
+        # or the existing store.
+        if not account_id and lg.is_installed():
+            try:
+                account_id = str(lg.read_credentials().get("account_id") or "")
+            except Exception:  # noqa: BLE001
+                account_id = ""
         if not account_id:
             account_id = self._resolve_account(self.store.load().get("token") or {})
-        if not account_id and lg.is_installed():
-            account_id = str(lg.read_credentials().get("account_id") or "")
+            if not account_id:
+                account_id = self.store.account_id
+        # Persist our token under the *real* account id so the next sync finds it
+        # (fixes the double-login where account_id stayed empty/placeholder).
+        if token is not None and account_id:
+            try:
+                real_store = type(self.store)(self.store.secret_dir, account_id)
+                real_store.set_credentials(code, token)
+                self.store = real_store
+            except Exception:  # noqa: BLE001
+                pass
 
         if token is not None or legendary_ok:
             self._set_status("")
