@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import glob
 import logging
 import os
 import shlex
@@ -10,25 +9,20 @@ import shutil
 import threading
 import time
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING
 from importlib import resources
+from typing import TYPE_CHECKING
 
 from gi.repository import Adw, GLib, Gtk
 
 from ..gpu import apply_gpu_env
 from ..library import SHOW_DETAIL_SETTING, SHOW_HIDDEN, Game, Library
-from ..paths import secret_dir
 from ..running import GameAlreadyRunning, Runtime
 from ..sources import registry
-from ..sources.epic.auth import EpicTokenStore
-from ..sources.gog.auth import GogTokenStore
-from ..sources.steam.auth import SteamTokenStore
-from ..sources.steam_source import SteamAuthError, SteamSource
+from ..sources.steam_source import SteamSource
 from .game_detail_bar import GameDetailBar
 from .game_dialogs import AddGameDialog, GameSettingsDialog, PrefixRecreateWindow
 from .library_view import LibraryView
 from .settings_dialog import SettingsDialog
-from .steam_login_dialog import SteamLoginDialog
 
 if TYPE_CHECKING:
     from .log_window import ExecutionLogWindow
@@ -413,15 +407,15 @@ class VitrineWindow(Adw.ApplicationWindow):
         dialog = SettingsDialog(
             self.library,
             self.theme_manager,
-            on_steam_login=self.on_steam_login,
-            on_steam_refresh=self._run_steam_sync,
-            on_steam_reset=self.on_steam_reset_session,
-            on_gog_login=self.on_gog_login,
-            on_gog_refresh=self._run_gog_sync,
-            on_gog_reset=self.on_gog_reset_session,
-            on_epic_login=self.on_epic_login,
-            on_epic_refresh=self._run_epic_sync,
-            on_epic_reset=self.on_epic_reset_session,
+            on_steam_login=lambda: self.on_source_login("steam"),
+            on_steam_refresh=lambda: self._run_sync("steam"),
+            on_steam_reset=lambda: self.on_source_reset("steam"),
+            on_gog_login=lambda: self.on_source_login("gog"),
+            on_gog_refresh=lambda: self._run_sync("gog"),
+            on_gog_reset=lambda: self.on_source_reset("gog"),
+            on_epic_login=lambda: self.on_source_login("epic"),
+            on_epic_refresh=lambda: self._run_sync("epic"),
+            on_epic_reset=lambda: self.on_source_reset("epic"),
             parent=self,
         )
         # Settings can change library-wide flags (e.g. "show hidden games"), so
@@ -436,212 +430,73 @@ class VitrineWindow(Adw.ApplicationWindow):
     def on_add_game_clicked(self, _button: Gtk.Button) -> None:
         AddGameDialog(self.library, on_add=self.on_game_added, parent=self).present()
 
+    # -- source login / refresh / reset (generic via SyncService) ---------------
+
     def on_refresh_source(self, _button: Gtk.Button) -> None:
-        if self.current_source == "steam":
-            self._run_steam_sync()
-        elif self.current_source == "gog":
-            self._run_gog_sync()
-        elif self.current_source == "epic":
-            self._run_epic_sync()
-        else:
-            self._run_steam_sync()
+        if not self.current_source or self.current_source in ("local", ALL_GAMES, FAVORITES):
+            return
+        self._run_sync(self.current_source)
 
-    def on_steam_login(self) -> None:
-        """Open the Steam sign-in browser, then refresh the library."""
-        source = SteamSource(self.library)
+    def on_source_login(self, source_id: str) -> None:
+        """Open the store's login browser for ``source_id``, then refresh."""
+        from ..sources import registry
+        from .login_registry import make_login_dialog
 
-        def on_complete(ok: bool) -> None:
+        source = registry.get(source_id)(self.library)
+
+        def on_complete(ok: bool, *extras) -> None:
             if not ok:
-                self.toasts.add_toast(Adw.Toast(title="Steam sign-in failed"))
+                self.toasts.add_toast(Adw.Toast(title=f"{source.name} sign-in failed"))
                 return
-            self.toasts.add_toast(Adw.Toast(title="Steam sign-in complete"))
-            self._run_steam_sync()
+            self.toasts.add_toast(Adw.Toast(title=f"{source.name} sign-in complete"))
+            # A login reveals the real account; persist it and refresh.
+            source.remember_account()
+            self._run_sync(source_id)
 
-        store = source.login_token_store()
-        if self.library.setting("steam_steamid"):
-            # Reuse the account we already know about.
-            store = type(store)(store.secret_dir, self.library.setting("steam_steamid"))
-        dialog = SteamLoginDialog(store, on_complete=on_complete, parent=self)
+        store = source.auth_store()
+        dialog = make_login_dialog(source_id, store, on_complete, parent=self)
         dialog.present()
 
-    def on_steam_reset_session(self) -> None:
-        """Clear stored Steam credentials so the user can sign in afresh."""
-        cleared = 0
-        for path in glob.glob(str(secret_dir() / "steam" / "auth_*.json")):
-            steamid = path.rsplit("auth_", 1)[1].rsplit(".json", 1)[0]
-            SteamTokenStore(secret_dir(), steamid).clear()
-            cleared += 1
-        # Drop every Steam library entry that is not actually installed on
-        # disk, based on the app manifests (the DB's installed flag can be
-        # stale for played-but-uninstalled games).
-        on_disk = SteamSource(self.library).installed_on_disk()
-        pruned = self.library.prune_source_games(
-            "steam",
-            keep_installed=False,
-            preserve_on_disk=on_disk,
-        )
-        self.library.clear_source_games("steam")
-        self.library.set_setting("steam_steamid", None)
-        if self.current_source == "steam":
+    def on_source_reset(self, source_id: str) -> None:
+        """Clear a source's credentials and stale library rows."""
+        from ..sources import registry
+
+        source = registry.get(source_id)(self.library)
+        source.reset()
+        if self.current_source == source_id:
             self.current_source = None
         self.reload()
-        self.toasts.add_toast(
-            Adw.Toast(title="Steam session reset" if cleared else f"No credentials to reset · {pruned} removed")
-        )
+        self.toasts.add_toast(Adw.Toast(title=f"{source.name} session reset"))
 
-    def _run_steam_sync(self) -> None:
+    def _run_sync(self, source_id: str) -> None:
+        """Refresh ``source_id`` through SyncService (auth-check + artwork)."""
+        from ..sync import AuthRequired, SyncService
+
+        def on_toast(title: str) -> None:
+            self.toasts.add_toast(Adw.Toast(title=title))
+
+        service = SyncService(self.library, on_toast=on_toast)
         try:
-            source = SteamSource(self.library)
-            if not source.is_authenticated():
-                self.toasts.add_toast(Adw.Toast(title="Sign in to Steam first (cog → Steam)"))
-                return
-            # Record the account for future launches.
-            if source.steamid64:
-                self.library.set_setting("steam_steamid", source.steamid64)
-            count = source.sync()
-            source.sync_installed()
-            self.current_source = "steam"
-            self.reload()
-            self.toasts.add_toast(Adw.Toast(title=f"Steam refreshed · {count} games"))
-            # Artwork is downloaded asynchronously so hundreds of games never
-            # block the UI thread; we only syndicate the work here.
-            pending = source.games_needing_artwork()
-            if pending:
-                self._start_artwork_fetch(pending)
-        except SteamAuthError as error:
+            result = service.sync(source_id)
+        except AuthRequired as error:
             self.toasts.add_toast(Adw.Toast(title=str(error)))
+            return
         except Exception as error:  # noqa: BLE001
-            logger.exception("Steam sync failed")
-            self.toasts.add_toast(Adw.Toast(title=f"Steam sync failed: {error}"))
-
-    # -- GOG -------------------------------------------------------------------
-
-    def on_gog_login(self) -> None:
-        """Open the GOG sign-in browser, then refresh the library."""
-        from ..sources.gog_source import USER_SETTING, GogSource
-        from .gog_login_dialog import GogLoginDialog
-
-        source = GogSource(self.library)
-
-        def on_complete(ok: bool, user_id: str | None = None) -> None:
-            if not ok:
-                self.toasts.add_toast(Adw.Toast(title="GOG sign-in failed"))
-                return
-            if user_id:
-                self.library.set_setting(USER_SETTING, user_id)
-            self.toasts.add_toast(Adw.Toast(title="GOG sign-in complete"))
-            self._run_gog_sync()
-
-        store = source.login_token_store()
-        dialog = GogLoginDialog(store, on_complete=on_complete, parent=self)
-        dialog.present()
-
-    def on_gog_reset_session(self) -> None:
-        """Clear stored GOG credentials so the user can sign in afresh."""
-        from ..sources.gog_source import USER_SETTING
-
-        cleared = 0
-        for path in glob.glob(str(secret_dir() / "gog" / "auth_*.json")):
-            user_id = path.rsplit("auth_", 1)[1].rsplit(".json", 1)[0]
-            GogTokenStore(secret_dir(), user_id).clear()
-            cleared += 1
-        self.library.clear_source_games("gog")
-        self.library.set_setting(USER_SETTING, None)
-        if self.current_source == "gog":
-            self.current_source = None
+            logger.exception("%s sync failed", source_id)
+            self.toasts.add_toast(Adw.Toast(title=f"{source_id} sync failed: {error}"))
+            return
+        self.current_source = source_id
         self.reload()
-        self.toasts.add_toast(
-            Adw.Toast(title="GOG session reset" if cleared else "No GOG credentials to reset")
-        )
-
-    def _run_gog_sync(self) -> None:
-        from ..sources.gog_source import USER_SETTING, GogAuthError, GogSource
-
-        try:
-            source = GogSource(self.library)
-            if not source.is_authenticated():
-                self.toasts.add_toast(Adw.Toast(title="Sign in to GOG first (cog → GOG)"))
-                return
-            if source.user_id:
-                self.library.set_setting(USER_SETTING, source.user_id)
-            count = source.sync()
-            self.current_source = "gog"
-            self.reload()
-            self.toasts.add_toast(Adw.Toast(title=f"GOG refreshed · {count} games"))
-            pending = source.games_needing_artwork()
+        self.toasts.add_toast(Adw.Toast(title=f"{source_id} refreshed · {result.count} games"))
+        if result.pending_artwork:
+            pending = self._source_games_needing_artwork(source_id)
             if pending:
                 self._start_artwork_fetch(pending)
-        except GogAuthError as error:
-            self.toasts.add_toast(Adw.Toast(title=str(error)))
-        except Exception as error:  # noqa: BLE001
-            logger.exception("GOG sync failed")
-            self.toasts.add_toast(Adw.Toast(title=f"GOG sync failed: {error}"))
 
-    # -- Epic -------------------------------------------------------------------
+    def _source_games_needing_artwork(self, source_id: str) -> list:
+        from ..sources import registry
 
-    def on_epic_login(self) -> None:
-        """Open the Epic sign-in browser, then refresh the library."""
-        from ..sources.epic_source import ACCOUNT_SETTING, EpicSource
-        from .epic_login_dialog import EpicLoginDialog
-
-        source = EpicSource(self.library)
-
-        def on_complete(ok: bool, account_id: str | None = None, code: str = "") -> None:
-            if not ok:
-                self.toasts.add_toast(Adw.Toast(title="Epic sign-in failed"))
-                return
-            # The log-in dialog already imported the (single-use) exchange code
-            # into legendary and persisted the token; we only record the
-            # account and refresh the library here. Do NOT call legendary auth
-            # again with the same code -- it is consumed once.
-            if account_id:
-                self.library.set_setting(ACCOUNT_SETTING, account_id)
-            self.toasts.add_toast(Adw.Toast(title="Epic sign-in complete"))
-            self._run_epic_sync()
-
-        store = source.login_token_store()
-        dialog = EpicLoginDialog(store, on_complete=on_complete, parent=self)
-        dialog.present()
-
-    def on_epic_reset_session(self) -> None:
-        """Clear stored Epic credentials so the user can sign in afresh."""
-        from ..sources.epic_source import ACCOUNT_SETTING
-
-        cleared = 0
-        for path in glob.glob(str(secret_dir() / "epic" / "auth_*.json")):
-            account_id = path.rsplit("auth_", 1)[1].rsplit(".json", 1)[0]
-            EpicTokenStore(secret_dir(), account_id).clear()
-            cleared += 1
-        self.library.clear_source_games("epic")
-        self.library.set_setting(ACCOUNT_SETTING, None)
-        if self.current_source == "epic":
-            self.current_source = None
-        self.reload()
-        self.toasts.add_toast(
-            Adw.Toast(title="Epic session reset" if cleared else "No Epic credentials to reset")
-        )
-
-    def _run_epic_sync(self) -> None:
-        from ..sources.epic_source import EpicAuthError, EpicSource
-
-        try:
-            source = EpicSource(self.library)
-            if not source.is_authenticated():
-                self.toasts.add_toast(Adw.Toast(title="Sign in to Epic first (cog → Epic)"))
-                return
-            count = source.sync()
-            source.sync_installed()
-            self.current_source = "epic"
-            self.reload()
-            self.toasts.add_toast(Adw.Toast(title=f"Epic refreshed · {count} games"))
-            pending = source.games_needing_artwork()
-            if pending:
-                self._start_artwork_fetch(pending)
-        except EpicAuthError as error:
-            self.toasts.add_toast(Adw.Toast(title=str(error)))
-        except Exception as error:  # noqa: BLE001
-            logger.exception("Epic sync failed")
-            self.toasts.add_toast(Adw.Toast(title=f"Epic sync failed: {error}"))
+        return registry.get(source_id)(self.library).games_needing_artwork()
 
     def _gog_finish_install(self, game: Game, output: Sequence[str] = ()) -> None:
         """Mark a GOG game installed after a successful depot download.
@@ -1276,7 +1131,6 @@ class VitrineWindow(Adw.ApplicationWindow):
             return
 
         from .. import steamwatch
-        from ..sources.steam_source import SteamSource
 
         source = SteamSource(self.library)
         installdir = source.installed_game_dir(appid)
@@ -1666,7 +1520,6 @@ class VitrineWindow(Adw.ApplicationWindow):
         threading.Thread(target=self._steam_playtime_refresh_worker, args=(game,), daemon=True).start()
 
     def _steam_playtime_refresh_worker(self, game: Game) -> None:
-        from ..sources.steam_source import SteamSource
 
         appid = game.source_id or ""
         source = SteamSource(self.library)

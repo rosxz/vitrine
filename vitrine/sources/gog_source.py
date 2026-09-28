@@ -49,10 +49,15 @@ class GogSource(Source):
     name = "GOG"
     icon = "gog-galaxy"
     requires_auth = True
+    account_setting = USER_SETTING
 
     def __init__(self, library: Library) -> None:
         self.library = library
         self.user_id = str(library.setting(USER_SETTING) or "")
+
+    def remember_account(self) -> None:
+        if self.user_id:
+            self.library.set_setting(USER_SETTING, self.user_id)
 
     # -- Source API -----------------------------------------------------------
 

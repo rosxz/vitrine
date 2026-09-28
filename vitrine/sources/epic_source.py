@@ -36,10 +36,15 @@ class EpicSource(Source):
     name = "Epic"
     icon = "epic-games"
     requires_auth = True
+    account_setting = ACCOUNT_SETTING
 
     def __init__(self, library: Library) -> None:
         self.library = library
         self.account_id = str(library.setting(ACCOUNT_SETTING) or "")
+
+    def remember_account(self) -> None:
+        if self.account_id:
+            self.library.set_setting(ACCOUNT_SETTING, self.account_id)
 
     # -- Source API -----------------------------------------------------------
 

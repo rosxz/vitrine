@@ -43,6 +43,8 @@ class Source:
     requires_auth: bool = False
     #: Default artwork source for this store's games (provider vs lutris, ...).
     artwork_default: str = "lutris"
+    #: Setting key holding the logged-in account id (empty for local).
+    account_setting: str = ""
 
     def __init__(self, library: Any) -> None:
         self.library = library
@@ -123,6 +125,48 @@ class Source:
     def is_configured(self) -> bool:
         """Whether the source has everything it needs to sync."""
         return True
+
+    # -- auth lifecycle (shared by SyncService / the UI login flow) ------------
+
+    def auth_store(self):
+        """The durable credential store for the currently-known account.
+
+        Returns ``None`` for sources that don't need an account (e.g. local).
+        """
+        if not self.requires_auth:
+            return None
+        return self.login_token_store()
+
+    def remember_account(self) -> None:
+        """Persist the account id discovered during login/sync, if any.
+
+        Default is a no-op; stores that track a user/account id override this to
+        write their ``account_setting``.
+        """
+
+    def clear_account(self) -> None:
+        """Forget the remembered account id (set it to None)."""
+        if self.account_setting and self.requires_auth:
+            self.library.set_setting(self.account_setting, None)
+
+    def logout(self) -> None:
+        """Clear this source's stored credentials, if any."""
+        store = self.auth_store()
+        if store is not None:
+            store.clear()
+
+    def reset(self) -> None:
+        """Drop credentials and the cached/relevant library rows for this source.
+
+        Called by the UI's "Reset session" action. The source clears its credentials
+        and removes owned-but-not-installed library rows (the authoritative
+        installed set on disk is preserved).
+        """
+        self.logout()
+        self.library.clear_source_games(self.id)
+        on_disks = set(self.installed_on_disk()) if hasattr(self, "installed_on_disk") else set()
+        self.library.prune_source_games(self.id, keep_installed=False, preserve_on_disk=on_disks)
+        self.clear_account()
 
 
 class SourceRegistry:

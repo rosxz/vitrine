@@ -70,11 +70,16 @@ class SteamSource(Source):
     icon = "steam-client"
     requires_auth = True
     artwork_default = "provider"
+    account_setting = "steam_steamid"
 
     def __init__(self, library: Library) -> None:
         self.library = library
         self.steam_root = steam_config.find_steam_root()
         self.steamid64 = steam_config.active_steamid64(self.steam_root) if self.steam_root else ""
+
+    def remember_account(self) -> None:
+        if self.steamid64:
+            self.library.set_setting(self.account_setting, self.steamid64)
 
     # -- Source API -----------------------------------------------------------
 
