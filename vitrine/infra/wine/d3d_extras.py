@@ -137,6 +137,28 @@ def install_to_prefix(prefix: str) -> set[str]:
     return installed
 
 
+def remove_from_prefix(prefix: str) -> None:
+    """Remove d3d_extras DLLs that Vitrine previously copied into ``prefix``.
+
+    Used before launching a **Proton** game: umu/Proton seeds the prefix itself
+    (``copy_pfx``), and Pre-writing those DX runtime DLLs as real files makes
+    Proton's ``os.symlink`` fail with ``FileExistsError``. Removing only the
+    files we added is safe, since Proton rewrites its own builtin DLLs. Idempotent.
+    """
+    drive_c = Path(prefix) / "drive_c" / "windows"
+    for sub in ("system32", "syswow64"):
+        directory = drive_c / sub
+        if not directory.is_dir():
+            continue
+        for dll in MANAGED_DLLS:
+            candidate = directory / f"{dll}.dll"
+            try:
+                if candidate.exists() or candidate.is_symlink():
+                    candidate.unlink()
+            except OSError:  # pragma: no cover - best effort
+                pass
+
+
 def _needs_install(dst: Path) -> bool:
     """Whether ``dst`` should be (re)installed with the real d3d_extras DLL.
 

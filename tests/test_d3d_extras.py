@@ -90,3 +90,23 @@ def test_install_leaves_existing_real_file_alone(tmp_path: Path, extras: Path) -
     # Still a regular file with the same content (not replaced).
     assert not real.is_symlink()
     assert real.read_text() == "already-installed"
+
+
+def test_remove_from_prefix_unlinks_managed_dlls(tmp_path, monkeypatch) -> None:
+    """Proton prefixes are seeded by umu; stale d3d_extras real files must be
+    removed so Proton's copy_pfx os.symlink does not fail with FileExistsError."""
+
+    from vitrine.infra.wine import d3d_extras
+
+    monkeypatch.setattr(d3d_extras, "MANAGED_DLLS", ("d3dcompiler_35", "d3dx9_43"))
+    system32 = tmp_path / "drive_c" / "windows" / "system32"
+    system32.mkdir(parents=True)
+    (system32 / "d3dcompiler_35.dll").write_bytes(b"fake")
+    (system32 / "d3dx9_43.dll").write_bytes(b"fake")
+    (system32 / "someother.dll").write_bytes(b"keep")
+
+    d3d_extras.remove_from_prefix(str(tmp_path))
+
+    assert not (system32 / "d3dcompiler_35.dll").exists()
+    assert not (system32 / "d3dx9_43.dll").exists()
+    assert (system32 / "someother.dll").exists()

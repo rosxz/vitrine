@@ -429,10 +429,14 @@ class EpicGameEntry(GameEntry):
             if _gpu.dri_dir:
                 env.setdefault("LIBGL_DRIVERS_PATH", _gpu.dri_dir)
                 env.setdefault("MESA_DRIVER_PATH", _gpu.dri_dir)
-            d3d = install_d3d_extras(wine_prefix)
-            if d3d:
-                env.setdefault("WINEDLLOVERRIDES", "")
-                env["WINEDLLOVERRIDES"] = (env["WINEDLLOVERRIDES"] + ";" if env["WINEDLLOVERRIDES"] else "") + d3d
+            # Do NOT install d3d_extras here: umu/Proton seeds the prefix itself
+            # (copy_pfx) and pre-writing DX runtime DLLs as real files into the
+            # target prefix makes Proton's os.symlink fail with FileExistsError
+            # (Proton ships its own d3dcompiler/d3dx). Instead remove any stale
+            # d3d_extras we may have left from a previous run.
+            from vitrine.infra.wine import d3d_extras
+
+            d3d_extras.remove_from_prefix(wine_prefix)
             if not config.get("dxvk", True):
                 off = "d3d10core=n;d3d11=n;dxgi=n"
                 env.setdefault("WINEDLLOVERRIDES", "")
