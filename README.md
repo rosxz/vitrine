@@ -6,22 +6,17 @@ covers and banners normalised to a single aspect ratio.
 
 ## Layout
 
+Vitrine is organised into layered packages (`domain/ services/ infra/ sources/ ui/`).
+See **[ARCHITECTURE.md](ARCHITECTURE.md)** for a full walkthrough of every module and
+the main flows (launch, install, sync, login, artwork, playtime, stop). At a glance:
+
 | Path | Purpose |
 | --- | --- |
-| `vitrine/db.py` | SQLite connection, schema, migrations |
-| `vitrine/library.py` | `Game` model and library CRUD |
-| `vitrine/paths.py` | XDG paths (`~/.local/share/vitrine`, `~/.cache/vitrine`) |
-| `vitrine/launch.py` | Wine/Proton + gamescope command construction |
-| `vitrine/running.py` | Process supervisor: start/stop/watch one game, playtime |
-| `vitrine/sources/` | Source providers (`local`, `steam`) |
-| `vitrine/sources/steam/` | Steam: VDF parsing, install discovery, durable auth cache |
-| `vitrine/ui/steam_login_dialog.py` | Embedded WebKit sign-in (webkitgtk_6_0) |
-| `vitrine/ui/` | GTK4 + libadwaita front end |
-| `vitrine/ui/theme.py` | Theme registry and manager (Galaxy / follow system) |
-| `vitrine/ui/style/` | Bundled CSS themes (`.css` per theme) |
-| `vitrine/ui/game_form.py` | Shared add/edit game form (fields + artwork pickers) |
-| `vitrine/ui/game_dialogs.py` | Add-game and per-game settings windows (movable) |
-| `vitrine/ui/game_detail_bar.py` | Collapsible hero detail bar (backdrop, play, playtime) |
+| `vitrine/domain/` | Pure model + per-game behaviour (`Game`, `Source` ABC, `GameEntry`, `SessionManager`, `Runner`) |
+| `vitrine/services/` | Use-case orchestration (`Library` repo, `launch`, `sync`, runners, downloads, artwork) |
+| `vitrine/infra/` | OS/process/network plumbing (`db`, `paths`, `procwatch`, `running`, `prefix`, `wine`) |
+| `vitrine/sources/` | Store provider adapters (local, Steam, GOG, Epic) + shared auth stores |
+| `vitrine/ui/` | GTK4 + libadwaita front end (window, widgets, WebKit login dialogs) |
 
 ## Development
 
