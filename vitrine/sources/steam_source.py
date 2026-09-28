@@ -25,7 +25,7 @@ import os
 import requests
 
 from .. import paths
-from ..library import Library
+from ..library import Game, Library
 from ..util import slugify
 from .base import Source, SourceGame, registry
 from .steam import config as steam_config
@@ -359,6 +359,28 @@ class SteamSource(Source):
                     game.details.get("lastplayed"),
                 )
         return None, None
+
+    def refresh_playtime(self, game: Game) -> tuple[float | None, int | None]:
+        """Read Steam's authoritative playtime for ``game``, retrying briefly.
+
+        Steam writes playtime on exit but may lag a moment; prefer the freshly
+        written local manifest and fall back to the Web API (some manifests,
+        e.g. Proton titles, never carry ``playtime_forever``). Returns
+        ``(hours, lastplayed)`` or ``(None, None)`` when unknown.
+        """
+        import time as _time
+
+        appid = game.source_id or ""
+        hours: float | None = None
+        lastplayed: int | None = None
+        for _attempt in range(6):
+            hours, lastplayed = self.read_manifest_playtime(appid)
+            if hours is None:
+                hours, lastplayed = self.web_playtime(appid)
+            if hours is not None:
+                break
+            _time.sleep(2.0)
+        return hours, lastplayed
 
 
 registry.register(SteamSource)

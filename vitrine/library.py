@@ -236,6 +236,20 @@ class Library:
         game.lastplayed = now()
         self.update(game)
 
+    def set_authoritative_playtime(self, game: Game, hours: float, lastplayed: int | None = None) -> None:
+        """Overwrite a game's playtime with an authoritative source value.
+
+        Used for stores (e.g. Steam) that own their playtime on the server, so we
+        mirror their number rather than accumulating our own wall-clock time.
+        """
+        fresh = self.game(game.id) if game.id is not None else None
+        target = fresh or game
+        target.playtime = float(hours)
+        if lastplayed is not None:
+            target.lastplayed = lastplayed
+        self.update(target)
+        return target
+
     def _unique_slug(self, base: str) -> str:
         candidate = base or "game"
         suffix = 2

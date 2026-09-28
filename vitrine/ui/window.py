@@ -7,7 +7,6 @@ import os
 import shlex
 import shutil
 import threading
-import time
 from collections.abc import Callable, Sequence
 from importlib import resources
 from typing import TYPE_CHECKING
@@ -621,6 +620,14 @@ class VitrineWindow(Adw.ApplicationWindow):
         window = ExecutionLogWindow(title, parent=self)
         window.present()
         return window
+
+    def run_async(self, fn) -> None:
+        """Run ``fn`` on a daemon thread (off the UI thread)."""
+        threading.Thread(target=fn, daemon=True).start()
+
+    def apply_game_update(self, game: Game, toast_title: str) -> None:
+        """Reload the library and toast, marshalled to the main thread."""
+        self._marshal(lambda: (self.reload(), self.toasts.add_toast(Adw.Toast(title=toast_title))))
 
     def installing(self, game: Game) -> bool:
         """Whether a tracked install/launch download exists for ``game``."""
@@ -1276,13 +1283,9 @@ class VitrineWindow(Adw.ApplicationWindow):
         running = self.sessions.running_game
         if running is None:
             return
-        if running.source == "epic":
-            self._stop_epic_game(running)
-            return
-        if running.source == "steam":
-            self._stop_steam_game(running)
-            return
-        self.runtime.stop()
+        from ..entries import entry_for
+
+        entry_for(running, self).on_stop()
         self.toasts.add_toast(Adw.Toast(title=f"Stopping {running.name}"))
 
     # -- selection -------------------------------------------------------------
@@ -1474,7 +1477,7 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.reload()
         self.toasts.add_toast(Adw.Toast(title=f"{game.name} closed"))
 
-    def _stop_epic_game(self, game: Game) -> None:
+    def stop_epic(self, game: Game) -> None:
         """Force-stop an Epic game under legendary: kill the tracked job/proc."""
         job = self._downloads.get(game.id) if game.id is not None else None
         from ..downloads import DownloadJob
@@ -1498,8 +1501,8 @@ class VitrineWindow(Adw.ApplicationWindow):
             procwatch.kill_tree(proc.pid)
 
     def _on_steam_game_exited(self, game: Game) -> None:
-        """The Steam-launched process is gone: stop the session and refresh
-        playtime from the app manifest Steam wrote on exit (no manual refresh)."""
+        """The Steam-launched process is gone: stop the session and reconcile
+        playtime (the entry reads Steam's authoritative value on exit)."""
         if self.steam_watcher is not None:
             self.steam_watcher.stop()
         self.steam_watcher = None
@@ -1510,50 +1513,7 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         entry_for(game, self).record_exit(0.0, None, self.library)
 
-    def steam_playtime_refresh(self, game: Game) -> None:
-        """Read Steam's authoritative playtime for ``game`` after it exits.
-
-        Runs on a daemon thread (the controller may call it from the entry's
-        playtime policy); prefers the freshly-written local manifest and falls
-        back to the Steam Web API.
-        """
-        threading.Thread(target=self._steam_playtime_refresh_worker, args=(game,), daemon=True).start()
-
-    def _steam_playtime_refresh_worker(self, game: Game) -> None:
-
-        appid = game.source_id or ""
-        source = SteamSource(self.library)
-        hours: float | None = None
-        lastplayed: int | None = None
-        # Steam writes playtime on exit but may lag a moment; retry briefly.
-        # Prefer the freshly-written local manifest; fall back to the Steam Web
-        # API (some manifests, e.g. Proton titles, never carry playtime_forever).
-        for _ in range(6):
-            hours, lastplayed = source.read_manifest_playtime(appid)
-            if hours is None:
-                try:
-                    hours, lastplayed = source.web_playtime(appid)
-                except Exception:  # noqa: BLE001 - network hiccups must not kill the refresh
-                    logger.exception("Steam web playtime refresh failed for %s", game.name)
-                    hours, lastplayed = None, None
-            if hours is not None:
-                break
-            time.sleep(2.0)
-        GLib.idle_add(self._apply_steam_playtime, game, hours, lastplayed)
-
-    def _apply_steam_playtime(self, game: Game, hours: float | None, lastplayed: int | None) -> None:
-        if hours is None:
-            return  # game not installed / no manifest; nothing authoritative to write.
-        if game.id is not None:
-            fresh = self.library.game(game.id) or game
-            fresh.playtime = float(hours)
-            if lastplayed is not None:
-                fresh.lastplayed = lastplayed
-            self.library.update(fresh)
-        self.reload()
-        self.toasts.add_toast(Adw.Toast(title=f"Updated playtime for {game.name}"))
-
-    def _stop_steam_game(self, game: Game) -> None:
+    def stop_steam(self, game: Game) -> None:
         """Force-stop a Steam game: SIGTERM, then SIGKILL if it ignores it."""
         import time as _time
 

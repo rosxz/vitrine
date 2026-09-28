@@ -37,6 +37,15 @@ class _StubController:
     def stop_game(self) -> None:
         self.calls.append("stop_game")
 
+    def stop_running(self) -> None:
+        self.calls.append("stop_running")
+
+    def stop_epic(self, game: Game) -> None:
+        self.calls.append(f"stop_epic:{game.name}")
+
+    def stop_steam(self, game: Game) -> None:
+        self.calls.append(f"stop_steam:{game.name}")
+
     def toast(self, title: str) -> None:
         self.calls.append(f"toast:{title}")
 
@@ -70,6 +79,12 @@ class _StubController:
     def steam_playtime_refresh(self, game: Game) -> None:
         self.calls.append(f"steam_playtime_refresh:{game.name}")
 
+    def run_async(self, fn) -> None:
+        fn()
+
+    def apply_game_update(self, game: Game, toast_title: str) -> None:
+        self.calls.append(f"apply_game_update:{game.name}")
+
 
 class _StubLibrary:
     def global_config(self) -> dict:
@@ -83,6 +98,11 @@ class _StubLibrary:
 
     def record_playtime(self, game: Game, hours: float) -> None:
         game.playtime = float(getattr(game, "playtime", 0.0)) + hours
+
+    def set_authoritative_playtime(self, game: Game, hours: float, lastplayed: int | None = None) -> None:
+        game.playtime = float(hours)
+        if lastplayed is not None:
+            game.lastplayed = lastplayed
 
 
 def _game(name: str, source: str, installed: bool = True, game_id: int = 1, source_id: str = "s1") -> Game:
@@ -164,7 +184,19 @@ def test_running_game_stops_instead_of_launching() -> None:
     game = _game("G", "gog", installed=True)
     ctrl = _stub_controller(running=game)
     entry_for(game, ctrl).on_launch()
-    assert ctrl.calls == ["stop_game"]
+    assert ctrl.calls == ["stop_running"]
+
+
+def test_stop_dispatches_per_source() -> None:
+    steam = _stub_controller()
+    entry_for(_game("S", "steam"), steam).on_stop()
+    assert steam.calls == ["stop_steam:S"]
+    epic = _stub_controller()
+    entry_for(_game("E", "epic"), epic).on_stop()
+    assert epic.calls == ["stop_epic:E"]
+    gog = _stub_controller()
+    entry_for(_game("G", "gog"), gog).on_stop()
+    assert gog.calls == ["stop_running"]
 
 
 def test_uninstall_dispatch() -> None:
@@ -205,12 +237,23 @@ def test_playtime_policy_local_ignores_zero() -> None:
     assert game.playtime == 0.0
 
 
-def test_playtime_policy_steam_refreshes_authoritative() -> None:
+def test_playtime_policy_steam_refreshes_authoritative(monkeypatch) -> None:
     ctrl = _stub_controller()
-    game = _game("S", "steam", game_id=9)
+    game = _game("S", "steam", game_id=9, source_id="570")
+
+    class _FakeSteamSource:
+        def __init__(self, library) -> None:
+            self.library = library
+
+        def refresh_playtime(self, game):
+            return 12.5, 12345
+
+    monkeypatch.setattr("vitrine.sources.steam_source.SteamSource", _FakeSteamSource)
     entry_for(game, ctrl).record_exit(5.0, 0, ctrl.library)
-    assert game.playtime == 0.0  # Steam does not accumulate locally
-    assert ctrl.calls == ["steam_playtime_refresh:S"]
+    # Steam does not ADD wall-clock hours (5.0); it overwrites with Steam's own
+    # authoritative value (12.5) read from the source.
+    assert game.playtime == pytest.approx(12.5)
+    assert any(call.startswith("apply_game_update:S") for call in ctrl.calls)
 
 
 class _FakeGogSource:

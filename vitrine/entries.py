@@ -71,13 +71,14 @@ class GameEntry(ABC):
         raise NotImplementedError
 
     def on_stop(self) -> None:
-        stop = getattr(self.controller, "stop_game", None)
-        if callable(stop):
-            stop()
-            return
+        """Stop the running session for this game (default: local runner)."""
         sessions = getattr(self.controller, "sessions", None)
         if sessions is not None and hasattr(sessions, "stop_running"):
             sessions.stop_running()
+            return
+        runtime = getattr(self.controller, "runtime", None)
+        if runtime is not None:
+            runtime.stop()
 
     def on_uninstall(self) -> None:
         raise NotImplementedError
@@ -257,6 +258,14 @@ class EpicGameEntry(GameEntry):
     def can_install(self) -> bool:
         return True
 
+    def on_stop(self) -> None:
+        """Force-stop an Epic game: kill the tracked legendary job/proc."""
+        stopper = getattr(self.controller, "stop_epic", None)
+        if callable(stopper):
+            stopper(self.game)
+            return
+        super().on_stop()
+
     def launch(self) -> None:
         self._launch_epic()
 
@@ -416,6 +425,14 @@ class SteamGameEntry(GameEntry):
     def can_install(self) -> bool:
         return False
 
+    def on_stop(self) -> None:
+        """Force-stop a Steam game: SIGTERM, then SIGKILL if it ignores it."""
+        stopper = getattr(self.controller, "stop_steam", None)
+        if callable(stopper):
+            stopper(self.game)
+            return
+        super().on_stop()
+
     def launch(self) -> None:
         launcher = getattr(self.controller, "launch_steam", None)
         if callable(launcher):
@@ -442,12 +459,20 @@ class SteamGameEntry(GameEntry):
 
     def record_exit(self, hours: float, returncode: int | None, library) -> None:
         # Steam is the authoritative owner of its playtime. We don't accumulate
-        # wall-clock hours locally; instead the controller refreshes the value
-        # Steam wrote (manifest / Web API) after the session ends. The controller
-        # is Duck-typed and may override ``steam_playtime_refresh``.
-        refresh = getattr(self.controller, "steam_playtime_refresh", None)
-        if callable(refresh):
-            refresh(self.game)
+        # wall-clock hours locally; read the value Steam wrote (manifest / Web
+        # API) after the session ends, via the source, and write it back.
+        from .sources.steam_source import SteamSource
+
+        source = SteamSource(library)
+
+        def _worker() -> None:
+            fresh_hours, lastplayed = source.refresh_playtime(self.game)
+            if fresh_hours is None:
+                return  # not installed / no manifest; nothing authoritative.
+            library.set_authoritative_playtime(self.game, fresh_hours, lastplayed)
+            self.controller.apply_game_update(self.game, "Updated playtime")
+
+        self.controller.run_async(_worker)
 
 _ENTRIES: dict[str, type[GameEntry]] = {}
 
