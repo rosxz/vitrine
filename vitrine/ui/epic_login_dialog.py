@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 gi.require_version("WebKit", "6.0")
 
-from gi.repository import Adw, Gtk, WebKit  # noqa: E402
+from gi.repository import Gtk, WebKit  # noqa: E402
 
 from ..sources.epic import legendary as lg  # noqa: E402
 from ..sources.epic.auth import (  # noqa: E402
@@ -30,10 +30,14 @@ from ..sources.epic.auth import (  # noqa: E402
     EpicTokenStore,
     obtain_token,
 )
+from .login_base import WebKitLoginDialog
 
 
-class EpicLoginDialog(Gtk.Window):
+class EpicLoginDialog(WebKitLoginDialog):
     """An embedded browser window for signing into Epic Games."""
+
+    dialog_title = "Sign in to Epic Games"
+    login_url = EPIC_AUTH_URL
 
     def __init__(
         self,
@@ -41,54 +45,11 @@ class EpicLoginDialog(Gtk.Window):
         on_complete: Callable[[bool, str | None, str], None] | None = None,
         parent: Gtk.Window | None = None,
     ) -> None:
-        super().__init__(title="Sign in to Epic Games")
         self.store = store
-        self._on_complete = on_complete
         self._captured_account_id: str | None = None
         self._handled_code: str | None = None
-        self.set_default_size(720, 860)
-        self.add_css_class("vitrine-window")
-        if parent is not None:
-            self.set_transient_for(parent)
-
-        self.webview = WebKit.WebView()
-        self.webview.connect("load_changed", self._on_load_changed)
-        self.webview.connect("create", self._on_create_popup)
-        self.webview.set_vexpand(True)
-        self.webview.set_hexpand(True)
-        web_settings = WebKit.Settings()
-        for prop in ("enable-media", "enable-mediasource", "enable-webaudio", "enable-webgl", "enable-media-stream"):
-            setter = "set_" + prop
-            if hasattr(web_settings, setter):
-                getattr(web_settings, setter)(False)
-        self.webview.set_settings(web_settings)
-
         self._handling = False
-
-        header = Adw.HeaderBar()
-        header.set_title_widget(Adw.WindowTitle(title="Sign in to Epic Games", subtitle=""))
-        header.set_show_end_title_buttons(True)
-        reset_button = Gtk.Button(label="Reset session")
-        reset_button.set_tooltip_text("Clear stored login, then start over")
-        reset_button.add_css_class("destructive-action")
-        reset_button.connect("clicked", self.reset_session)
-        header.pack_start(reset_button)
-
-        self._status = Gtk.Label(label="", wrap=True, xalign=0.0)
-        self._status.add_css_class("dim-label")
-        self._status.set_margin_top(6)
-        self._status.set_margin_bottom(6)
-        self._status.set_margin_start(12)
-        self._status.set_margin_end(12)
-
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        content.append(self._status)
-        content.append(self.webview)
-
-        self.set_titlebar(header)
-        self.set_child(content)
-
-        self.webview.load_uri(EPIC_AUTH_URL)
+        super().__init__(on_complete=on_complete, parent=parent)
 
     # -- WebKit callbacks -----------------------------------------------------
 
@@ -126,41 +87,6 @@ class EpicLoginDialog(Gtk.Window):
         else:
             self._set_status("Epic sign-in incomplete — no authorization code", error=True)
             self._handling = False
-
-    def _on_create_popup(
-        self, _webview: WebKit.WebView, _navigation: WebKit.NavigationAction
-    ) -> WebKit.WebView | None:
-        return None
-
-    # -- helpers --------------------------------------------------------------
-
-    def _set_status(self, message: str, error: bool = False) -> None:
-        self._status.set_text(("Error: " if error else "") + message)
-        self._status.set_visible(bool(message))
-
-    def reset_session(self, _button: Gtk.Button | None = None) -> None:
-        self.store.clear()
-        self._handling = False
-        try:
-            data_manager = WebKit.NetworkSession.get_default().get_website_data_manager()
-            data_manager.clear(
-                WebKit.WebsiteDataTypes.COOKIES,
-                0,
-                None,
-                self._on_cookies_cleared,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to clear Epic cookies: %s", exc)
-            self._after_reset()
-
-    def _on_cookies_cleared(self, _manager, _result) -> None:
-        self._after_reset()
-
-    def _after_reset(self) -> None:
-        self._set_status("")
-        self._handled_code = None
-        self._handling = False
-        self.webview.load_uri(EPIC_AUTH_URL)
 
     # -- credential exchange --------------------------------------------------
 
@@ -204,7 +130,7 @@ class EpicLoginDialog(Gtk.Window):
         if token is not None or legendary_ok:
             self._set_status("")
             self._captured_account_id = account_id or self.store.account_id
-            self._finish(True, code)
+            self.finish(True, self._captured_account_id, code)
             return
 
         logger.warning("Epic auth failed: %s", last_error)
@@ -219,11 +145,12 @@ class EpicLoginDialog(Gtk.Window):
                 return value
         return ""
 
-    def _finish(self, ok: bool, code: str = "") -> None:
-        self._handling = True
-        if self._on_complete is not None:
-            self._on_complete(ok, self._captured_account_id, code)
-        self.close()
+    # -- session reset ----------------------------------------------------------
+
+    def _on_reset(self) -> None:
+        self.store.clear()
+        self._handled_code = None
+        self._handling = False
 
 
 def _extract_code_from_body(text: str) -> str:
@@ -235,60 +162,3 @@ def _extract_code_from_body(text: str) -> str:
         if match:
             return match.group(1).strip()
     return ""
-
-    def _exchange_code(self, code: str) -> None:
-        last_error: Exception | None = None
-
-        # Primary path: let legendary (the battle-tested backend) import the
-        # exchange code. This is what actually grants install/launch rights.
-        legendary_ok = False
-        try:
-            from ..sources.epic import legendary as lg
-
-            lg.auth(code)
-            legendary_ok = True
-        except Exception as exc:  # noqa: BLE001 - legendary may be missing
-            logger.warning("legendary auth failed: %s", exc)
-            last_error = exc
-
-        # Secondary path: our own HTTP exchange, mainly to resolve account_id.
-        account_id = ""
-        if legendary_ok:
-            try:
-                token = obtain_token(code)
-                account_id = self._resolve_account(token)
-                self.store.set_credentials(code, token)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Vitrine HTTP exchange failed (non-fatal if legendary worked): %s", exc)
-                if not account_id:
-                    account_id = self._resolve_account(self.store.load().get("token") or {})
-
-        if legendary_ok:
-            self._set_status("")
-            self._captured_account_id = account_id or self.store.account_id
-            self._finish(True, code)
-            return
-
-        # Neither path worked: resume polling so a fresh code can arrive.
-        logger.warning("Epic auth failed: %s", last_error)
-        self._set_status(f"Epic validation failed: {last_error} — awaiting a fresh code", error=True)
-        self._handled_code = None
-        self._capturing = False
-        self._start_polling()
-
-    def _resolve_account(self, token: dict) -> str:
-        """Best-effort account id, preferring the id embedded in the token."""
-        for key in ("account_id", "accountId", "sub", "sub_entity_id"):
-            value = token.get(key)
-            if isinstance(value, str) and value:
-                return value
-        return ""
-
-    def _finish(self, ok: bool, code: str = "") -> None:
-        self._stop_polling()
-        self._capturing = True
-        if self._on_complete is not None:
-            self._on_complete(ok, self._captured_account_id, code)
-        self.close()
-
-

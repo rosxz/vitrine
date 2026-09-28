@@ -16,14 +16,13 @@ Path layout: ``<secret_dir>/gog/auth_<user_id>.json``.
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import time
 from pathlib import Path
-from typing import Any
 
 import requests
+
+from ..auth import CookieJar, JsonCredentialStore
 
 logger = logging.getLogger(__name__)
 
@@ -55,67 +54,23 @@ class GogAuthError(Exception):
     """Raised when GOG authentication state prevents an operation."""
 
 
-class GogCookieJar:
-    """An ordered cookie list that persists session cookies too."""
-
-    def __init__(self, cookies: list[dict[str, Any]] | None = None) -> None:
-        self.cookies: list[dict[str, Any]] = cookies or []
-
-    def add(self, cookie: dict[str, Any]) -> None:
-        self.cookies.append(cookie)
-
-    def get(self, name: str, default: str = "") -> str:
-        for cookie in reversed(self.cookies):
-            if cookie.get("name") == name:
-                return str(cookie.get("value", default))
-        return default
-
-    def to_dict(self) -> list[dict[str, Any]]:
-        return self.cookies
-
-    @classmethod
-    def from_dict(cls, data: list[dict[str, Any]]) -> GogCookieJar:
-        return cls(data)
-
+#: GOG's cookie jar is the shared ordered-jar type (kept as an alias so call
+#: sites and the login dialog can keep importing `GogCookieJar`).
+GogCookieJar = CookieJar
 
 #: Cookies that together indicate a fully-authenticated GOG web session.
 REQUIRED_COOKIES = ("gog_lci", "gog_us")
 
 
-class GogTokenStore:
+class GogTokenStore(JsonCredentialStore):
     """Reads and writes the durable credential file for one GOG account."""
 
+    provider = "gog"
+    cookie_cls = CookieJar
+
     def __init__(self, secret_dir: str | Path, user_id: str) -> None:
-        self.secret_dir = Path(secret_dir)
+        super().__init__(secret_dir, user_id)
         self.user_id = user_id
-        self.filename = self.secret_dir / "gog" / f"auth_{user_id}.json"
-        #: Netscape-format cookie file that the login browser writes to.
-        self.cookie_file = self.secret_dir / "gog" / f"cookies_{user_id}.txt"
-
-    # -- persistence ----------------------------------------------------------
-
-    def load(self) -> dict[str, Any]:
-        try:
-            with open(self.filename, encoding="utf-8") as handle:
-                return json.load(handle)
-        except (OSError, ValueError):
-            return {}
-
-    def save(self, data: dict[str, Any]) -> None:
-        self.filename.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.filename.with_suffix(".json.tmp")
-        with open(tmp, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, indent=2)
-        os.replace(tmp, self.filename)
-
-    def exists(self) -> bool:
-        return self.filename.is_file()
-
-    def clear(self) -> None:
-        try:
-            self.filename.unlink(missing_ok=True)
-        except FileNotFoundError:
-            pass
 
     # -- state accessors ------------------------------------------------------
 

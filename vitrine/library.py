@@ -285,7 +285,7 @@ class Library:
                 game = Game(
                     name=catalog.name,
                     slug=catalog.slug or slugify(catalog.name),
-                    runner="steam" if source == "steam" else "wine",
+                    runner=getattr(catalog, "runner", "wine") or "wine",
                     source=source,
                     source_id=catalog.appid,
                     installed=catalog.installed,

@@ -19,7 +19,6 @@ import re
 import requests
 
 from .. import paths
-from ..artwork import FORCE_REFRESH_SETTING
 from ..library import Game, Library
 from ..util import slugify
 from .base import Source, SourceGame, registry
@@ -66,49 +65,8 @@ class GogSource(Source):
     def is_authenticated(self) -> bool:
         return self._token_store().is_authenticated()
 
-    def sync(self) -> int:
-        """Refresh the GOG catalogue into the library.
-
-        Returns how many known products were synced. Artwork is not downloaded
-        here (it would block the UI for many games); callers fetch it
-        asynchronously.
-        """
-        self.library.clear_source_games(self.id)
-
-        games = self._all_games()
-
-        deduped: dict[str, SourceGame] = {}
-        for game in games:
-            deduped[game.appid] = game
-
-        for game in deduped.values():
-            self.library.upsert_source_game(
-                self.id,
-                game.appid,
-                game.name,
-                slug=game.slug,
-                catalog_slug=game.catalog_slug,
-                installed=game.installed,
-                **game.details,
-            )
-
-        self.library.merge_source_games(self.id, deduped.values())
-        # Drop products that fell out of the owned catalogue on this refresh.
-        self.library.prune_source_games(self.id, deduped.keys())
-        # GOG entries use Lutris artwork by default (no store-native cover URL).
-        for game in self.library.games(source=self.id):
-            if (game.artwork_source or "") == "local":
-                game.artwork_source = "lutris"
-                self.library.update(game)
-        return len(deduped)
-
-    def games_needing_artwork(self) -> list:
-        pending = []
-        force = bool(self.library.setting(FORCE_REFRESH_SETTING, False))
-        for game in self.library.games(source=self.id):
-            if not (game.cover and game.banner) or force:
-                pending.append(game)
-        return pending
+    def _fetch_games(self) -> list[SourceGame]:
+        return self._all_games()
 
     def sync_installed(self) -> int:
         """Reconcile GOG installed state purely from local disk (no store API).

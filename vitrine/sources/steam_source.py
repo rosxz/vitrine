@@ -21,12 +21,10 @@ from __future__ import annotations
 import dataclasses
 import logging
 import os
-from typing import Any
 
 import requests
 
 from .. import paths
-from ..artwork import FORCE_REFRESH_SETTING
 from ..library import Library
 from ..util import slugify
 from .base import Source, SourceGame, registry
@@ -71,6 +69,7 @@ class SteamSource(Source):
     name = "Steam"
     icon = "steam-client"
     requires_auth = True
+    artwork_default = "provider"
 
     def __init__(self, library: Library) -> None:
         self.library = library
@@ -91,63 +90,12 @@ class SteamSource(Source):
         store = self._token_store()
         return store.exists() and bool(store.access_token())
 
-    def sync(self) -> int:
-        """Refresh the Steam catalogue into the library.
+    def _fetch_games(self) -> list[SourceGame]:
+        return self._all_games()
 
-        Writes both the source-games cache and the library's own ``games``
-        table so every owned title (installed or not) shows in the unified
-        grid. Returns how many known games were synced. Artwork is *not*
-        downloaded here (it would block the UI for hundreds of games); callers
-        fetch it asynchronously.
-        """
-        self.library.clear_source_games(self.id)
-
-        games = self._all_games()
-
-        deduped: dict[str, SourceGame] = {}
-        for game in games:
-            if game.appid in EXCLUDED_APPIDS:
-                continue
-            deduped[game.appid] = game
-
-        for game in deduped.values():
-            self.library.upsert_source_game(
-                self.id,
-                game.appid,
-                game.name,
-                slug=game.slug,
-                catalog_slug=game.catalog_slug,
-                installed=game.installed,
-                **game.details,
-            )
-
-        self.library.merge_source_games(self.id, deduped.values())
-        # Drop owned-but-not-installed entries that fell out of the catalogue
-        # on this refresh (e.g. after a logout in a *different* Steam app).
-        self.library.prune_source_games(self.id, deduped.keys())
-        # Newly-synced Steam entries should use the store/provider artwork by
-        # default; older rows that predate the artwork feature still carry the
-        # old "local" default -- promote those to "provider" too so a later,
-        # async artwork pass knows to fetch them.
-        for game in self.library.games(source=self.id):
-            if (game.artwork_source or "") == "local":
-                game.artwork_source = "provider"
-                self.library.update(game)
-        return len(deduped)
-
-    def games_needing_artwork(self) -> list[Any]:
-        """Return this source's games that still lack cached artwork.
-
-        When the global "refresh artwork for all games" setting is enabled,
-        every game (even ones with artwork) is returned so a source refresh
-        re-pulls them all.
-        """
-        force = bool(self.library.setting(FORCE_REFRESH_SETTING, False))
-        pending = []
-        for game in self.library.games(source=self.id):
-            if not (game.cover and game.banner) or force:
-                pending.append(game)
-        return pending
+    def _filter_game(self, game: SourceGame) -> bool:
+        # Skip store rows that are not actually playable games (e.g. software).
+        return game.appid not in EXCLUDED_APPIDS
 
     def sync_installed(self) -> int:
         """Merge locally-installed information over the web library."""
@@ -199,10 +147,10 @@ class SteamSource(Source):
         for game in games:
             local = installed.get(game.appid)
             if not local:
-                merged.append(game)
+                merged.append(dataclasses.replace(game, runner="steam"))
                 continue
             details = {**game.details, **local.details}
-            merged.append(dataclasses.replace(game, installed=True, details=details))
+            merged.append(dataclasses.replace(game, installed=True, details=details, runner="steam"))
         return merged
 
     def include_family(self) -> bool:

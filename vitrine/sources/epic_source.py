@@ -14,10 +14,8 @@ from the EGS Wine-prefix manifests in addition to legendary's own list.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from .. import paths
-from ..artwork import FORCE_REFRESH_SETTING
 from ..library import Library
 from ..util import slugify
 from .base import Source, SourceGame, registry
@@ -61,50 +59,13 @@ class EpicSource(Source):
         return self._token_store().is_authenticated()
 
     def sync(self) -> int:
-        """Refresh the Epic catalogue into the library.
-
-        Mirrors Steam/GOG: merge the owned list into ``games``/``source_games``
-        and prune entries that fell out. Artwork is not downloaded here; callers
-        fetch it asynchronously.
-        """
+        """Refresh the Epic catalogue (guard auth, then run the shared template)."""
         if not self.is_authenticated():
             raise EpicAuthError(WITHOUT_LOGIN_HINT)
+        return super().sync()
 
-        self.library.clear_source_games(self.id)
-
-        games = self._all_games()
-
-        deduped: dict[str, SourceGame] = {}
-        for game in games:
-            deduped.setdefault(game.appid, game)
-
-        for game in deduped.values():
-            self.library.upsert_source_game(
-                self.id,
-                game.appid,
-                game.name,
-                slug=game.slug,
-                catalog_slug=game.catalog_slug,
-                installed=game.installed,
-                **game.details,
-            )
-
-        self.library.merge_source_games(self.id, deduped.values())
-        self.library.prune_source_games(self.id, deduped.keys())
-        # Epic titles use Lutris artwork  (no store-native cover here).
-        for game in self.library.games(source=self.id):
-            if (game.artwork_source or "") == "local":
-                game.artwork_source = "lutris"
-                self.library.update(game)
-        return len(deduped)
-
-    def games_needing_artwork(self) -> list[Any]:
-        pending = []
-        force = bool(self.library.setting(FORCE_REFRESH_SETTING, False))
-        for game in self.library.games(source=self.id):
-            if not (game.cover and game.banner) or force:
-                pending.append(game)
-        return pending
+    def _fetch_games(self) -> list[SourceGame]:
+        return self._all_games()
 
     def sync_installed(self) -> int:
         """Mark installed Epic titles from both legendary and EGS manifests."""
