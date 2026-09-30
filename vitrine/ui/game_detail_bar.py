@@ -292,21 +292,29 @@ class GameDetailBar(Gtk.Box):
         self._store_button.set_visible(visible)
 
     def set_achievements(
-        self, total: int | None, unlocked: int | None, on_click: Callable[[Game | None], None] | None = None
+        self,
+        total: int | None,
+        unlocked: int | None,
+        available: bool = False,
+        on_click: Callable[[Game | None], None] | None = None,
     ) -> None:
         """Show/hide the achievement summary button.
 
-        ``total``/``unlocked`` come from the game's cached summary; the button is
-        hidden when there are no tracked achievements. Callers pass ``None`` to
-        hide it.
+        ``total``/``unlocked`` come from the game's cached summary (may be
+        unknown -> ``None``). ``available`` is whether the game can have
+        achievements at all (it has an achievement provider); when true the
+        button is always shown so the viewer is reachable, even before a fetch.
         """
         if on_click is not None:
             self._on_achievements = on_click
-        if not total:
+        if not available and not total:
             self._achievements_button.set_visible(False)
             self._achievements_button.set_label("")
             return
-        text = f"🏆 {unlocked or 0}/{total}"
+        if total:
+            text = f"🏆 {unlocked or 0}/{total}"
+        else:
+            text = "🏆 Achievements"
         self._achievements_button.set_label(text)
         self._achievements_button.set_visible(True)
 

@@ -99,6 +99,10 @@ class AchievementsWindow(Gtk.Window):
         self.set_child(content)
 
         self._populate()
+        # If nothing is cached yet, fetch on first open so the window shows data
+        # right away instead of an empty list (the user can also press Refresh).
+        if not self.library.achievements_for(self.game):
+            self.refresh()
 
     # -- data / rendering -----------------------------------------------------
 
@@ -178,6 +182,10 @@ class AchievementsWindow(Gtk.Window):
             self._populate()
 
     def _on_refresh(self, _button: Gtk.Button) -> None:
+        self.refresh()
+
+    def refresh(self) -> None:
+        """Re-fetch achievements from the store on a worker thread."""
         self._refresh_button.set_sensitive(False)
         self._refresh_button.set_label("Refreshing…")
 

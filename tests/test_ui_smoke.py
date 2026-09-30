@@ -313,7 +313,8 @@ def test_achievements_window_constructs() -> None:
 
 
 def test_detail_bar_achievements_button_toggle() -> None:
-    """The trophy button shows only when the window reports achievements."""
+    """The trophy button shows for cached counts and stays reachable whenever the
+    game can have achievements (provider available)."""
     if not Gtk.init_check():
         pytest.skip("requires a display to construct widgets")
     from vitrine.services.library import Game
@@ -327,5 +328,11 @@ def test_detail_bar_achievements_button_toggle() -> None:
     assert bar._achievements_button.get_visible() is True
     assert "4/10" in bar._achievements_button.get_label()
 
+    # No cached counts but the game can have achievements: still shown.
+    bar.set_achievements(None, None, available=True)
+    assert bar._achievements_button.get_visible() is True
+    assert "Achievements" in bar._achievements_button.get_label()
+
+    # No provider and no counts: hidden.
     bar.set_achievements(None, None)
     assert bar._achievements_button.get_visible() is False

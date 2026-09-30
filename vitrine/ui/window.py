@@ -891,8 +891,21 @@ class VitrineWindow(Adw.ApplicationWindow):
                 changed = refresh_game_achievements(self.library, game, ctx)
             except Exception:  # noqa: BLE001
                 logger.exception("achievements refresh failed for %s", game.name)
-            if changed:
-                GLib.idle_add(self._set_detail_game, game)
+            if not changed:
+                return
+
+            def _apply() -> None:
+                # Re-read the freshly-persisted game so its achievement_* summary
+                # (written onto a new DB object by replace_achievements) is what
+                # the detail bar reads, then repaint the grid + hero bar.
+                current = self.library.game(game.id) if game.id is not None else None
+                if current is not None:
+                    game.achievement_count = current.achievement_count
+                    game.achievement_unlocked = current.achievement_unlocked
+                self.reload()
+                self._set_detail_game(game)
+
+            GLib.idle_add(_apply)
 
         threading.Thread(target=_worker, daemon=True, name="vitrine-achievements").start()
 
@@ -918,25 +931,26 @@ class VitrineWindow(Adw.ApplicationWindow):
         if game is not None:
             self.open_achievements(game)
 
-    def open_achievements(self, game: Game, refresh_after: bool = True) -> None:
+    def open_achievements(self, game: Game) -> None:
         """Open the achievements viewer for ``game``.
 
-        If the game has no cached achievements yet and would have a provider, a
-        refresh is triggered so the window shows real data. ``refresh_after``
-        lets callers skip the auto-fetch (e.g. when opening purely to view).
+        The viewer fetches fresh data on open when nothing is cached yet, and its
+        Refresh button re-fetches on demand; ``on_refreshed`` keeps the hero-bar
+        summary in sync afterwards.
         """
         from vitrine.ui.achievements_window import AchievementsWindow
 
-        # Ensure fresh data when the user has none cached (or asks).
-        if refresh_after:
-            from vitrine.services.achievements import provider_for
+        def _on_refreshed() -> None:
+            current = self.library.game(game.id) if game.id is not None else None
+            if current is not None:
+                game.achievement_count = current.achievement_count
+                game.achievement_unlocked = current.achievement_unlocked
+            self._set_detail_game(game)
 
-            if provider_for(game) is not None:
-                self._start_achievements_refresh(game)
         AchievementsWindow(
             self.library,
             game,
-            on_refreshed=lambda: self._set_detail_game(game),
+            on_refreshed=_on_refreshed,
             parent=self,
         ).present()
 
@@ -1434,9 +1448,13 @@ class VitrineWindow(Adw.ApplicationWindow):
             except Exception:  # noqa: BLE001
                 has_store = False
             self.detail_bar.set_store_visible(has_store)
+            from vitrine.services.achievements import provider_for
+
+            available = provider_for(game) is not None
             self.detail_bar.set_achievements(
                 getattr(game, "achievement_count", None) or None,
                 getattr(game, "achievement_unlocked", None) or None,
+                available=available,
             )
             if self.installing(game):
                 self.detail_bar.set_downloading(True)
