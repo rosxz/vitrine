@@ -95,6 +95,11 @@ class EpicSource(Source):
                 update += 1
         return update
 
+    def fetch_achievements(self, game):
+        from vitrine.services.achievements import fetch_achievements
+
+        return fetch_achievements(game, library=self.library)
+
     def installed_on_disk(self) -> set[str]:
         """App ids actually installed locally (legendary + EGS manifests)."""
         ids: set[str] = set()

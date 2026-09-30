@@ -122,6 +122,11 @@ class SteamSource(Source):
                 game.lastplayed = lastplayed
         return updated
 
+    def fetch_achievements(self, game):
+        from vitrine.services.achievements import fetch_achievements
+
+        return fetch_achievements(game, library=self.library)
+
     def installed_on_disk(self) -> set[str]:
         """AppIDs that are actually installed locally (from app manifests)."""
         return {game.appid for game in self._installed_games()}

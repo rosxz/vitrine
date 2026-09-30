@@ -111,6 +111,11 @@ class GogSource(Source):
         self._dedupe_installed_twins(on_disk)
         return updated
 
+    def fetch_achievements(self, game):
+        from vitrine.services.achievements import fetch_achievements
+
+        return fetch_achievements(game, library=self.library)
+
     def installed_on_disk(self) -> set[str]:
         """GOG game ids that are installed on this machine (gogdl depot markers)."""
         return set(self._scan_on_disk())

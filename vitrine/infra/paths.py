@@ -52,6 +52,11 @@ def covers_dir() -> Path:
     return cache_dir() / "covers"
 
 
+def achievements_dir() -> Path:
+    """A per-game working dir for downscaled achievement icons."""
+    return cache_dir() / "achievements"
+
+
 def secret_dir() -> Path:
     """Tokens and other credentials."""
     return cache_dir() / "secrets"
@@ -62,5 +67,15 @@ def log_path() -> Path:
 
 
 def ensure_dirs() -> None:
-    for path in (data_dir(), cache_dir(), config_dir(), runners_dir(), prefixes_dir(), covers_dir(), secret_dir()):
+    paths = (
+        data_dir(),
+        cache_dir(),
+        config_dir(),
+        runners_dir(),
+        prefixes_dir(),
+        covers_dir(),
+        secret_dir(),
+        achievements_dir(),
+    )
+    for path in paths:
         path.mkdir(parents=True, exist_ok=True)

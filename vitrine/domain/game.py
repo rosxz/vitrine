@@ -75,6 +75,11 @@ class Game:
     lutris_slug: str | None = None
     favorite: bool = False
     hidden: bool = False
+    #: Where this game's achievements come from ('auto' or 'none').
+    achievements_source: str = "auto"
+    #: Cached achievement summary (for the detail bar / grid).
+    achievement_count: int | None = None
+    achievement_unlocked: int | None = None
     config: dict[str, Any] = field(default_factory=dict)
 
     def merged_config(self, global_config: dict[str, Any]) -> dict[str, Any]:

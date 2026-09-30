@@ -156,6 +156,97 @@ class Library:
         self.update(target)
         return target
 
+    # -- achievements ----------------------------------------------------------
+
+    def achievements_for(self, game: Game, provider: str | None = None) -> list:
+        """Return a game's stored achievements as ``Achievement`` objects."""
+        from vitrine.domain.achievement import Achievement
+
+        if game.id is None:
+            return []
+        query = "SELECT * FROM achievements WHERE game_id = ?"
+        params: list[Any] = [game.id]
+        if provider:
+            query += " AND provider = ?"
+            params.append(provider)
+        query += " ORDER BY sort, key COLLATE NOCASE"
+        rows = self.conn.execute(query, params).fetchall()
+        out = []
+        for row in rows:
+            out.append(
+                Achievement(
+                    key=row["key"],
+                    name=row["name"] or "",
+                    description=row["description"] or "",
+                    hidden=bool(row["hidden"]),
+                    unlocked=bool(row["unlocked"]),
+                    unlock_date=row["unlock_date"],
+                    progress=float(row["progress"] or 0),
+                    xp=row["xp"],
+                    tier=row["tier"],
+                    rarity=row["rarity"],
+                    icon_locked_path=row["icon_locked"],
+                    icon_unlocked_path=row["icon_unlocked"],
+                    sort=int(row["sort"] or 0),
+                )
+            )
+        return out
+
+    def replace_achievements(self, game: Game, achievement_set) -> None:
+        """Replace a game's stored achievements with an :class:`AchievementSet`.
+
+        The achiever's icons are already cached by the caller; this persists rows
+        (removing ones no longer reported) and refreshes the cached summary on the
+        ``games`` row. Returns nothing; the game object is updated in place if it
+        has an id.
+        """
+        if game.id is None:
+            return
+        now_ts = now()
+        self.conn.execute("DELETE FROM achievements WHERE game_id = ?", (game.id,))
+        rows = []
+        for ach in achievement_set.achievements:
+            rows.append(
+                (
+                    game.id,
+                    achievement_set.provider,
+                    ach.key,
+                    ach.name,
+                    ach.description,
+                    int(ach.hidden),
+                    int(ach.unlocked),
+                    ach.unlock_date,
+                    float(ach.progress),
+                    ach.xp,
+                    ach.tier,
+                    ach.rarity,
+                    ach.icon_locked_path,
+                    ach.icon_unlocked_path,
+                    int(ach.sort),
+                    now_ts,
+                )
+            )
+        self.conn.executemany(
+            "INSERT INTO achievements (game_id, provider, key, name, description, hidden,"
+            " unlocked, unlock_date, progress, xp, tier, rarity, icon_locked, icon_unlocked,"
+            " sort, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        game.achievement_count = achievement_set.total
+        game.achievement_unlocked = achievement_set.unlocked
+        self.update(game)
+        self.conn.commit()
+
+    def clear_achievements(self, game: Game) -> None:
+        """Remove all stored achievements for a game and reset its summary."""
+        if game.id is None:
+            return
+        self.conn.execute("DELETE FROM achievements WHERE game_id = ?", (game.id,))
+        game.achievement_count = None
+        game.achievement_unlocked = None
+        self.update(game)
+        self.conn.commit()
+
     def _unique_slug(self, base: str) -> str:
         candidate = base or "game"
         suffix = 2

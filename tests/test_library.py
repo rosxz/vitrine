@@ -155,3 +155,44 @@ def test_merge_source_games_persists_steam_playtime(library: Library) -> None:
         SourceGame(source="gog", appid="7", name="G", slug="g", installed=False, details={}),
     ])
     assert library.game_by_source_id("gog", "7") is not None
+
+
+def test_replace_and_read_achievements(library: Library) -> None:
+    """Achievements persist per game with a summary and a stored list."""
+    from vitrine.domain.achievement import Achievement, AchievementSet
+
+    game = library.add(Game(name="Trophy Game", source="steam", source_id="5"))
+    achievement_set = AchievementSet.build(
+        "steam",
+        [
+            Achievement(key="a1", name="First", unlocked=True, sort=0),
+            Achievement(key="a2", name="Second", unlocked=False, sort=1),
+        ],
+    )
+    library.replace_achievements(game, achievement_set)
+
+    stored = library.achievements_for(game)
+    assert len(stored) == 2
+    assert stored[0].key == "a1"
+    assert stored[0].unlocked is True
+    assert stored[0].progress == 0.0  # not part of the DTO; not stored
+
+    fresh = library.game(game.id)
+    assert fresh is not None
+    assert fresh.achievement_count == 2
+    assert fresh.achievement_unlocked == 1
+
+
+def test_clear_achievements_resets_summary(library: Library) -> None:
+    from vitrine.domain.achievement import Achievement, AchievementSet
+
+    game = library.add(Game(name="G2", source="gog", source_id="7"))
+    library.replace_achievements(
+        game, AchievementSet.build("gog", [Achievement(key="x", name="X", unlocked=True)])
+    )
+    assert library.game(game.id).achievement_count == 1
+
+    library.clear_achievements(game)
+    assert library.achievements_for(game) == []
+    assert library.game(game.id).achievement_count is None
+    assert library.game(game.id).achievement_unlocked is None

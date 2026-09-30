@@ -113,6 +113,17 @@ class Source:
                 pending.append(game)
         return pending
 
+    def fetch_achievements(self, game: Any) -> Any:
+        """Return this source's :class:`AchievementSet` for ``game``, or ``None``.
+
+        Store sources override this to call their provider. Returns ``None`` when
+        the game/account can't supply achievements (e.g. local games, not
+        authenticated). This is the store-side entry point; the achievements
+        service also dispatches by :attr:`Game.achievements_source` for non-store
+        providers (e.g. RetroAchievements in the future).
+        """
+        return None
+
     # -- installed / auth ------------------------------------------------------
 
     def sync_installed(self) -> int:

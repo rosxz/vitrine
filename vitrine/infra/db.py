@@ -48,6 +48,29 @@ CREATE TABLE IF NOT EXISTS source_games (
     UNIQUE (source, appid)
 );
 
+CREATE TABLE IF NOT EXISTS achievements (
+    id               INTEGER PRIMARY KEY,
+    game_id          INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    provider         TEXT NOT NULL,
+    key              TEXT NOT NULL,
+    name             TEXT,
+    description      TEXT,
+    hidden           INTEGER NOT NULL DEFAULT 0,
+    unlocked         INTEGER NOT NULL DEFAULT 0,
+    unlock_date      INTEGER,
+    progress         REAL NOT NULL DEFAULT 0,
+    xp               INTEGER,
+    tier             TEXT,
+    rarity           REAL,
+    icon_locked      TEXT,
+    icon_unlocked    TEXT,
+    sort             INTEGER NOT NULL DEFAULT 0,
+    updated_at       INTEGER,
+    UNIQUE (game_id, provider, key)
+);
+
+CREATE INDEX IF NOT EXISTS achievements_game_idx ON achievements (game_id);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -83,6 +106,17 @@ def _add_favorite_hidden(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE games ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
 
 
+def _add_achievements(conn: sqlite3.Connection) -> None:
+    """v4 -> v5: per-game achievement source + cached summary columns.
+
+    The ``achievements`` table itself is created by the base ``SCHEMA`` (which
+    runs on every start), so only the ``games`` columns need a migration here.
+    """
+    conn.execute("ALTER TABLE games ADD COLUMN achievements_source TEXT NOT NULL DEFAULT 'auto'")
+    conn.execute("ALTER TABLE games ADD COLUMN achievement_count INTEGER")
+    conn.execute("ALTER TABLE games ADD COLUMN achievement_unlocked INTEGER")
+
+
 # Each future schema change gets a function here; ``initialize`` runs the ones
 # this database has not seen yet. Index ``n`` upgrades version ``n`` to
 # ``n + 1``.
@@ -91,6 +125,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _add_artwork_columns,  # v1 -> v2
     _add_artwork_source,  # v2 -> v3
     _add_favorite_hidden,  # v3 -> v4
+    _add_achievements,  # v4 -> v5
 ]
 
 
