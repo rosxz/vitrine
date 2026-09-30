@@ -208,3 +208,20 @@ window.vitrine-window {
 .vitrine-tile.vitrine-hidden {
     opacity: 0.45;
 }
+/* Achievement icons are normalised to a fixed square cache; force the same box
+   size when rendering so every row shows a consistent small icon regardless of
+   the source image's dimensions. */
+.achievement-icon {
+    min-width: 40px;
+    min-height: 40px;
+    border-radius: 4px;
+}
+
+/* Hidden + unearned achievements: the title is dimmed to "HIDDEN"; the image and
+   description sit under a high-opacity black cover until the row is clicked. */
+.achievement-hidden {
+    opacity: 0.7;
+}
+.achievement-cover {
+    background-color: rgba(0, 0, 0, 0.92);
+}

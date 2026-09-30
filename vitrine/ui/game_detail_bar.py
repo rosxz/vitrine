@@ -125,9 +125,8 @@ class GameDetailBar(Gtk.Box):
         self._store_button.set_visible(False)
         self._store_button.connect("clicked", lambda _b: self._on_store(self._game))
 
-        # Achievement button: a trophy icon that opens the achievements viewer.
-        self._achievements_button = Gtk.Button()
-        self._achievements_button.set_icon_name("emblem-favorite-symbolic")
+        # Achievement button: a trophy emoji that opens the achievements viewer.
+        self._achievements_button = Gtk.Button(label="🏆")
         self._achievements_button.set_tooltip_text("View achievements")
         self._achievements_button.add_css_class("flat")
         self._achievements_button.set_visible(False)

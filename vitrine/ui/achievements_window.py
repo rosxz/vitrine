@@ -19,6 +19,8 @@ from vitrine.services.library import Game, Library
 logger = logging.getLogger(__name__)
 
 _FILTERS = (("all", "All"), ("unlocked", "Unlocked"), ("locked", "Locked"))
+#: Fixed icon display size (px); all cached icons are normalised to a uniform
+#: square, so this renders them consistently regardless of the store source.
 _LIST_ICON = 40
 
 
@@ -133,26 +135,28 @@ class AchievementsWindow(Gtk.Window):
         row.set_margin_end(20)
 
         icon_path = ach.icon_unlocked_path if ach.unlocked else ach.icon_locked_path
-        picture = Gtk.Picture()
-        picture.set_size_request(_LIST_ICON, _LIST_ICON)
-        picture.set_content_fit(Gtk.ContentFit.COVER)
-        picture.add_css_class("achievement-icon")
+        image = Gtk.Image()
+        image.set_pixel_size(_LIST_ICON)
+        image.set_halign(Gtk.Align.START)
+        image.set_valign(Gtk.Align.CENTER)
+        image.add_css_class("achievement-icon")
         if icon_path:
             try:
-                picture.set_filename(icon_path)
+                image.set_from_file(icon_path)
             except Exception:  # noqa: BLE001
                 pass
-        row.append(picture)
+        image_wrap, image_cover = self._cover_wrap(image, _LIST_ICON, _LIST_ICON)
+        row.append(image_wrap)
 
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        name = Gtk.Label(label=ach.name or ach.key, halign=Gtk.Align.START)
+        name = Gtk.Label(halign=Gtk.Align.START)
         name.add_css_class("bold")
         name.set_xalign(0.0)
         text.append(name)
-        if ach.description:
-            desc = Gtk.Label(label=ach.description, wrap=True, halign=Gtk.Align.START, xalign=0.0)
-            desc.add_css_class("dim-label")
-            text.append(desc)
+        desc = Gtk.Label(wrap=True, halign=Gtk.Align.START, xalign=0.0)
+        desc.add_css_class("dim-label")
+        desc_wrap, desc_cover = self._cover_wrap(desc)
+        text.append(desc_wrap)
         if ach.unlock_date:
             from datetime import datetime
 
@@ -164,11 +168,63 @@ class AchievementsWindow(Gtk.Window):
             stamp.add_css_class("caption")
             text.append(stamp)
         row.append(text)
+
         if ach.hidden and not ach.unlocked:
-            tag = Gtk.Label(label="Hidden")
-            tag.add_css_class("caption")
-            row.append(tag)
+            self._configure_hidden(row, name, desc, image_cover, desc_cover, ach)
+        else:
+            name.set_text(ach.name or ach.key)
+            desc.set_text(ach.description or "")
         return row
+
+    @staticmethod
+    def _cover_wrap(content, w: int | None = None, h: int | None = None):
+        """Wrap ``content`` in an overlay with a black cover box.
+
+        The cover fills the content's allocation, so it covers the image /
+        description until revealed. Returns ``(wrapper, cover)``.
+        """
+        wrapper = Gtk.Overlay()
+        wrapper.set_child(content)
+        cover = Gtk.Box()
+        cover.add_css_class("achievement-cover")
+        cover.set_halign(Gtk.Align.FILL)
+        cover.set_valign(Gtk.Align.FILL)
+        if w and h:
+            cover.set_size_request(w, h)
+        wrapper.set_overflow(Gtk.Overflow.HIDDEN)
+        wrapper.add_overlay(cover)
+        cover.set_visible(False)  # hidden by default unless configured
+        return wrapper, cover
+
+    def _configure_hidden(self, row, name, desc, image_cover, desc_cover, ach) -> None:
+        """A hidden+locked achievement: title reads "HIDDEN" and the image +
+        description sit under a black cover until the row is clicked, which reveals
+        everything. Unlocked achievements never reach this (see ``_row``)."""
+        real_name = ach.name or ach.key
+        real_desc = ach.description or ""
+        revealed = False
+
+        def refresh() -> None:
+            name.set_text(real_name if revealed else "HIDDEN")
+            desc.set_text(real_desc if revealed else "")
+            image_cover.set_visible(not revealed)
+            desc_cover.set_visible(not revealed)
+
+        def set_reveal_clicked() -> None:
+            nonlocal revealed
+            revealed = True
+            refresh()
+
+        # Capture-phase click so the whole entry is clickable even over child
+        # widgets (image/desc), which would otherwise consume the event.
+        clicked = Gtk.GestureClick.new()
+        clicked.set_button(1)
+        clicked.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        clicked.connect("pressed", lambda *_a: set_reveal_clicked())
+        row.add_controller(clicked)
+
+        row.add_css_class("achievement-hidden")
+        refresh()
 
     def _clear_list(self) -> None:
         while child := self._list.get_first_child():

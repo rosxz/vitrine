@@ -155,3 +155,18 @@ window.vitrine-window {
 .vitrine-tile.vitrine-hidden {
     opacity: 0.45;
 }
+/* Achievement icons: fixed small box so rows are consistently sized. */
+.achievement-icon {
+    min-width: 40px;
+    min-height: 40px;
+    border-radius: 4px;
+}
+
+/* Hidden + unearned achievements: the title is dimmed to "HIDDEN"; the image and
+   description sit under a high-opacity black cover until the row is clicked. */
+.achievement-hidden {
+    opacity: 0.7;
+}
+.achievement-cover {
+    background-color: alpha(#000000, 0.92);
+}
