@@ -249,6 +249,39 @@ def install(app_name: str, base_path: str | None = None, *, skip_dlcs: bool = Tr
     _require_success(_run(install_command(app_name, base_path, skip_dlcs=skip_dlcs), timeout=LIST_TIMEOUT), "install")
 
 
+def cleanup_partial(app_name: str, base_path: str | None = None) -> None:
+    """Best-effort removal of a canceled legendary install.
+
+    Legendary writes the (possibly partial) game files straight into the target
+    install directory under ``--base-path`` and can leave scratch data behind if
+    killed mid-download. It only records an app as *installed* (in ``installed.json`` /
+    ``list-installed``) once complete, so a canceled app is safe to remove. Errors
+    are non-fatal: a cancel must never block the UI.
+    """
+    import shutil
+
+    from vitrine.infra import paths
+
+    app_dir = os.path.join(base_path or paths.data_dir() / "egs", app_name)
+    if os.path.lexists(app_dir):
+        try:
+            shutil.rmtree(app_dir)
+        except OSError:  # noqa: S110 - best effort on cancel
+            pass
+    # Clear scratch staging data legendary may have left under its config dir.
+    config_tmp = None
+    for base in LEGENDARY_CONFIG:
+        candidate = os.path.join(os.path.expanduser(base), "tmp")
+        if os.path.isdir(candidate):
+            config_tmp = candidate
+            break
+    if config_tmp:
+        try:
+            shutil.rmtree(config_tmp)
+        except OSError:  # noqa: S110
+            pass
+
+
 def uninstall_command(app_name: str) -> list[str]:
     """Build the ``legendary uninstall`` command line for ``app_name``.
 

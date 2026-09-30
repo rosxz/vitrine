@@ -37,6 +37,35 @@ def reported_nothing_to_do(output: Iterable[str]) -> bool:
     return any(line.strip() == f"{NOTHING_TO_DO}." for line in output)
 
 
+def cleanup(game_id: str, install_dir: str | None = None) -> None:
+    """Best-effort removal of a canceled GOG depot download.
+
+    gogdl can be interrupted mid-download, leaving partial game files without a
+    ``goggame-*.info`` marker (so the game is not considered installed) plus a
+    persisted product manifest under ``~/.config/heroic_gogdl/manifests`` that
+    would make the next attempt take the repair path. Remove both so a fresh
+    install starts clean; the depot root is only deleted when it doesn't hold a
+    valid install.
+    """
+    if install_dir and not install_is_valid(game_id, install_dir):
+        _rmtree_if_present(install_dir)
+    _rmtree_if_present(manifest_path(game_id))
+    # The manifest directory itself is left alone (it may hold other products).
+
+
+def _rmtree_if_present(path: str) -> None:
+    import shutil
+
+    if path and os.path.lexists(path):
+        try:
+            if os.path.isdir(path) and not os.path.islink(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+        except OSError:  # noqa: S110 - best effort on cancel
+            pass
+
+
 def gogdl_binary() -> str:
     """Return the gogdl executable path, or raise if not installed."""
     override = os.environ.get(GOGDL_ENV)

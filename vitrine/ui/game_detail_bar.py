@@ -40,11 +40,15 @@ class GameDetailBar(Gtk.Box):
         on_play: Callable[[Game | None], None] | None = None,
         on_settings: Callable[[Game | None], None] | None = None,
         on_favorite: Callable[[Game | None], None] | None = None,
+        on_cancel: Callable[[Game | None], None] | None = None,
+        on_store: Callable[[Game | None], None] | None = None,
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self._on_play = on_play
         self._on_settings = on_settings
         self._on_favorite = on_favorite
+        self._on_cancel = on_cancel
+        self._on_store = on_store
         self._game: Game | None = None
         self._expanded = True
         self._downloading = False
@@ -110,6 +114,15 @@ class GameDetailBar(Gtk.Box):
         self._settings_button.add_css_class("flat")
         self._settings_button.connect("clicked", lambda _b: self._on_settings(self._game))
 
+        # Open the game's store page in the browser (Steam/GOG/Epic store). Uses
+        # the web-browser icon; hidden when the game has no store page (local).
+        self._store_button = Gtk.Button()
+        self._store_button.set_icon_name("web-browser-symbolic")
+        self._store_button.set_tooltip_text("Open store page")
+        self._store_button.add_css_class("flat")
+        self._store_button.set_visible(False)
+        self._store_button.connect("clicked", lambda _b: self._on_store(self._game))
+
         # Favorite star: the bundled brand SVG (filled with the play-button accent)
         # is semi-transparent when not starred and fully opaque when starred.
         self._favorite_button = Gtk.Button()
@@ -121,14 +134,23 @@ class GameDetailBar(Gtk.Box):
         self._favorite_button.set_child(self._favorite_icon)
         self._favorite_button.connect("clicked", lambda _b: self._on_favorite(self._game))
 
+        self._cancel_button = Gtk.Button()
+        self._cancel_button.set_icon_name("process-stop-symbolic")
+        self._cancel_button.set_tooltip_text("Cancel download")
+        self._cancel_button.add_css_class("vitrine-cancel")
+        self._cancel_button.set_visible(False)
+        self._cancel_button.connect("clicked", lambda _b: self._on_cancel(self._game))
+
         controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
         controls.set_halign(Gtk.Align.END)
         controls.set_valign(Gtk.Align.END)
         controls.set_margin_bottom(12)
         controls.set_margin_end(18)
         controls.append(self._favorite_button)
+        controls.append(self._store_button)
         controls.append(self._settings_button)
         controls.append(self._play_button)
+        controls.append(self._cancel_button)
 
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         text.set_halign(Gtk.Align.START)
@@ -255,8 +277,17 @@ class GameDetailBar(Gtk.Box):
     def set_settings_available(self, available: bool) -> None:
         self._settings_button.set_sensitive(available)
 
+    def set_store_visible(self, visible: bool) -> None:
+        """Show/hide the "open store page" button (only store-sourced games)."""
+        self._store_button.set_visible(visible)
+
     def set_downloading(self, downloading: bool) -> None:
-        """Lock and recolor the play button while this game is downloading."""
+        """Lock and recolor the play button while this game is downloading.
+
+        While downloading, a cancel button replaces the play action; the
+        settings and favorite buttons stay enabled so the user isn't fully
+        locked out of the detail bar.
+        """
         self._downloading = downloading
         for widget in (self._play_button, self._settings_button):
             widget.set_sensitive(not downloading)
@@ -266,6 +297,7 @@ class GameDetailBar(Gtk.Box):
         else:
             self._play_button.set_label("Play")
             self._play_button.remove_css_class("vitrine-downloading")
+        self._cancel_button.set_visible(downloading)
 
     # -- internals ------------------------------------------------------------
 

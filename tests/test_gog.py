@@ -406,6 +406,50 @@ def test_gogdl_reports_already_downloaded() -> None:
     assert gogdl_mod.reported_nothing_to_do(["Nothing to do"]) is False
 
 
+def test_gogdl_cleanup_removes_partial_depot_and_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vitrine.sources.gog import gogdl as gogdl_mod
+
+    monkeypatch.setenv(gogdl_mod.GOGDL_CONFIG_ENV, str(tmp_path / "cfg"))
+    # A canceled download leaves a partial depot root (no goggame-*.info marker)
+    # and a persisted product manifest.
+    install = tmp_path / "gog"
+    install.mkdir()
+    (install / "file.part").write_text("partial")
+    manifest = tmp_path / "cfg" / "manifests" / "1443428641"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text('{"installDirectory": "Game"}')
+
+    assert gogdl_mod.manifest_path("1443428641") == str(manifest)
+    gogdl_mod.cleanup("1443428641", str(install))
+
+    assert not install.exists()
+    assert not manifest.exists()
+
+
+def test_gogdl_cleanup_keeps_valid_install_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vitrine.sources.gog import gogdl as gogdl_mod
+
+    monkeypatch.setenv(gogdl_mod.GOGDL_CONFIG_ENV, str(tmp_path / "cfg"))
+    # If the depot actually holds a complete install marker, cleanup must NOT
+    # delete the game files (only the manifest is fair game on cancel).
+    install = tmp_path / "gog"
+    install.mkdir()
+    (install / "goggame-1443428641.info").write_text("[]")
+
+    manifest = tmp_path / "cfg" / "manifests" / "1443428641"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text('{"installDirectory": "Game"}')
+
+    gogdl_mod.cleanup("1443428641", str(install))
+
+    assert install.exists()
+    assert not manifest.exists()
+
+
 def test_token_needs_refresh_logic(tmp_path: Path) -> None:
     store = GogTokenStore(tmp_path, "u")
     # Fresh token with refresh_token -> no refresh needed.

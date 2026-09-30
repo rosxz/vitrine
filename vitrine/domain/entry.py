@@ -81,6 +81,23 @@ class GameEntry(ABC):
         """
         return True
 
+    def on_cancel_install(self) -> None:
+        """Clean up after a canceled install.
+
+        Called by the controller before removes the download state. By default
+        this removes partial files at :meth:`install_dir` so nothing is left from
+        an interrupted download; store subclasses override it to also clear their
+        provider's own cache/state (gogdl manifests, legendary scratch).
+        """
+        import shutil
+
+        install_dir = self.install_dir()
+        if install_dir and os.path.isdir(install_dir):
+            try:
+                shutil.rmtree(install_dir, ignore_errors=True)
+            except OSError:  # noqa: S110 - best effort on cancel
+                pass
+
     def on_stop(self) -> None:
         """Stop the running session for this game (default: local runner)."""
         sessions = getattr(self.controller, "sessions", None)
@@ -299,6 +316,16 @@ class GogGameEntry(GameEntry):
             return None
         return f"https://www.gog.com/en/game/{self.game.catalog_slug or appid}"
 
+    def on_cancel_install(self) -> None:
+        from vitrine.sources.gog import gogdl
+
+        game_id = self.game.source_id or ""
+        install_dir = (self.game.config or {}).get("gog_install_dir")
+        # Remove the partial depot plus gogdl's persisted product manifest so a
+        # retry starts a fresh download instead of trying to repair a half-finished
+        # one. Only the depot root is removed; leftover auth config is left in place.
+        gogdl.cleanup(game_id, install_dir)
+
     def install_dir(self) -> str | None:
         # GOG installs land in the gogdl depot dir recorded at install time.
         configured = (self.game.config or {}).get("gog_install_dir")
@@ -338,6 +365,15 @@ class EpicGameEntry(GameEntry):
 
         EpicSource(self.controller.library).sync_installed()
         return True
+
+    def on_cancel_install(self) -> None:
+        from vitrine.sources.epic import legendary as lg
+
+        app = self.game.source_id or ""
+        # Remove partial game files and legendary's scratch data so a retry
+        # starts clean. Legendary only marks an install complete once done, so
+        # the (incomplete) target dir is safe to delete.
+        lg.cleanup_partial(app)
 
     def install_dir(self) -> str | None:
         from vitrine.sources.epic import legendary as lg
@@ -505,7 +541,16 @@ class EpicGameEntry(GameEntry):
         appid = self.game.source_id or ""
         if not appid:
             return None
-        return f"https://store.epicgames.com/p/{self.game.catalog_slug or appid}"
+        # Prefer the catalog slug Epic's store actually uses; fall back to a
+        # readable slug derived from the title so legacy rows (whose catalog_slug
+        # is unset) still open the right product page instead of a dangling
+        # /p/<uuid> URL.
+        slug = self.game.catalog_slug
+        if not slug:
+            from vitrine.infra.util import slugify
+
+            slug = slugify(self.game.name)
+        return f"https://store.epicgames.com/p/{slug}"
 
     def on_uninstall(self) -> None:
         self._prompt_uninstall()

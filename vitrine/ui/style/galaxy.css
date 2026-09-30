@@ -180,6 +180,20 @@ window.vitrine-window {
     color: #b8b0c8;
 }
 
+/* Cancel-download button on the hero: a clear red stop affordance. */
+.vitrine-cancel {
+    background-color: #d1434b;
+    color: #ffffff;
+    border-radius: 6px;
+    padding: 10px 14px;
+}
+.vitrine-cancel:hover {
+    background-color: #e04f57;
+}
+.vitrine-cancel:active {
+    background-color: #b03a42;
+}
+
 /* Favorite star on the hero: monochrome + semi-transparent when not starred,
    filled with the play-button accent once starred. */
 .vitrine-star image {

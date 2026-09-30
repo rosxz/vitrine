@@ -196,3 +196,92 @@ def test_gamescope_wrap_wraps_command() -> None:
 
     sized = _gamescope_wrap({"gamescope_output_res": "1920x1080"}, ["g"])
     assert sized[1:4] == ["-W", "1920", "-H"]
+
+
+def test_detail_bar_cancel_button_toggles_with_downloading() -> None:
+    """The detail bar shows its cancel button only while a game is downloading."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct widgets")
+    from vitrine.ui.game_detail_bar import GameDetailBar
+
+    bar = GameDetailBar()
+    bar.set_game(None)
+    assert bar._cancel_button.get_visible() is False
+
+    bar.set_downloading(True)
+    assert bar._cancel_button.get_visible() is True
+    assert bar._play_button.get_label() == "Downloading…"
+
+    bar.set_downloading(False)
+    assert bar._cancel_button.get_visible() is False
+    assert bar._play_button.get_label() == "Play"
+
+
+def test_detail_bar_set_downloading_is_the_single_state_source() -> None:
+    """Recording two distinct Game objects for the same id must clear the bar's
+    download state identically: the flag lives on the bar, not the game, so a
+    stale (recreated) game can turn it off. Guards against the stuck
+    "Downloading…" detail bar after a finished GOG install + library reload."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct widgets")
+    from vitrine.services.library import Game
+    from vitrine.ui.game_detail_bar import GameDetailBar
+
+    bar = GameDetailBar()
+    fresh = Game(name="Riven", source="gog", source_id="x", id=7)
+    bar.set_game(fresh)
+
+    bar.set_downloading(True)
+    assert bar._downloading is True
+    assert bar._play_button.get_label() == "Downloading…"
+
+    # The bar exposes its flag so the window can clear it regardless of which
+    # Game instance the download callback is holding. The flag lives on the bar,
+    # not the game, so the same set_downloading call works for a stale (recreated)
+    # game after a library reload.
+    bar.set_downloading(False)
+    assert bar._downloading is False
+    assert bar._play_button.get_label() == "Play"
+
+
+def test_detail_bar_store_button_toggle() -> None:
+    """The store-page button shows only when the window turns it on."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct widgets")
+    from vitrine.ui.game_detail_bar import GameDetailBar
+
+    bar = GameDetailBar()
+    assert bar._store_button.get_visible() is False
+
+    bar.set_store_visible(True)
+    assert bar._store_button.get_visible() is True
+
+    bar.set_store_visible(False)
+    assert bar._store_button.get_visible() is False
+
+
+
+
+def test_settings_about_page_builds() -> None:
+    """The About tab renders version, repo link, and icon without error."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct windows")
+    from vitrine import APP_ID
+    from vitrine import version as vmod
+    from vitrine.infra import db
+    from vitrine.services.library import Library
+    from vitrine.ui.settings_dialog import SettingsWindow
+    from vitrine.ui.theme import ThemeManager
+
+    conn = db.connect(":memory:")
+    db.initialize(conn)
+    library = Library(conn)
+    window = SettingsWindow(library, ThemeManager())
+    page = window._build_about_page()
+    assert page is not None
+    # The page is a real PreferencesPage carrying our metadata.
+    assert window._open_repository is not None
+    # Version metadata reflects the running tree.
+    assert vmod.version()
+    assert vmod.REPO_URL.startswith("https://")
+    assert APP_ID

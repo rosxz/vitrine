@@ -252,6 +252,39 @@ def test_install_directory_lives_next_to_gog_depot_root(tmp_path: Path, monkeypa
         assert base != str(Path.home() / "Games")
 
 
+def test_cleanup_partial_removes_app_dir_and_tmp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A canceled legendary install must remove the partial app dir and scratch."""
+    from vitrine.sources.epic import legendary as lg
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    app = "PartialApp"
+    app_dir = tmp_path / "vitrine" / "egs" / app
+    app_dir.mkdir(parents=True)
+    (app_dir / "file.part").write_text("partial")
+
+    config_dir = tmp_path / "legendary"
+    (config_dir / "tmp").mkdir(parents=True)
+    (config_dir / "tmp" / ".keep").write_text("")
+    monkeypatch.setattr(lg, "LEGENDARY_CONFIG", (str(config_dir),))
+
+    lg.cleanup_partial(app, base_path=str(tmp_path / "vitrine" / "egs"))
+
+    assert not app_dir.exists()
+    assert not (config_dir / "tmp").exists()
+
+
+def test_cleanup_partial_is_idempotent_and_safe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cleaning an already-clean/no-op state must not raise."""
+    from vitrine.sources.epic import legendary as lg
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    lg.cleanup_partial("MissingApp", base_path=str(tmp_path / "vitrine" / "egs"))
+
+
 def test_list_games_parses_legendary_json(monkeypatch: pytest.MonkeyPatch) -> None:
     from vitrine.sources.epic import legendary as lg
 

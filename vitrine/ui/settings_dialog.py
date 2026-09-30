@@ -13,6 +13,8 @@ from collections.abc import Callable
 
 from gi.repository import Adw, GLib, Gtk
 
+from vitrine import APP_DESCRIPTION, APP_ID, APP_NAME
+from vitrine import version as _version_mod
 from vitrine.services import artwork
 from vitrine.services.artwork_providers import PROVIDER_IDS
 from vitrine.services.artwork_providers.base import provider_label
@@ -72,6 +74,7 @@ class SettingsWindow(Gtk.Window):
             ("General", self._build_general_page()),
             ("Appearance", self._build_appearance_page()),
             ("Providers", self._build_providers_page()),
+            ("About", self._build_about_page()),
         ):
             scroller = Gtk.ScrolledWindow()
             scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -167,6 +170,64 @@ class SettingsWindow(Gtk.Window):
         page = Adw.PreferencesPage()
         page.add(self._build_provider_group())
         return page
+
+    def _build_about_page(self) -> Adw.PreferencesPage:
+        page = Adw.PreferencesPage()
+
+        # App identity block: large centred icon, name, version line.
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        header.set_margin_top(28)
+        header.set_margin_bottom(20)
+        header.set_halign(Gtk.Align.CENTER)
+
+        icon = Gtk.Image.new_from_icon_name(APP_ID)
+        icon.set_pixel_size(96)
+        header.append(icon)
+
+        name_label = Gtk.Label(label=APP_NAME)
+        name_label.add_css_class("title-1")
+        header.append(name_label)
+
+        desc_label = Gtk.Label(label=APP_DESCRIPTION)
+        desc_label.add_css_class("dim-label")
+        header.append(desc_label)
+
+        # Version + git hash + release date, centred under the icon.
+        rev = _version_mod.git_hash()
+        vline = f"Version {_version_mod.version()}"
+        if rev:
+            vline += f" ({rev})"
+        vlabel = Gtk.Label(label=vline)
+        vlabel.add_css_class("caption")
+        header.append(vlabel)
+        date_label = Gtk.Label(label=f"Released {_version_mod.RELEASE_DATE}")
+        date_label.add_css_class("dim-label")
+        header.append(date_label)
+
+        identity_group = Adw.PreferencesGroup()
+        # PreferencesPage children must be PreferencesGroups; the identity block
+        # is a plain centred Box, so host it inside an empty group.
+        identity_group.add(header)
+        page.add(identity_group)
+
+        group = Adw.PreferencesGroup(title="Source")
+        link_row = Adw.ActionRow(title=_version_mod.REPO_URL, subtitle="View the project source on GitHub")
+        # Make the whole row clickable to open the repository.
+        click = Gtk.GestureClick()
+        click.connect("pressed", lambda _g, _n, _x, _y: self._open_repository())
+        link_row.add_controller(click)
+        link_row.set_activatable(True)
+        group.add(link_row)
+        page.add(group)
+        return page
+
+    def _open_repository(self) -> None:
+        from gi.repository import Gio
+
+        try:
+            Gio.AppInfo.launch_default_for_uri(_version_mod.REPO_URL)
+        except Exception as error:  # noqa: BLE001
+            self._toast(f"Could not open repository: {error}")
 
     def _build_provider_group(self) -> Adw.PreferencesGroup:
         """Accounts for every game provider (Steam, GOG, Epic) under one umbrella."""

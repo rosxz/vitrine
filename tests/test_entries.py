@@ -174,6 +174,41 @@ def test_epic_not_installed_starts_install(monkeypatch) -> None:
     assert any(call.startswith("start_install_command:E:") for call in ctrl.calls)
 
 
+def test_epic_cancel_install_cleans_partial_state(monkeypatch) -> None:
+    from vitrine.sources.epic import legendary as lg
+
+    cleaned: list[str] = []
+    monkeypatch.setattr(lg, "cleanup_partial", lambda app: cleaned.append(app))
+    entry_for(_game("E", "epic", source_id="App1"), _stub_controller()).on_cancel_install()
+    assert cleaned == ["App1"]
+
+
+def test_gog_cancel_install_cleans_partial_state(monkeypatch, tmp_path) -> None:
+    import vitrine.sources.gog.gogdl as gogdl_mod
+
+    cleaned: list[tuple] = []
+    monkeypatch.setattr(
+        gogdl_mod,
+        "cleanup",
+        lambda game_id, install_dir: cleaned.append((game_id, install_dir)),
+    )
+    game = _game("G", "gog", source_id="1443428641")
+    game.config = {"gog_install_dir": str(tmp_path / "depot")}
+    entry_for(game, _stub_controller()).on_cancel_install()
+    assert cleaned == [("1443428641", str(tmp_path / "depot"))]
+
+
+def test_base_cancel_install_removes_install_dir(tmp_path) -> None:
+    install = tmp_path / "game"
+    install.mkdir()
+    (install / "file.part").write_text("partial")
+
+    game = _game("Local", "local")
+    game.executable = str(install) + "/game.exe"
+    entry_for(game, _stub_controller()).on_cancel_install()
+    assert not install.exists()
+
+
 def test_steam_launches_via_uri_even_when_not_installed() -> None:
     ctrl = _stub_controller()
     entry_for(_game("St", "steam", installed=False), ctrl).on_launch()
@@ -215,9 +250,16 @@ def test_store_url_is_per_source() -> None:
     assert entry_for(_game("G", "gog", game_id=9, source_id="abc"), _stub_controller()).store_url() == (
         "https://www.gog.com/en/game/abc"
     )
-    assert entry_for(_game("E", "epic", game_id=9, source_id="app1"), _stub_controller()).store_url() == (
-        "https://store.epicgames.com/p/app1"
+    # No catalog_slug set: the URL falls back to a slug derived from the title,
+    # never a dangling /p/<uuid> page.
+    alien = _game("Alien: Isolation", "epic", game_id=9, source_id="app1")
+    assert entry_for(alien, _stub_controller()).store_url() == (
+        "https://store.epicgames.com/p/alien-isolation"
     )
+    # With a catalog slug, prefer it exactly.
+    game = _game("Alien: Isolation", "epic", game_id=9, source_id="app1")
+    game.catalog_slug = "alien-isolation"
+    assert entry_for(game, _stub_controller()).store_url() == ("https://store.epicgames.com/p/alien-isolation")
     assert entry_for(_game("S", "steam", game_id=9, source_id="570"), _stub_controller()).store_url() == (
         "https://store.steampowered.com/app/570"
     )

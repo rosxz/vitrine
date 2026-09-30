@@ -79,14 +79,22 @@ def _gamescope_wrap(config: dict, command: list[str]) -> list[str]:
 
 
 def _tiles_for(library_view, game) -> list:
-    """Find every GameTile widget in the grid representing ``game``."""
+    """Find every GameTile widget in the grid representing ``game``.
+
+    Matches by game id, not object identity: a library reload recreates ``Game``
+    instances (e.g. when switching provider lists), so callers holding a stale
+    ``Game`` must still target the tile showing the fresh one.
+    """
     from vitrine.ui.library_view import GameTile
 
+    game_id = getattr(game, "id", None)
     tiles: list = []
     child = library_view.flow.get_first_child()
     while child is not None:
-        if isinstance(child, GameTile) and getattr(child, "game", None) is game:
-            tiles.append(child)
+        if isinstance(child, GameTile):
+            tile_game = getattr(child, "game", None)
+            if tile_game is not None and game_id is not None and getattr(tile_game, "id", None) == game_id:
+                tiles.append(child)
         child = child.get_next_sibling()
     return tiles
 
@@ -114,6 +122,8 @@ class VitrineWindow(Adw.ApplicationWindow):
             on_play=self._on_detail_play,
             on_settings=self._on_detail_settings,
             on_favorite=self._on_detail_favorite,
+            on_cancel=self._on_detail_cancel,
+            on_store=self._on_detail_store,
         )
 
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -190,6 +200,9 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         # Active downloads keyed by game id (drives tile/detail download state).
         self._downloads: dict[int, object] = {}
+        # Last reported download progress (0..1) per game id, so a library
+        # rebuild (e.g. switching provider lists) can restore the bar's value.
+        self._download_progress: dict[int, float] = {}
         # A Steam game launched via steam:// is watched via /proc (no Popen); the
         # watcher is non-None while we are tracking one, and the game is surfaced
         # through the running-game/elapsed plumbing so the ticker shows "Playing".
@@ -363,7 +376,13 @@ class VitrineWindow(Adw.ApplicationWindow):
         for game in by_id.values():
             for tile in _tiles_for(self.library_view, game):
                 tile.set_downloading(True)
-            if hasattr(self, "detail_bar") and self.detail_bar.game() is game:
+                if game.id is not None:
+                    tile.set_download_progress(self._download_progress.get(game.id, 0.0))
+            if (
+                hasattr(self, "detail_bar")
+                and self.detail_bar.game() is not None
+                and self.detail_bar.game().id == game.id
+            ):
                 self.detail_bar.set_downloading(True)
 
     def on_toggle_hidden(self, _button: Gtk.Button) -> None:
@@ -594,13 +613,22 @@ class VitrineWindow(Adw.ApplicationWindow):
         return job
 
     def _set_downloading_ui(self, game: Game, active: bool) -> None:
-        """Reflect download state on the tile and detail bar."""
+        """Reflect download state on the tile and detail bar.
+
+        Matches by game id (not object identity): a library reload recreates
+        ``Game`` instances, so the (stale) object captured by the download
+        callback must still clear the tile/detail bar holding the fresh one.
+        """
         if game.id is not None and not active:
             self._downloads.pop(game.id, None)
+            self._download_progress.pop(game.id, None)
             self.sessions.remove_install(game)
         for tile in _tiles_for(self.library_view, game):
             tile.set_downloading(active)
-        if self.detail_bar.game() is game:
+            if active and game.id is not None:
+                tile.set_download_progress(self._download_progress.get(game.id, 0.0))
+        detail = self.detail_bar.game()
+        if detail is not None and game.id is not None and detail.id == game.id:
             self.detail_bar.set_downloading(active)
 
     # -- controller primitives (used by per-source GameEntry strategies) -------
@@ -630,8 +658,37 @@ class VitrineWindow(Adw.ApplicationWindow):
         self._marshal(lambda: (self.reload(), self.toasts.add_toast(Adw.Toast(title=toast_title))))
 
     def installing(self, game: Game) -> bool:
-        """Whether a tracked install/launch download exists for ``game``."""
-        return self.sessions.installing(game) or (game.id is not None and game.id in self._downloads)
+        """Whether a tracked install/launch download exists for ``game``.
+
+        Tolerant of the short window during window construction when the session
+        manager isn't wired up yet (a selection change can fire before the
+        ``sessions``/``_downloads`` attributes are created).
+        """
+        if game.id is not None and getattr(self, "_downloads", None) and game.id in self._downloads:
+            return True
+        sessions = getattr(self, "sessions", None)
+        return sessions is not None and sessions.installing(game)
+
+    def cancel_install(self, game: Game) -> None:
+        """Stop an in-progress download and remove any provider state it left.
+
+        Kills the tracked download job, dispatches the source's
+        :meth:`on_cancel_install` (so GOG/Epic can clear their partial caches and
+        manifests), then resets the downloading UI and library state. Safe to
+        call for a game that isn't downloading (no-op).
+        """
+        if not self.installing(game):
+            return
+        self.sessions.stop_install(game)
+        from vitrine.domain.entry import entry_for
+
+        try:
+            entry_for(game, self).on_cancel_install()
+        except Exception:  # noqa: BLE001 - never let cleanup block cancel
+            logger.exception("cancel cleanup failed for %s", game.name)
+        self._set_downloading_ui(game, False)
+        self.reload()
+        self.toasts.add_toast(Adw.Toast(title=f"Cancelled download for {game.name}"))
 
     def gogdl_timeout(self) -> float:
         return GOGDL_DOWNLOAD_TIMEOUT
@@ -707,11 +764,17 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.toasts.add_toast(Adw.Toast(title=f"Launching {game.name} via legendary"))
 
     def _update_download_progress(self, game: Game, fraction: float) -> None:
+        if game.id is not None:
+            self._download_progress[game.id] = max(0.0, min(fraction, 1.0))
         for tile in _tiles_for(self.library_view, game):
             tile.set_download_progress(fraction)
 
     def _finish_download(self, game: Game, returncode: int) -> None:
         """Install finished (or failed): clear download state and toast."""
+        # A cancel already removed this job from the active set; the killed
+        # process's exit must not be treated as a (re-)install completion.
+        if game.id is not None and game.id not in self._downloads:
+            return
         job = self._downloads.get(game.id) if game.id is not None else None
         output = list(getattr(job, "line_buffer", ()))
         from vitrine.sources.gog import gogdl
@@ -824,6 +887,14 @@ class VitrineWindow(Adw.ApplicationWindow):
     def _on_detail_play(self, game: Game | None) -> None:
         if game is not None:
             self.on_game_activated(game)
+
+    def _on_detail_cancel(self, game: Game | None) -> None:
+        if game is not None:
+            self.cancel_install(game)
+
+    def _on_detail_store(self, game: Game | None) -> None:
+        if game is not None:
+            self.open_store_page(game)
 
     def _on_detail_settings(self, game: Game | None) -> None:
         if game is not None:
@@ -1263,11 +1334,32 @@ class VitrineWindow(Adw.ApplicationWindow):
         self._set_detail_game(view.selected_game())
 
     def _set_detail_game(self, game: Game | None) -> None:
-        """Show the description/hero bar, unless globally disabled in Settings."""
+        """Show the description/hero bar, unless globally disabled in Settings.
+
+        Reset the bar's download visuals first, then re-assert them if the
+        newly-selected game is actually still installing. This clears any stale
+        "Downloading…"/disabled-play state left by an interrupted or finished
+        download whose library object was recreated after a reload.
+        """
+        if (self.show_detail_bar or game is None) and self.detail_bar.game() is not None:
+            current = self.detail_bar.game()
+            if game is None or current.id != game.id:
+                # Switching to a different game: drop any leftover download state.
+                self.detail_bar.set_downloading(False)
         if self.show_detail_bar or game is None:
             self.detail_bar.set_game(game)
         else:
             self.detail_bar.set_visible(False)
+        if game is not None:
+            from vitrine.domain.entry import entry_for
+
+            try:
+                has_store = entry_for(game, self).store_url() is not None
+            except Exception:  # noqa: BLE001
+                has_store = False
+            self.detail_bar.set_store_visible(has_store)
+            if self.installing(game):
+                self.detail_bar.set_downloading(True)
 
     @staticmethod
     def _is_same_game(a: Game, b: Game) -> bool:
@@ -1327,6 +1419,8 @@ class VitrineWindow(Adw.ApplicationWindow):
         items.append((hide_label, lambda: self.set_game_hidden(game, not game.hidden)))
         if not game.installed and entry.can_install():
             items.append(("Install…", lambda: self.install_game(game)))
+        if self.installing(game):
+            items.insert(1, ("Stop download", lambda: self.cancel_install(game)))
         if entry.store_url() is not None:
             items.append(("Open store page", lambda: self.open_store_page(game)))
         if game.source == "local" or game.installed:
