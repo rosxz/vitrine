@@ -326,12 +326,12 @@ def test_detail_bar_achievements_button_toggle() -> None:
 
     bar.set_achievements(10, 4)
     assert bar._achievements_button.get_visible() is True
-    assert "4/10" in bar._achievements_button.get_label()
+    assert "4/10" in bar._achievements_button.get_tooltip_text()
 
     # No cached counts but the game can have achievements: still shown.
     bar.set_achievements(None, None, available=True)
     assert bar._achievements_button.get_visible() is True
-    assert "Achievements" in bar._achievements_button.get_label()
+    assert "achievements" in bar._achievements_button.get_tooltip_text()
 
     # No provider and no counts: hidden.
     bar.set_achievements(None, None)

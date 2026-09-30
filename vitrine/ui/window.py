@@ -881,23 +881,24 @@ class VitrineWindow(Adw.ApplicationWindow):
 
     def _start_achievements_refresh(self, game: Game) -> None:
         """Fetch + persist achievements for one game on a worker thread."""
-        from vitrine.services.achievements import load_context, refresh_game_achievements
+        from vitrine.services.achievements import fetch_achievements_cached, load_context
 
         ctx = load_context(self.library)
 
         def _worker() -> None:
-            changed = False
+            result = None
             try:
-                changed = refresh_game_achievements(self.library, game, ctx)
+                result = fetch_achievements_cached(game, ctx)
             except Exception:  # noqa: BLE001
                 logger.exception("achievements refresh failed for %s", game.name)
-            if not changed:
+            if result is None:
                 return
 
             def _apply() -> None:
-                # Re-read the freshly-persisted game so its achievement_* summary
-                # (written onto a new DB object by replace_achievements) is what
-                # the detail bar reads, then repaint the grid + hero bar.
+                if result.achievements:
+                    self.library.replace_achievements(game, result)
+                # Re-read the freshly-persisted game so the hero bar shows the
+                # cached summary, then repaint.
                 current = self.library.game(game.id) if game.id is not None else None
                 if current is not None:
                     game.achievement_count = current.achievement_count

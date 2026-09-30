@@ -13,7 +13,7 @@ from collections.abc import Callable
 
 from gi.repository import Adw, Gtk
 
-from vitrine.services.achievements import refresh_game_achievements
+from vitrine.services.achievements import fetch_achievements_cached, load_context
 from vitrine.services.library import Game, Library
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ class AchievementsWindow(Gtk.Window):
         close.connect("clicked", lambda _b: self.close())
         header.pack_start(close)
         self._refresh_button = Gtk.Button(label="Refresh")
-        self._refresh_button.connect("clicked", self._on_refresh)
+        self._refresh_button.connect("clicked", lambda _b: self.refresh())
         header.pack_end(self._refresh_button)
         self.set_titlebar(header)
 
@@ -181,35 +181,39 @@ class AchievementsWindow(Gtk.Window):
             self._filter = fid
             self._populate()
 
-    def _on_refresh(self, _button: Gtk.Button) -> None:
-        self.refresh()
-
     def refresh(self) -> None:
-        """Re-fetch achievements from the store on a worker thread."""
+        """Re-fetch achievements from the store on a worker thread.
+
+        The network fetch + icon download happen off-thread (no DB); the sqlite
+        write is marshalled back to the GTK loop since the connection is
+        main-thread-only.
+        """
         self._refresh_button.set_sensitive(False)
         self._refresh_button.set_label("Refreshing…")
 
-        def _worker() -> None:
-            ctx = None
-            try:
-                from vitrine.services.achievements import load_context
+        ctx = load_context(self.library)
 
-                ctx = load_context(self.library)
-                refresh_game_achievements(self.library, self.game, ctx)
+        def _worker() -> None:
+            result = None
+            try:
+                result = fetch_achievements_cached(self.game, ctx)
             except Exception:  # noqa: BLE001
                 logger.exception("refreshing achievements for %s", getattr(self.game, "name", ""))
             finally:
                 from gi.repository import GLib
 
-                GLib.idle_add(self._on_refresh_done)
+                GLib.idle_add(self._on_refresh_done, result)
 
         import threading
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _on_refresh_done(self) -> None:
+    def _on_refresh_done(self, result=None) -> None:
         self._refresh_button.set_sensitive(True)
         self._refresh_button.set_label("Refresh")
+        if result is not None and result.achievements:
+            # Persist on the main thread; drop stale rows absent from the payload.
+            self.library.replace_achievements(self.game, result)
         self._populate()
         if self._on_refreshed is not None:
             self._on_refreshed()

@@ -151,17 +151,41 @@ def refresh_game_achievements(library: Any, game: Any, ctx: dict[str, Any] | Non
     Downloads/caches icons, replaces stored rows and refreshes the cached summary
     on the game. Returns ``True`` if anything changed (so the UI can reload).
     """
+    ctx = ctx or load_context(library)
+    result = fetch_achievements_cached(game, ctx)
+    if result is None or not result.achievements:
+        return False
+    _persist(library, game, result)
+    if getattr(game, "id", None) is not None:
+        fresh = None
+        try:
+            fresh = library.game(game.id)
+        except Exception:  # noqa: BLE001
+            fresh = None
+        if fresh is not None:
+            game.achievement_count = fresh.achievement_count
+            game.achievement_unlocked = fresh.achievement_unlocked
+    return True
+
+
+def fetch_achievements_cached(game: Any, ctx: dict[str, Any]) -> AchievementSet | None:
+    """Fetch achievements + download/cache their icons -- **no database access**.
+
+    Safe to call from a worker thread: this mutates only the (worker-side) game's
+    icon paths / the disk cache and returns an :class:`AchievementSet`. The caller
+    persists it on the main thread (sqlite is main-thread-only) via
+    :func:`refresh_game_achievements` or ``Library.replace_achievements``.
+    """
     from vitrine.services.achievement_providers import base as providers
 
     provider = provider_for(game)
-    if provider is None:
-        return False
-    ctx = ctx or load_context(library)
+    if provider is None or not providers.has_provider(provider):
+        return None
     result = providers.fetch_for(provider, game, ctx) if providers.has_provider(provider) else None
     if result is None or not result.achievements:
-        return False
+        return None
     _cache_icons(game, result)
-    _persist(library, game, result)
+    return result
     return True
 
 

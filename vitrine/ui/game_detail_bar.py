@@ -125,8 +125,9 @@ class GameDetailBar(Gtk.Box):
         self._store_button.set_visible(False)
         self._store_button.connect("clicked", lambda _b: self._on_store(self._game))
 
-        # Achievement summary button: "🏆 X/Y", opens the achievements viewer.
-        self._achievements_button = Gtk.Button(label="")
+        # Achievement button: a trophy icon that opens the achievements viewer.
+        self._achievements_button = Gtk.Button()
+        self._achievements_button.set_icon_name("emblem-favorite-symbolic")
         self._achievements_button.set_tooltip_text("View achievements")
         self._achievements_button.add_css_class("flat")
         self._achievements_button.set_visible(False)
@@ -298,24 +299,24 @@ class GameDetailBar(Gtk.Box):
         available: bool = False,
         on_click: Callable[[Game | None], None] | None = None,
     ) -> None:
-        """Show/hide the achievement summary button.
+        """Show/hide the trophy button.
 
         ``total``/``unlocked`` come from the game's cached summary (may be
         unknown -> ``None``). ``available`` is whether the game can have
         achievements at all (it has an achievement provider); when true the
         button is always shown so the viewer is reachable, even before a fetch.
+        The button is icon-only; the count lives in its tooltip.
         """
         if on_click is not None:
             self._on_achievements = on_click
         if not available and not total:
             self._achievements_button.set_visible(False)
-            self._achievements_button.set_label("")
             return
         if total:
-            text = f"🏆 {unlocked or 0}/{total}"
+            tip = f"View achievements ({unlocked or 0}/{total})"
         else:
-            text = "🏆 Achievements"
-        self._achievements_button.set_label(text)
+            tip = "View achievements"
+        self._achievements_button.set_tooltip_text(tip)
         self._achievements_button.set_visible(True)
 
     def set_downloading(self, downloading: bool) -> None:
