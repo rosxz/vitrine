@@ -35,6 +35,10 @@ ENV_GOG_COMET = "VITRINE_COMET"
 #: Safe characters for cached icon filenames.
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
+#: Fixed pixel size cache care downscales achievement icons to, so every icon is
+#: the same dimensions regardless of the store's source (squares).
+ICON_CACHE_SIZE = 96
+
 #: Provider id used when a source has no own provider (future RetroAchievements).
 _RA_PROVIDER = "retroachievements"
 
@@ -250,17 +254,32 @@ def _extension(url: str) -> str:
 
 
 def _normalise(data: bytes) -> bytes:
-    """Downscale/encode to a compact JPEG using Pillow (same as artwork)."""
+    """Crop to a centred square and downscale to a fixed size (JPEG).
+
+    Achievement icons come at many resolutions and aspect ratios across stores;
+    normalising to one fixed square (``ICON_CACHE_SIZE``) makes them display at a
+    consistent size in the viewer instead of stretching with the source.
+    """
     from io import BytesIO
 
     from PIL import Image
 
     image = Image.open(BytesIO(data))
     image = image.convert("RGB")
-    image.thumbnail((256, 256))
+    image = _centre_square(image)
+    image = image.resize((ICON_CACHE_SIZE, ICON_CACHE_SIZE), Image.LANCZOS)
     out = BytesIO()
     image.save(out, format="JPEG", quality=85)
     return out.getvalue()
+
+
+def _centre_square(image) -> object:
+    """Return a centre-cropped square of ``image`` (handles any aspect ratio)."""
+    width, height = image.size
+    side = min(width, height)
+    left = (width - side) // 2
+    top = (height - side) // 2
+    return image.crop((left, top, left + side, top + side))
 
 
 def newly_unlocked(old: AchievementSet | None, new: AchievementSet | None) -> list[Achievement]:

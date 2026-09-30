@@ -26,6 +26,11 @@ from vitrine.services.library import Game
 DEFAULT_HEIGHT = 200
 COLLAPSED_HEIGHT = 26
 
+#: Side of the square icon buttons in the hero control cluster (settings, store,
+#: favorite, achievements). Keeps their widths uniform so the equal spacing looks
+#: even; a bare emoji label would otherwise be wider than the icon buttons.
+_ICON_BUTTON = 34
+
 
 def _brand_icon_path(name: str) -> str:
     """Absolute path to a bundled brand/art SVG under ``vitrine/ui/style/brand``."""
@@ -125,10 +130,13 @@ class GameDetailBar(Gtk.Box):
         self._store_button.set_visible(False)
         self._store_button.connect("clicked", lambda _b: self._on_store(self._game))
 
-        # Achievement button: a trophy emoji that opens the achievements viewer.
+        # Achievement button: a trophy emoji that opens the achievements viewer. It's
+        # given a fixed pixel size so it sits as a compact square icon like the
+        # other flat buttons, keeping even spacing (a bare emoji label is wider).
         self._achievements_button = Gtk.Button(label="🏆")
         self._achievements_button.set_tooltip_text("View achievements")
         self._achievements_button.add_css_class("flat")
+        self._achievements_button.set_size_request(_ICON_BUTTON, _ICON_BUTTON)
         self._achievements_button.set_visible(False)
         self._achievements_button.connect("clicked", lambda _b: self._on_achievements(self._game))
 

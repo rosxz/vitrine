@@ -170,3 +170,8 @@ window.vitrine-window {
 .achievement-cover {
     background-color: alpha(#000000, 0.92);
 }
+
+/* Achievements viewer list blends with the window surface. */
+.achievement-list {
+    background-color: @window_bg_color;
+}

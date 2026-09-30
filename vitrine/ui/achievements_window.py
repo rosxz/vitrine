@@ -43,7 +43,7 @@ class AchievementsWindow(Gtk.Window):
         if parent is not None:
             self.set_transient_for(parent)
 
-        self._filter = "all"
+        self._filter = "unlocked"
 
         header = Adw.HeaderBar()
         header.set_title_widget(Adw.WindowTitle(title=self.get_title(), subtitle=""))
@@ -79,7 +79,7 @@ class AchievementsWindow(Gtk.Window):
         self._filter_buttons: dict[str, Gtk.CheckButton] = {}
         for fid, label in _FILTERS:
             if self._filter_group is None:
-                btn = Gtk.CheckButton(label=label, active=(fid == "all"))
+                btn = Gtk.CheckButton(label=label, active=(fid == self._filter))
                 self._filter_group = btn
             else:
                 btn = Gtk.CheckButton(label=label, group=self._filter_group)
@@ -89,6 +89,7 @@ class AchievementsWindow(Gtk.Window):
 
         self._list = Gtk.ListBox()
         self._list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._list.add_css_class("achievement-list")
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroller.set_vexpand(True)

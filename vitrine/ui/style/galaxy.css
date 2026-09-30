@@ -225,3 +225,9 @@ window.vitrine-window {
 .achievement-cover {
     background-color: rgba(0, 0, 0, 0.92);
 }
+
+/* Achievements viewer list: match the window's dark background so rows blend
+   with the panel rather than showing the theme's default list surface. */
+.achievement-list {
+    background-color: #0c0b0d;
+}

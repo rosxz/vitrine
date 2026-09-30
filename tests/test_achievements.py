@@ -151,3 +151,36 @@ def test_configured_dispatch(monkeypatch) -> None:
     assert result.provider == "steam"
     # A local game with no provider -> None.
     assert svc.fetch_achievements(_FakeGame(source="local"), ctx) is None
+
+def test_normalise_icons_to_uniform_square(monkeypatch, tmp_path) -> None:
+    """Cached achievement icons must be one fixed size regardless of the source
+    image's dimensions/aspect, so the viewer shows them all consistently."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    from vitrine.services import achievements as svc
+
+    # A portrait and a landscape source image, both very different sizes.
+    portrait = Image.new("RGB", (200, 400))
+    landscape = Image.new("RGB", (500, 120))
+
+    def _png_bytes(img: Image.Image) -> bytes:
+        out = BytesIO()
+        img.save(out, format="PNG")
+        return out.getvalue()
+
+    for src in (portrait, landscape):
+        normalised = svc._normalise(_png_bytes(src))
+        img = Image.open(BytesIO(normalised))
+        assert img.size == (svc.ICON_CACHE_SIZE, svc.ICON_CACHE_SIZE), img.size
+
+
+def test_centre_square_crops() -> None:
+    from PIL import Image
+
+    from vitrine.services import achievements as svc
+
+    img = Image.new("RGB", (300, 100))
+    cropped = svc._centre_square(img)
+    assert cropped.size == (100, 100)
