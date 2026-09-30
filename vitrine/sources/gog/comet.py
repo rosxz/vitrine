@@ -128,7 +128,9 @@ exec "$@"
 """
     with open(script_path, "w", encoding="utf-8") as handle:
         handle.write(script)
-    os.chmod(script_path, 0o600)
+    # 0o700: readable by the owner only (it embeds tokens) but must be
+    # executable so Popen can run it as the game's wrapper.
+    os.chmod(script_path, 0o700)
     return script_path
 
 

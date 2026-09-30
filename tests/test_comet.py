@@ -48,4 +48,5 @@ def test_write_wrapper_generates_tokened_script(monkeypatch: pytest.MonkeyPatch,
     assert "u42" in text
     assert "player" in text
     assert "exec \"$@\"" in text
-    assert (dest.stat().st_mode & 0o777) == 0o600
+    # Must be owner-readable (embeds tokens) AND executable.
+    assert (dest.stat().st_mode & 0o777) == 0o700
