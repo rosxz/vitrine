@@ -339,7 +339,7 @@ def gamescope_wrap(config: dict, inner: list[str]) -> list[str]:
 def build_command(game: Game, config: dict) -> list[str]:
     """The full wrapped command line for a game.
 
-    Wrapping order, outermost first: gamescope, gamemoderun, mangohud, runner.
+    Wrapping order, outermost first: comet, gamescope, gamemoderun, mangohud, runner.
     """
     command = wine_command(game, config)
     if config.get("mangohud") and not config.get("gamescope"):
@@ -348,6 +348,11 @@ def build_command(game: Game, config: dict) -> list[str]:
         command = ["gamemoderun", *command]
     if config.get("gamescope"):
         command = gamescope_wrap(config, command)
+    wrapper = config.get("gog_comet_wrapper")
+    if wrapper:
+        # Comet is the outermost wrapper: script starts comet in the background,
+        # then runs the whole (already gamescope/mangohud-wrapped) game command.
+        command = [wrapper, *command]
     return command
 
 

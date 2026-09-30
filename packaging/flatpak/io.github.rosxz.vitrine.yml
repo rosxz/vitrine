@@ -98,6 +98,19 @@ modules:
         url: https://github.com/Heroic-Games-Launcher/heroic-gogdl/releases/download/v1.3.0/gogdl_linux_x86_64
         sha256: cba013d42767c808237c437335ab1d56f58405d07e8f37b3324d264ea5c49655
 
+  - name: comet
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 comet-x86_64-unknown-linux-gnu /app/bin/comet
+      - install -Dm644 GalaxyCommunication-dummy.exe /app/share/vitrine/comet/GalaxyCommunication-dummy.exe
+    sources:
+      - type: file
+        url: https://github.com/imLinguin/comet/releases/download/v0.3.2/comet-x86_64-unknown-linux-gnu
+        sha256: 2d6694d544fd3155d90d540e70bc1be767a6b9fdda130275f2b79616ff14e843
+      - type: file
+        url: https://github.com/imLinguin/comet/releases/download/v0.3.2/GalaxyCommunication-dummy.exe
+        sha256: c7695267da363a861af99db95cafe68b732ae743e5830b4feea1bc7ee745f99d
+
   - name: umu-launcher
     buildsystem: simple
     build-commands:

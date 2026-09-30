@@ -196,8 +196,24 @@ class SettingsWindow(Gtk.Window):
         refresh.connect("notify::active", self._on_auto_refresh_toggled)
         group.add(refresh)
 
+        from vitrine.sources.gog import comet as comet_mod
+
+        comet_row = Adw.SwitchRow(title="GOG live achievements (comet)")
+        comet_row.set_subtitle(
+            "Run comet alongside GOG games so unlocks you earn while playing are "
+            "reported to GOG. Requires the 'comet' binary."
+        )
+        comet_row.set_active(bool(self.library.setting(comet_mod.COMET_ENABLED_SETTING, True)))
+        comet_row.connect("notify::active", self._on_comet_toggled)
+        group.add(comet_row)
+
         page.add(group)
         return page
+
+    def _on_comet_toggled(self, row: Adw.SwitchRow, _pspec: object) -> None:
+        from vitrine.sources.gog import comet as comet_mod
+
+        self.library.set_setting(comet_mod.COMET_ENABLED_SETTING, row.get_active())
 
     def _on_steam_api_key_applied(self, row: Adw.PasswordEntryRow) -> None:
         from vitrine.services.achievements import STEAM_API_KEY_SETTING

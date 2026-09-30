@@ -7,6 +7,7 @@ set -e
 export VITRINE_LEGENDARY=/app/bin/legendary
 export VITRINE_GOGDL=/app/bin/gogdl
 export VITRINE_UMU=/app/bin/umu-run
+export VITRINE_COMET=/app/bin/comet
 export VITRINE_D3D_EXTRAS=/app/share/vitrine/d3d_extras
 
 export PYTHONPATH=/app/share/vitrine

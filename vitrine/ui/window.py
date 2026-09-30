@@ -1146,6 +1146,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.toasts.add_toast(Adw.Toast(title="Close the running game first"))
             return
         config = game.merged_config(self.library.global_config())
+        self._inject_comet_launch(game, config)
         try:
             from vitrine.services.library import DEBUG_LOG_SETTING
             from vitrine.services.runners import load_runners_store
@@ -1178,6 +1179,37 @@ class VitrineWindow(Adw.ApplicationWindow):
             self.sessions.begin(game, self.runtime)
         except GameAlreadyRunning as error:
             self.toasts.add_toast(Adw.Toast(title=str(error)))
+            self.toasts.add_toast(Adw.Toast(title=str(error)))
+
+    def _inject_comet_launch(self, game: Game, config: dict) -> None:
+        """Wrap a GOG game launch with comet (GOG Galaxy communication service).
+
+        Only for GOG games, when comet is installed and enabled. Writes a 0600
+        wrapper script carrying the GOG tokens, registers the dummy service
+        (best-effort) and sets ``config["gog_comet_wrapper"]`` so the launch
+        pipeline (build_command) prepends it around the actual game command.
+        """
+        if game.source != "gog" or getattr(game, "runner", "wine") == "linux":
+            return
+        from vitrine.infra import paths
+        from vitrine.sources.gog import comet as comet_mod
+
+        if not self.library.setting(comet_mod.COMET_ENABLED_SETTING, True):
+            return
+        if not comet_mod.is_installed():
+            return
+        try:
+            tokens = comet_mod.read_tokens(self.library)
+        except Exception:  # noqa: BLE001
+            logger.exception("could not read GOG tokens for comet")
+            return
+        if not tokens.get("access_token"):
+            return
+        script_dir = paths.cache_dir() / "gog-comet"
+        script_path = str(script_dir / f"{game.id or 'game'}.sh")
+        comet_mod.write_wrapper(script_path, **tokens)
+        config["gog_comet_wrapper"] = script_path
+        config["_comet"] = True
 
     def launch_steam(self, game: Game) -> None:
         self._launch_steam_game(game)

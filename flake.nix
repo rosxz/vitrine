@@ -88,6 +88,9 @@
         # prefix setup (runtime DLLs, drives) and path mapping that we no longer
         # need to hand-roll.
         export VITRINE_UMU="${pkgs.umu-launcher}/bin/umu-run"
+        # GOG Galaxy communication service (comet): runs alongside GOG games so
+        # their achievements/stats are reported to GOG while played.
+        export VITRINE_COMET="${pkgs.comet-gog}/bin/comet"
         export LD_LIBRARY_PATH="${runtimeEnv}:$LD_LIBRARY_PATH"
         export GI_TYPELIB_PATH="${typelibPath}:$GI_TYPELIB_PATH"
         export XDG_DATA_DIRS="${dataDirs}:$XDG_DATA_DIRS"
@@ -98,7 +101,7 @@
     {
       packages.${system}.default = pkgs.symlinkJoin {
         name = "vitrine";
-        paths = [ vitrineApp pkgs.legendary-gl pkgs.gogdl pkgs.umu-launcher d3dExtras ];
+        paths = [ vitrineApp pkgs.legendary-gl pkgs.gogdl pkgs.umu-launcher pkgs.comet-gog d3dExtras ];
         passthru.python = runtime.python;
       };
 
@@ -135,6 +138,7 @@
           pkgs.legendary-gl
           pkgs.gogdl
           pkgs.umu-launcher
+          pkgs.comet-gog
           d3dExtras
         ];
 
@@ -146,6 +150,7 @@
           export GST_PLUGIN_SYSTEM_PATH="${gstPluginPath}:$GST_PLUGIN_SYSTEM_PATH"
           export VITRINE_UMU="${pkgs.umu-launcher}/bin/umu-run"
           export VITRINE_D3D_EXTRAS="${d3dExtras}"
+          export VITRINE_COMET="${pkgs.comet-gog}/bin/comet"
           export VITRINE_DEV=1
           mkdir -p "$PWD/.vscode"
           ln -sfn "$(command -v python)" "$PWD/.vscode/nix-python"
