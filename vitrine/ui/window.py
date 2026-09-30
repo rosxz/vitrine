@@ -124,6 +124,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             on_favorite=self._on_detail_favorite,
             on_cancel=self._on_detail_cancel,
             on_store=self._on_detail_store,
+            on_achievements=self._on_detail_achievements,
         )
 
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -878,6 +879,23 @@ class VitrineWindow(Adw.ApplicationWindow):
         if getattr(self, "_art_changed", None):
             self.reload()
 
+    def _start_achievements_refresh(self, game: Game) -> None:
+        """Fetch + persist achievements for one game on a worker thread."""
+        from vitrine.services.achievements import load_context, refresh_game_achievements
+
+        ctx = load_context(self.library)
+
+        def _worker() -> None:
+            changed = False
+            try:
+                changed = refresh_game_achievements(self.library, game, ctx)
+            except Exception:  # noqa: BLE001
+                logger.exception("achievements refresh failed for %s", game.name)
+            if changed:
+                GLib.idle_add(self._set_detail_game, game)
+
+        threading.Thread(target=_worker, daemon=True, name="vitrine-achievements").start()
+
     def on_game_added(self, game: Game) -> None:
         self.library.add(game)
         self.reload()
@@ -895,6 +913,32 @@ class VitrineWindow(Adw.ApplicationWindow):
     def _on_detail_store(self, game: Game | None) -> None:
         if game is not None:
             self.open_store_page(game)
+
+    def _on_detail_achievements(self, game: Game | None) -> None:
+        if game is not None:
+            self.open_achievements(game)
+
+    def open_achievements(self, game: Game, refresh_after: bool = True) -> None:
+        """Open the achievements viewer for ``game``.
+
+        If the game has no cached achievements yet and would have a provider, a
+        refresh is triggered so the window shows real data. ``refresh_after``
+        lets callers skip the auto-fetch (e.g. when opening purely to view).
+        """
+        from vitrine.ui.achievements_window import AchievementsWindow
+
+        # Ensure fresh data when the user has none cached (or asks).
+        if refresh_after:
+            from vitrine.services.achievements import provider_for
+
+            if provider_for(game) is not None:
+                self._start_achievements_refresh(game)
+        AchievementsWindow(
+            self.library,
+            game,
+            on_refreshed=lambda: self._set_detail_game(game),
+            parent=self,
+        ).present()
 
     def _on_detail_settings(self, game: Game | None) -> None:
         if game is not None:
@@ -1358,6 +1402,10 @@ class VitrineWindow(Adw.ApplicationWindow):
             except Exception:  # noqa: BLE001
                 has_store = False
             self.detail_bar.set_store_visible(has_store)
+            self.detail_bar.set_achievements(
+                getattr(game, "achievement_count", None) or None,
+                getattr(game, "achievement_unlocked", None) or None,
+            )
             if self.installing(game):
                 self.detail_bar.set_downloading(True)
 
@@ -1487,12 +1535,23 @@ class VitrineWindow(Adw.ApplicationWindow):
             from vitrine.domain.entry import entry_for
 
             entry_for(game, self).record_exit(hours, returncode, self.library)
+            self._maybe_refresh_achievements(game)
             self.reload()
             status = "exited" if returncode == 0 else f"exited with code {returncode}"
             self.toasts.add_toast(Adw.Toast(title=f"{game.name} {status}"))
             return GLib.SOURCE_REMOVE
 
         self._marshal(apply)
+
+    def _maybe_refresh_achievements(self, game: Game) -> None:
+        """Re-fetch achievements after a game exits, per the auto-refresh setting."""
+        from vitrine.services.achievements import AUTO_REFRESH_SETTING, provider_for
+
+        if not bool(self.library.setting(AUTO_REFRESH_SETTING, True)):
+            return
+        if provider_for(game) is None:
+            return
+        self._start_achievements_refresh(game)
 
     # -- Steam session (watched via /proc, no local process) -------------------
 

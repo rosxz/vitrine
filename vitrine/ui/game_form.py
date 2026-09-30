@@ -261,6 +261,7 @@ class GameForm(Gtk.Box):
 
         details = self._tab()
         details.append(self.lutris_slug)
+        details.append(self._achievements_source_row())
 
         environment = self._build_environment_tab()
 
@@ -288,6 +289,22 @@ class GameForm(Gtk.Box):
     @staticmethod
     def _gamescope_entry_row(label: str, entry: Gtk.Entry) -> Gtk.Box:
         return GameForm._gamescope_labeled_row(label, entry)
+
+    def _achievements_source_row(self) -> Gtk.Widget:
+        options = (
+            ("auto", "Auto (follow the game's store)"),
+            ("none", "Off"),
+        )
+        labels = [label for _value, label in options]
+        self._achievements_dropdown = Gtk.DropDown()
+        self._achievements_dropdown.set_model(Gtk.StringList.new(labels))
+        self._achievements_dropdown.set_selected(0)
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        caption = Gtk.Label(label="Achievements", xalign=0, hexpand=True)
+        caption.add_css_class("caption")
+        box.append(caption)
+        box.append(self._achievements_dropdown)
+        return box
 
     @staticmethod
     def _gamescope_labeled_row(label: str, widget: Gtk.Widget) -> Gtk.Box:
@@ -430,6 +447,7 @@ class GameForm(Gtk.Box):
         self.fsync_row.set_active(bool(game.config.get("fsync", True)))
         self.fsr_row.set_active(bool(game.config.get("fsr", True)))
         self.eac_row.set_active(bool(game.config.get("eac", True)))
+        self._set_achievements_source(game.achievements_source)
 
     def set_runner(self, runner_id: str | None) -> None:
         """Select the per-game runner override, or the default if unset."""
@@ -461,6 +479,17 @@ class GameForm(Gtk.Box):
             if btn.get_active():
                 return src
         return "auto"
+
+    def _set_achievements_source(self, source: str) -> None:
+        options = ("auto", "none")
+        try:
+            index = options.index(source or "auto")
+        except ValueError:
+            index = 0
+        self._achievements_dropdown.set_selected(index)
+
+    def achievements_source(self) -> str:
+        return ("auto", "none")[self._achievements_dropdown.get_selected()]
 
     def validate(self) -> str | None:
         if not self.name.text():
@@ -532,6 +561,7 @@ class GameForm(Gtk.Box):
             banner=v["banner"],
             artwork_source=v["artwork_source"],
             lutris_slug=v["lutris_slug"],
+            achievements_source=self.achievements_source(),
             config=config,
             source="local",
             installed=True,
@@ -548,6 +578,7 @@ class GameForm(Gtk.Box):
         game.banner = v["banner"]
         game.artwork_source = v["artwork_source"]
         game.lutris_slug = v["lutris_slug"]
+        game.achievements_source = self.achievements_source()
         runner = self.runner()
         if runner:
             game.config["runner"] = runner

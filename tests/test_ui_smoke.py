@@ -285,3 +285,47 @@ def test_settings_about_page_builds() -> None:
     assert vmod.version()
     assert vmod.REPO_URL.startswith("https://")
     assert APP_ID
+
+
+def test_achievements_window_constructs() -> None:
+    """The achievements viewer builds with a game and shows a summary."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct windows")
+    from vitrine.domain.achievement import Achievement, AchievementSet
+    from vitrine.infra import db
+    from vitrine.services.library import Game, Library
+    from vitrine.ui.achievements_window import AchievementsWindow
+
+    conn = db.connect(":memory:")
+    db.initialize(conn)
+    library = Library(conn)
+    game = library.add(Game(name="A", source="steam", source_id="5"))
+    library.replace_achievements(
+        game,
+        AchievementSet.build(
+            "steam",
+            [Achievement(key="a", name="Ach", unlocked=True), Achievement(key="b", name="B", unlocked=False)],
+        ),
+    )
+    window = AchievementsWindow(library, game)
+    assert window._summary_label.get_text() == "1 / 2 unlocked"
+    assert window._progress.get_fraction() == pytest.approx(0.5)
+
+
+def test_detail_bar_achievements_button_toggle() -> None:
+    """The trophy button shows only when the window reports achievements."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct widgets")
+    from vitrine.services.library import Game
+    from vitrine.ui.game_detail_bar import GameDetailBar
+
+    bar = GameDetailBar()
+    bar.set_game(Game(name="G", source="steam", source_id="1", id=3))
+    assert bar._achievements_button.get_visible() is False
+
+    bar.set_achievements(10, 4)
+    assert bar._achievements_button.get_visible() is True
+    assert "4/10" in bar._achievements_button.get_label()
+
+    bar.set_achievements(None, None)
+    assert bar._achievements_button.get_visible() is False

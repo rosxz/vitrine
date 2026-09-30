@@ -74,6 +74,7 @@ class SettingsWindow(Gtk.Window):
             ("General", self._build_general_page()),
             ("Appearance", self._build_appearance_page()),
             ("Providers", self._build_providers_page()),
+            ("Achievements", self._build_achievements_page()),
             ("About", self._build_about_page()),
         ):
             scroller = Gtk.ScrolledWindow()
@@ -170,6 +171,43 @@ class SettingsWindow(Gtk.Window):
         page = Adw.PreferencesPage()
         page.add(self._build_provider_group())
         return page
+
+    def _build_achievements_page(self) -> Adw.PreferencesPage:
+        from vitrine.services.achievements import AUTO_REFRESH_SETTING, STEAM_API_KEY_SETTING
+
+        page = Adw.PreferencesPage()
+        group = Adw.PreferencesGroup(
+            title="Achievement providers",
+            description="Chosen provider also needs your account signed in; Steam "
+            "needs a free Web API key (https://steamcommunity.com/dev/apikey). "
+            "GOG/Epic reuse your existing login.",
+        )
+        steam_key = Adw.PasswordEntryRow(title="Steam Web API key")
+        steam_key.set_text(str(self.library.setting(STEAM_API_KEY_SETTING, "") or ""))
+        steam_key.connect("apply", self._on_steam_api_key_applied)
+        group.add(steam_key)
+
+        refresh = Adw.SwitchRow(title="Refresh achievements after a game exits")
+        refresh.set_subtitle(
+            "Automatically re-fetch achievements when a game session ends, so "
+            "newly-unlocked trophies show up without pressing Refresh."
+        )
+        refresh.set_active(bool(self.library.setting(AUTO_REFRESH_SETTING, True)))
+        refresh.connect("notify::active", self._on_auto_refresh_toggled)
+        group.add(refresh)
+
+        page.add(group)
+        return page
+
+    def _on_steam_api_key_applied(self, row: Adw.PasswordEntryRow) -> None:
+        from vitrine.services.achievements import STEAM_API_KEY_SETTING
+
+        self.library.set_setting(STEAM_API_KEY_SETTING, row.get_text())
+
+    def _on_auto_refresh_toggled(self, row: Adw.SwitchRow, _pspec: object) -> None:
+        from vitrine.services.achievements import AUTO_REFRESH_SETTING
+
+        self.library.set_setting(AUTO_REFRESH_SETTING, row.get_active())
 
     def _build_about_page(self) -> Adw.PreferencesPage:
         page = Adw.PreferencesPage()

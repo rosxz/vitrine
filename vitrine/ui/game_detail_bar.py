@@ -42,6 +42,7 @@ class GameDetailBar(Gtk.Box):
         on_favorite: Callable[[Game | None], None] | None = None,
         on_cancel: Callable[[Game | None], None] | None = None,
         on_store: Callable[[Game | None], None] | None = None,
+        on_achievements: Callable[[Game | None], None] | None = None,
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self._on_play = on_play
@@ -49,6 +50,7 @@ class GameDetailBar(Gtk.Box):
         self._on_favorite = on_favorite
         self._on_cancel = on_cancel
         self._on_store = on_store
+        self._on_achievements = on_achievements
         self._game: Game | None = None
         self._expanded = True
         self._downloading = False
@@ -123,6 +125,13 @@ class GameDetailBar(Gtk.Box):
         self._store_button.set_visible(False)
         self._store_button.connect("clicked", lambda _b: self._on_store(self._game))
 
+        # Achievement summary button: "🏆 X/Y", opens the achievements viewer.
+        self._achievements_button = Gtk.Button(label="")
+        self._achievements_button.set_tooltip_text("View achievements")
+        self._achievements_button.add_css_class("flat")
+        self._achievements_button.set_visible(False)
+        self._achievements_button.connect("clicked", lambda _b: self._on_achievements(self._game))
+
         # Favorite star: the bundled brand SVG (filled with the play-button accent)
         # is semi-transparent when not starred and fully opaque when starred.
         self._favorite_button = Gtk.Button()
@@ -148,6 +157,7 @@ class GameDetailBar(Gtk.Box):
         controls.set_margin_end(18)
         controls.append(self._favorite_button)
         controls.append(self._store_button)
+        controls.append(self._achievements_button)
         controls.append(self._settings_button)
         controls.append(self._play_button)
         controls.append(self._cancel_button)
@@ -280,6 +290,25 @@ class GameDetailBar(Gtk.Box):
     def set_store_visible(self, visible: bool) -> None:
         """Show/hide the "open store page" button (only store-sourced games)."""
         self._store_button.set_visible(visible)
+
+    def set_achievements(
+        self, total: int | None, unlocked: int | None, on_click: Callable[[Game | None], None] | None = None
+    ) -> None:
+        """Show/hide the achievement summary button.
+
+        ``total``/``unlocked`` come from the game's cached summary; the button is
+        hidden when there are no tracked achievements. Callers pass ``None`` to
+        hide it.
+        """
+        if on_click is not None:
+            self._on_achievements = on_click
+        if not total:
+            self._achievements_button.set_visible(False)
+            self._achievements_button.set_label("")
+            return
+        text = f"🏆 {unlocked or 0}/{total}"
+        self._achievements_button.set_label(text)
+        self._achievements_button.set_visible(True)
 
     def set_downloading(self, downloading: bool) -> None:
         """Lock and recolor the play button while this game is downloading.
