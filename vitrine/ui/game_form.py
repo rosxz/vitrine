@@ -14,6 +14,7 @@ native file chooser and route the result back through
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 
 from gi.repository import Gtk
@@ -114,9 +115,12 @@ class GameForm(Gtk.Box):
 
         self.lutris_slug = _LabeledEntry("Lutris slug (defaults to game name)")
 
-        # Wine/Proton runner selector, with an explicit "use default" choice.
+        # Wine/Proton runner selector, with an explicit "use default" choice and a
+        # "native" option that runs the executable directly without any Wine/Proton.
         runner_ids = ["__default__"]
         runner_names = ["Use default"]
+        runner_ids.append("native")
+        runner_names.append("Native (no Wine/Proton)")
         for rid, rname in self._runner_list:
             runner_ids.append(rid)
             runner_names.append(rname)
@@ -422,6 +426,11 @@ class GameForm(Gtk.Box):
         entry = self._fields.get(kind)
         if entry is not None:
             entry.set(str(expand(path) or ""))
+        # When picking an executable and no working directory is set yet, default
+        # it to the executable's folder (what virtually every game expects).
+        if kind == "executable" and path and not self.working_dir.text():
+            directory = os.path.dirname(os.path.abspath(path))
+            self.working_dir.set(directory)
 
     def populate(self, game: Game) -> None:
         self.name.set(game.name)
@@ -433,7 +442,10 @@ class GameForm(Gtk.Box):
         self.banner.set(expand(game.banner))
         self.lutris_slug.set(game.lutris_slug)
         self.set_artwork_source(game.artwork_source)
-        self.set_runner(game.config.get("runner"))
+        # A game whose runner is the native platform (linux/native) shows as the
+        # "Native (no Wine/Proton)" option even though config["runner"] is unset.
+        runner_value = "linux" if getattr(game, "runner", None) in ("linux", "native") else game.config.get("runner")
+        self.set_runner(runner_value)
         self.gamescope_row.set_active(bool(game.config.get("gamescope", False)))
         self.gamescope_game_res.set_text(str(game.config.get("gamescope_game_res") or ""))
         self.gamescope_output_res.set_text(str(game.config.get("gamescope_output_res") or ""))
@@ -450,19 +462,32 @@ class GameForm(Gtk.Box):
         self._set_achievements_source(game.achievements_source)
 
     def set_runner(self, runner_id: str | None) -> None:
-        """Select the per-game runner override, or the default if unset."""
+        """Select the per-game runner override, or the default if unset.
+
+        ``runner_id`` of ``"native"``/``"linux"`` selects the native (no
+        Wine/Proton) option; anything falsy / ``"__default__"`` picks the default.
+        """
         if not runner_id or runner_id in ("__default__", "", self._default_runner_id):
             self.runner_row.set_selected(0)
             return
         ids = self._runner_option_ids
-        if runner_id in ids:
-            self.runner_row.set_selected(ids.index(runner_id))
+        # Treat "linux" as "native" so saved native games re-open their option.
+        normalized = "native" if runner_id in ("native", "linux") else runner_id
+        if normalized in ids:
+            self.runner_row.set_selected(ids.index(normalized))
 
     def runner(self) -> str | None:
-        """The per-game runner override id, or ``None`` to use the default."""
+        """The per-game runner override id, or ``None`` to use the default.
+
+        Returns ``"native"`` for the native (no Wine/Proton) option.
+        """
         selected = self.runner_row.get_selected()
         option = self._runner_option_ids[selected] if 0 <= selected < len(self._runner_option_ids) else "__default__"
         return None if option == "__default__" else option
+
+    def is_native(self) -> bool:
+        """Whether the selected option runs the game directly (no Wine/Proton)."""
+        return self.runner() == "native"
 
     def set_artwork_source(self, source: str) -> None:
         source = source or "auto"
@@ -531,6 +556,7 @@ class GameForm(Gtk.Box):
     def build_game(self) -> Game:
         v = self._values()
         runner = self.runner()
+        native = runner == "native"
         config: dict = {
             "gamescope": self.gamescope(),
             "gamescope_window_mode": self.gamescope_window_mode(),
@@ -548,11 +574,11 @@ class GameForm(Gtk.Box):
         locale = self.locale_entry.get_text().strip()
         if locale:
             config["locale"] = locale
-        if runner:
+        if runner and not native:
             config["runner"] = runner
         return Game(
             name=v["name"],
-            runner="wine",
+            runner="linux" if native else "wine",
             executable=v["executable"],
             arguments=v["arguments"],
             working_dir=v["working_dir"],
@@ -580,7 +606,9 @@ class GameForm(Gtk.Box):
         game.lutris_slug = v["lutris_slug"]
         game.achievements_source = self.achievements_source()
         runner = self.runner()
-        if runner:
+        native = runner == "native"
+        game.runner = "linux" if native else "wine"
+        if runner and not native:
             game.config["runner"] = runner
         else:
             game.config.pop("runner", None)

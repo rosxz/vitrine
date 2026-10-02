@@ -6,9 +6,9 @@ import subprocess
 from pathlib import Path
 
 #: Latest tagged release (kept in sync with packaging/nix metadata).
-RELEASE_VERSION = "0.9.2"
+RELEASE_VERSION = "0.9.3"
 #: When the current release was cut (ISO date).
-RELEASE_DATE = "2026-09-24"
+RELEASE_DATE = "2026-10-02"
 #: Source repository, so the About dialog can link to it.
 REPO_URL = "https://github.com/rosxz/vitrine"
 

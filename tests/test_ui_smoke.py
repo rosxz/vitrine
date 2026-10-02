@@ -336,3 +336,50 @@ def test_detail_bar_achievements_button_toggle() -> None:
     # No provider and no counts: hidden.
     bar.set_achievements(None, None)
     assert bar._achievements_button.get_visible() is False
+
+
+def test_form_native_runner_option() -> None:
+    """The runner dropdown offers a Native (no Wine/Proton) choice that maps to a
+    linux-runner game and clears any configured wine runner."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct widgets")
+
+    from vitrine.services.library import Game
+    from vitrine.ui.game_form import GameForm
+
+    form = GameForm(allow_provider=False)
+    # Select the "Native (no Wine/Proton)" option (second entry, index 1).
+    form._runner_option_ids.index("native")
+    form.set_runner("native")
+    assert form.is_native() is True
+
+    game = form.build_game()
+    game.executable = "/games/ls"
+    assert game.runner == "linux"
+    assert "runner" not in game.config
+
+    # A native game saved previously re-opens with the Native option selected.
+    saved = Game(name="Native", executable="/games/ls", runner="linux", source="local")
+    form.populate(saved)
+    assert form.is_native() is True
+
+
+def test_form_browse_executable_fills_working_dir() -> None:
+    """Selecting an executable with an empty working dir auto-fills it with the
+    executable's directory."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct widgets")
+    import os
+
+    from vitrine.ui.game_form import GameForm
+
+    form = GameForm(allow_provider=False)
+    assert form.working_dir.text() == ""
+    exe = "/games/foo/game"
+    form.set_browse_result("executable", exe)
+    assert form.working_dir.text() == os.path.dirname(exe)
+
+    # A working dir already set is left alone.
+    form.working_dir.set("/custom")
+    form.set_browse_result("executable", "/other/x")
+    assert form.working_dir.text() == "/custom"
