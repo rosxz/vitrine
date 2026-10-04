@@ -99,13 +99,16 @@ class GameDetailBar(Gtk.Box):
         self._meta.set_halign(Gtk.Align.START)
         self._meta.add_css_class("vitrine-detail-sub")
 
-        self._playtime_icon = Gtk.Image.new_from_icon_name("av-symbolic")
+        # Playtime now uses the icon formerly used for last-played.
+        self._playtime_icon = Gtk.Image.new_from_icon_name("appointment-soon-symbolic")
         self._playtime_icon.add_css_class("vitrine-detail-metaicon")
         self._playtime_label = Gtk.Label()
         self._meta.append(self._playtime_icon)
         self._meta.append(self._playtime_label)
 
-        self._lastplayed_icon = Gtk.Image.new_from_icon_name("appointment-soon-symbolic")
+        # Last-played uses the bundled calendar brand mark.
+        self._lastplayed_icon = Gtk.Image.new_from_file(_brand_icon_path("calendar.svg"))
+        self._lastplayed_icon.set_pixel_size(16)
         self._lastplayed_icon.add_css_class("vitrine-detail-metaicon")
         self._lastplayed_label = Gtk.Label()
         self._meta.append(self._lastplayed_icon)
@@ -122,9 +125,11 @@ class GameDetailBar(Gtk.Box):
         self._settings_button.connect("clicked", lambda _b: self._on_settings(self._game))
 
         # Open the game's store page in the browser (Steam/GOG/Epic store). Uses
-        # the web-browser icon; hidden when the game has no store page (local).
+        # the bundled explore mark; hidden when the game has no store page (local).
         self._store_button = Gtk.Button()
-        self._store_button.set_icon_name("web-browser-symbolic")
+        self._store_icon = Gtk.Image.new_from_file(_brand_icon_path("explore-svgrepo-com.svg"))
+        self._store_icon.set_pixel_size(20)
+        self._store_button.set_child(self._store_icon)
         self._store_button.set_tooltip_text("Open store page")
         self._store_button.add_css_class("flat")
         self._store_button.set_visible(False)

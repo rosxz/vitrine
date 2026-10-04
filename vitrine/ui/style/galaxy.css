@@ -2,6 +2,12 @@
    The widget classes here are shared with system.css; only the surface values
    (colors, radii, spacing) differ. */
 
+/* Purple accent for every libadwaita accent surface (suggested buttons, selected
+   rows, switch/check highlights, dropdown selection, focus rings, links). */
+@define-color accent_color #b380ff;
+@define-color accent_bg_color #a269ff;
+@define-color accent_fg_color #0c0b0d;
+
 /* Window + page chrome ---------------------------------------------------- */
 window.vitrine-window {
     background-color: #0c0b0d;
