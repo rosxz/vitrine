@@ -383,3 +383,97 @@ def test_form_browse_executable_fills_working_dir() -> None:
     form.working_dir.set("/custom")
     form.set_browse_result("executable", "/other/x")
     assert form.working_dir.text() == "/custom"
+
+
+def test_install_local_game_window_builds_installable_game() -> None:
+    """The install-from-exe window creates a not-installed local game carrying
+    the installer path (so it can be installed via the entry's on_install)."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct windows")
+    from vitrine.infra import db
+    from vitrine.services.library import Library
+    from vitrine.ui.game_dialogs import InstallLocalGameWindow
+
+    conn = db.connect(":memory:")
+    db.initialize(conn)
+    library = Library(conn)
+
+    seen: list = []
+    window = InstallLocalGameWindow(library, on_install=seen.append)
+    window._name.set_text("Spelunky")
+    window._installer.set_text("/tmp/setup.exe")
+    window._on_install_clicked(Gtk.Button(label="fake"))
+
+    assert len(seen) == 1
+    game = seen[0]
+    assert game.source == "local"
+    assert game.installed is False
+    assert game.config["installer"] == "/tmp/setup.exe"
+
+
+def test_form_run_on_prefix_action_wired() -> None:
+    """The General tab's 'Run executable on prefix' callback is stored + callable."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct widgets")
+    from vitrine.ui.game_form import GameForm
+
+    calls: list[int] = []
+    form = GameForm(allow_provider=False, on_run_on_prefix=lambda: calls.append(1))
+    assert form._on_run_on_prefix is not None
+    form._on_run_on_prefix()
+    assert calls == [1]
+
+
+def test_settings_window_accepts_run_on_prefix() -> None:
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct windows")
+    from vitrine.infra import db
+    from vitrine.services.library import Game, Library
+    from vitrine.ui.game_dialogs import GameSettingsWindow
+
+    conn = db.connect(":memory:")
+    db.initialize(conn)
+    library = Library(conn)
+    game = library.add(Game(name="G", source="local", executable="/tmp/g.exe"))
+    window = GameSettingsWindow(
+        library,
+        game,
+        on_save=lambda _g: None,
+        on_run_on_prefix=lambda _g: None,
+    )
+    assert window._form._on_run_on_prefix is not None
+
+
+def test_form_working_dir_is_browsable() -> None:
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct widgets")
+    from vitrine.ui.game_form import GameForm
+
+    form = GameForm(allow_provider=False)
+    assert form.working_dir._browse is not None
+
+
+def test_browse_start_dir_resolves_current_value(tmp_path) -> None:
+    """Browse dialogs open at the current field value's directory."""
+    from vitrine.ui.game_dialogs import _start_dir_for
+
+    class _Entry:
+        def __init__(self, text: str) -> None:
+            self._text = text
+
+        def text(self) -> str:
+            return self._text
+
+    class _Form:
+        def __init__(self, wd: str = "") -> None:
+            self.working_dir = _Entry(wd)
+
+    game_dir = tmp_path / "Game"
+    game_dir.mkdir()
+    exe = game_dir / "Game.exe"
+    exe.write_bytes(b"MZ")
+
+    assert _start_dir_for("executable", str(exe), _Form()) == str(game_dir)
+    assert _start_dir_for("working_dir", str(game_dir), _Form()) == str(game_dir)
+    assert _start_dir_for("executable", "", _Form(wd=str(game_dir))) == str(game_dir)
+    assert _start_dir_for("executable", "", _Form()) is None

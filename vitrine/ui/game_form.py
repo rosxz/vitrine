@@ -93,6 +93,7 @@ class GameForm(Gtk.Box):
         on_open_install: Callable[[], None] | None = None,
         on_open_prefix: Callable[[], None] | None = None,
         on_recreate_prefix: Callable[[], None] | None = None,
+        on_run_on_prefix: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self._on_browse = on_browse or (lambda _kind, _entry: None)
@@ -104,11 +105,12 @@ class GameForm(Gtk.Box):
         self._on_open_install = on_open_install
         self._on_open_prefix = on_open_prefix
         self._on_recreate_prefix = on_recreate_prefix
+        self._on_run_on_prefix = on_run_on_prefix
 
         self.name = _LabeledEntry("Name")
         self.executable = _LabeledEntry("Executable", browse=True)
         self.arguments = _LabeledEntry("Arguments")
-        self.working_dir = _LabeledEntry("Working directory")
+        self.working_dir = _LabeledEntry("Working directory", browse=True)
         self.prefix = _LabeledEntry("Wine prefix (optional)")
         self.cover = _LabeledEntry("Cover image (portrait)", browse=True)
         self.banner = _LabeledEntry("Banner image (wide hero)", browse=True)
@@ -207,6 +209,7 @@ class GameForm(Gtk.Box):
 
         self._fields: dict[str, _LabeledEntry] = {
             "executable": self.executable,
+            "working_dir": self.working_dir,
             "cover": self.cover,
             "banner": self.banner,
         }
@@ -220,7 +223,7 @@ class GameForm(Gtk.Box):
         for entry in (self.name, self.executable, self.arguments, self.working_dir):
             general.append(entry)
         # Reveal the game's on-disk directories in the file manager (edit-only).
-        if self._on_open_install or self._on_open_prefix or self._on_recreate_prefix:
+        if self._on_open_install or self._on_open_prefix or self._on_recreate_prefix or self._on_run_on_prefix:
             dir_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             dir_buttons.set_margin_top(4)
             if self._on_open_install:
@@ -230,6 +233,13 @@ class GameForm(Gtk.Box):
             if self._on_open_prefix:
                 btn = Gtk.Button(label="Open prefix directory…")
                 btn.connect("clicked", lambda _b: self._on_open_prefix())
+                dir_buttons.append(btn)
+            if self._on_run_on_prefix:
+                btn = Gtk.Button(label="Run executable on prefix…")
+                btn.set_tooltip_text(
+                    "Run an .exe inside this game's Wine/Proton prefix (e.g. install a patch)"
+                )
+                btn.connect("clicked", lambda _b: self._on_run_on_prefix())
                 dir_buttons.append(btn)
             if self._on_recreate_prefix:
                 btn = Gtk.Button(label="Re-create prefix")

@@ -47,6 +47,15 @@ def prefixes_dir() -> Path:
     return data_dir() / "prefixes"
 
 
+def games_dir() -> Path:
+    """Root for locally-installed (installer-based) games, per-source layout.
+
+    Mirrors the ``gog/`` and ``egs/`` store roots so a local game's files live
+    under Vitrine's data dir (outside its prefix) at ``games/<slug>/``.
+    """
+    return data_dir() / "games"
+
+
 def covers_dir() -> Path:
     """Normalised cover images (always the same aspect ratio)."""
     return cache_dir() / "covers"
@@ -73,6 +82,7 @@ def ensure_dirs() -> None:
         config_dir(),
         runners_dir(),
         prefixes_dir(),
+        games_dir(),
         covers_dir(),
         secret_dir(),
         achievements_dir(),

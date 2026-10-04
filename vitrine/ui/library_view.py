@@ -44,8 +44,13 @@ _SCROLL_BUFFER = 500
 
 
 def _is_not_installed(game: Game) -> bool:
-    """Store-owned title that isn't installed locally (shown translucent)."""
-    return not game.installed and game.source in ("steam", "gog", "epic")
+    """Title that isn't installed locally (shown translucent).
+
+    Store-owned games and local games queued for an installer-based install.
+    """
+    if game.installed:
+        return False
+    return game.source in ("steam", "gog", "epic", "local")
 
 
 def _same_game(a: Game, b: Game) -> bool:

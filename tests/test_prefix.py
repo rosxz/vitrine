@@ -188,3 +188,40 @@ def test_seed_returns_false_without_proton_pfx(tmp_path: Path) -> None:
 
     wine = _fake_wine(tmp_path)  # plain wine layout, no default_pfx
     assert _seed_from_proton(str(wine), tmp_path / "prefix") is False
+
+
+def test_map_drive_creates_symlink(tmp_path: Path) -> None:
+    from vitrine.infra.prefix import map_drive
+
+    prefix = tmp_path / "pfx"
+    (prefix / "dosdevices").mkdir(parents=True)
+    target = tmp_path / "gamefiles"
+    target.mkdir()
+
+    letter = map_drive(prefix, target)
+    assert letter is not None
+    link = prefix / "dosdevices" / f"{letter.lower()}:"
+    assert link.is_symlink()
+    assert Path(link).resolve() == target.resolve()
+
+
+def test_map_drive_avoids_used_letters(tmp_path: Path) -> None:
+    from vitrine.infra.prefix import map_drive
+
+    prefix = tmp_path / "pfx"
+    dos = prefix / "dosdevices"
+    dos.mkdir(parents=True)
+    (dos / "c:").symlink_to("../drive_c")
+    (dos / "d:").symlink_to("/")
+    target = tmp_path / "g"
+    target.mkdir()
+    letter = map_drive(prefix, target)
+    assert letter not in (None, "C", "D")
+
+
+def test_map_drive_returns_none_without_dosdevices(tmp_path: Path) -> None:
+    from vitrine.infra.prefix import map_drive
+
+    target = tmp_path / "g"
+    target.mkdir()
+    assert map_drive(tmp_path / "nopfx", target) is None

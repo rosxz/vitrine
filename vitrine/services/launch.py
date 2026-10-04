@@ -394,3 +394,34 @@ def launch(plan: LaunchPlan, *, capture: bool = False) -> subprocess.Popen:
     if capture:
         kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     return subprocess.Popen(plan.command, **kwargs)
+
+
+def build_installer_plan(
+    game: Game, installer: str, config: dict, runners_store: dict[str, str] | None = None
+) -> LaunchPlan:
+    """Resolve the command/env to run a Windows *installer* in the game's prefix.
+
+    Like :func:`build_launch_plan` but targets an installer ``.exe`` instead of
+    the game executable, so it runs under the same Wine/Proton runner and prefix
+    the game will later use (installing dependencies/registry into that prefix).
+    """
+    from vitrine.services.runners import resolve_game_runner
+
+    runner, wine_binary = resolve_game_runner(game, config, runners_store)
+    effective = {**config, "wine_binary": wine_binary, "_runner": runner} if runner is not None else config
+
+    installer_path = expand(installer) or installer
+    if _is_proton(effective):
+        from vitrine.infra.wine import umu
+
+        command = umu.umu_command(installer_path)
+    else:
+        command = [wine_binary or "wine", installer_path]
+
+    return LaunchPlan(
+        command=command,
+        env=build_env(game, effective),
+        working_dir=os.path.dirname(installer_path) or None,
+        prefix=str(wine_prefix_for(game)),
+        runner=runner,
+    )

@@ -208,12 +208,19 @@ class GameEntry(ABC):
 
 
 class LocalGameEntry(GameEntry):
-    """Hand-added games: installed locally, launched via the generic runner."""
+    """Hand-added games.
+
+    Either pointed at an already-installed copy, or installed here from a Windows
+    installer (``config["installer"]``): the installer runs in the game's own
+    Wine/Proton prefix, with the per-game ``games/<slug>`` directory exposed as a
+    Windows drive to install into.
+    """
 
     source_id = "local"
 
     def can_install(self) -> bool:
-        return False
+        # Installable only when it was added with an installer executable.
+        return bool((self.game.config or {}).get("installer"))
 
     def launch(self) -> None:
         runner = getattr(self.controller, "launch_local", None)
@@ -222,12 +229,134 @@ class LocalGameEntry(GameEntry):
             return
         raise NotImplementedError("controller has no launch_local")
 
-    def on_uninstall(self) -> None:
-        remover = getattr(self.controller, "remove_local", None)
-        if callable(remover):
-            remover(self.game)
+    def install_dir(self) -> str | None:
+        configured = (self.game.config or {}).get("local_install_dir")
+        if configured:
+            return str(configured)
+        return super().install_dir()
+
+    def on_install(self) -> None:
+        self._install_local()
+
+    def _install_local(self) -> None:
+        """Run the recorded installer in the game's prefix (controller primitive)."""
+        from vitrine.infra import paths
+        from vitrine.infra.prefix import map_drive, prepare_prefix
+        from vitrine.infra.util import expand, slugify
+        from vitrine.services.launch import build_installer_plan, wine_prefix_for
+        from vitrine.services.runners import load_runners_store, resolve_game_runner
+
+        installer = (self.game.config or {}).get("installer")
+        if not installer or not os.path.isfile(expand(installer) or ""):
+            self._toast(f"No installer found for {self.game.name}")
             return
-        self._library().remove(self.game.id) if self.game.id is not None else None
+        if self.controller.installing(self.game):
+            self._toast(f"{self.game.name} is already installing")
+            return
+
+        library = self._library()
+        config = self.game.merged_config(library.global_config())
+        try:
+            store = load_runners_store(library)
+            runner, wine_bin = resolve_game_runner(self.game, config, store, library=library)
+        except Exception:  # noqa: BLE001 - bad runner config must not crash the UI
+            logger.exception("could not resolve a runner for %s", self.game.name)
+            self._toast(f"Could not resolve a Wine/Proton runner for {self.game.name}")
+            return
+        prefix = str(wine_prefix_for(self.game))
+        install_dir = str(paths.games_dir() / (self.game.slug or slugify(self.game.name)))
+        os.makedirs(install_dir, exist_ok=True)
+
+        try:
+            prepare_prefix(
+                wine_bin or config.get("wine_binary") or "wine",
+                prefix,
+                steam_run=bool(runner and runner.is_proton),
+            )
+        except ValueError as exc:
+            self._toast(str(exc))
+            return
+        except Exception:  # noqa: BLE001 - a broken prefix must not crash the UI
+            logger.exception("could not prepare prefix for %s", self.game.name)
+            self._toast(f"Could not prepare the prefix for {self.game.name}")
+            return
+
+        # Expose the install dir to the installer as a Windows drive so it can
+        # (be told to) install there rather than into the prefix.
+        try:
+            drive = map_drive(prefix, install_dir)
+        except Exception:  # noqa: BLE001
+            logger.exception("could not map the games drive for %s", self.game.name)
+            drive = None
+        if drive:
+            self._toast(f"Installing {self.game.name}… (choose {drive}: if asked where to install)")
+
+        self.game.config["local_install_dir"] = install_dir
+        if self.game.id is not None:
+            library.update(self.game)
+
+        try:
+            plan = build_installer_plan(self.game, installer, config, store)
+        except Exception:  # noqa: BLE001
+            logger.exception("could not build the installer command for %s", self.game.name)
+            self._toast(f"Could not start the installer for {self.game.name}")
+            return
+        self.controller.start_install_command(
+            self.game, plan.command, env=plan.env, cwd=plan.working_dir
+        )
+
+    def on_install_finished(self, returncode: int, output: Sequence[str] = ()) -> bool:
+        if returncode != 0:
+            return False
+        exe = self._detect_installed_executable()
+        if exe:
+            self._finalize_executable(exe)
+            return True
+        # Auto-detection failed: let the user point at the executable.
+        picker = getattr(self.controller, "pick_installed_executable", None)
+        if callable(picker):
+            picker(self.game, self.install_dir())
+        else:
+            self._toast(f"{self.game.name}: set the executable in Properties")
+        return True
+
+    def _detect_installed_executable(self) -> str | None:
+        from vitrine.services.game_finder import find_windows_game_executable
+
+        install_dir = self.install_dir()
+        if install_dir and os.path.isdir(install_dir):
+            exe = find_windows_game_executable(install_dir)
+            if exe:
+                return exe
+        # Fallback: the installer may have used the prefix's drive_c instead.
+        from vitrine.services.launch import wine_prefix_for
+
+        drive_c = os.path.join(str(wine_prefix_for(self.game)), "drive_c")
+        if os.path.isdir(drive_c):
+            exe = find_windows_game_executable(drive_c)
+            if exe:
+                return exe
+        return None
+
+    def _finalize_executable(self, exe: str) -> None:
+        self.game.executable = exe
+        self.game.working_dir = os.path.dirname(exe)
+        self.game.installed = True
+        library = self._library()
+        if library is not None and self.game.id is not None:
+            library.update(self.game)
+
+    def on_cancel_install(self) -> None:
+        # Remove the partial install dir; leave the (reusable) prefix in place.
+        import shutil
+
+        install_dir = self.install_dir()
+        if install_dir and os.path.isdir(install_dir):
+            shutil.rmtree(install_dir, ignore_errors=True)
+
+    def on_uninstall(self) -> None:
+        # Same flow as GOG/Epic: ask whether to also delete the prefix.
+        self._prompt_uninstall()
 
 
 # ---------------------------------------------------------------------------

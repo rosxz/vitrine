@@ -18,7 +18,7 @@ from vitrine.services.library import SHOW_DETAIL_SETTING, SHOW_HIDDEN, Game, Lib
 from vitrine.sources import registry
 from vitrine.sources.steam_source import SteamSource
 from vitrine.ui.game_detail_bar import GameDetailBar
-from vitrine.ui.game_dialogs import AddGameDialog, GameSettingsDialog, PrefixRecreateWindow
+from vitrine.ui.game_dialogs import GameSettingsDialog, PrefixRecreateWindow
 from vitrine.ui.library_view import LibraryView
 from vitrine.ui.settings_dialog import SettingsDialog
 
@@ -39,6 +39,7 @@ HIDE_NOT_INSTALLED = "hide_not_installed"
 _BRAND_SOURCE_ICONS = {
     "steam": "steam.svg",
     "gog": "gog.svg",
+    "epic": "epic.svg",
     FAVORITES: "favorite-white.svg",
 }
 
@@ -334,9 +335,10 @@ class VitrineWindow(Adw.ApplicationWindow):
             games = self.library.favorite_games()
         else:
             games = self.library.games(source=self.current_source)
-        # Local games are by definition installed on this machine.
+        # Local games are by definition installed on this machine -- except ones
+        # added to be installed from an installer, which stay pending until done.
         for game in games:
-            if game.source == "local" and not game.installed:
+            if game.source == "local" and not game.installed and not (game.config or {}).get("installer"):
                 game.installed = True
         # Hidden/blacklisted games are suppressed unless "show hidden" is on.
         if not self.show_hidden:
@@ -446,7 +448,53 @@ class VitrineWindow(Adw.ApplicationWindow):
         return False
 
     def on_add_game_clicked(self, _button: Gtk.Button) -> None:
-        AddGameDialog(self.library, on_add=self.on_game_added, parent=self).present()
+        from vitrine.ui.game_dialogs import AddGameDialog, InstallLocalDialog, choose_add_mode
+
+        def _on_mode(mode: str) -> None:
+            if mode == "install":
+                InstallLocalDialog(self.library, on_install=self._on_local_install_requested, parent=self).present()
+            else:
+                AddGameDialog(self.library, on_add=self.on_game_added, parent=self).present()
+
+        choose_add_mode(self, _on_mode)
+
+    def _on_local_install_requested(self, game: Game) -> None:
+        """Add a new installable local game, then run its installer."""
+        from vitrine.domain.entry import entry_for
+
+        self.library.add(game)
+        self.reload()
+        self._set_detail_game(game)
+        entry_for(game, self).on_install()
+
+    def pick_installed_executable(self, game: Game, start_dir: str | None = None) -> None:
+        """After an install, let the user point at the game's executable."""
+        from gi.repository import Gio
+
+        from vitrine.domain.entry import entry_for
+
+        chooser = Gtk.FileDialog(title="Select the game's executable")
+        if start_dir and os.path.isdir(start_dir):
+            try:
+                chooser.set_initial_folder(Gio.File.new_for_path(start_dir))
+            except Exception:  # noqa: BLE001
+                pass
+
+        def on_selected(dialog: Gtk.FileDialog, result: object) -> None:
+            try:
+                file = dialog.open_finish(result)
+            except (GLib.Error, TypeError):
+                return
+            if file is None or not file.get_path():
+                return
+            entry = entry_for(game, self)
+            finalize = getattr(entry, "_finalize_executable", None)
+            if callable(finalize):
+                finalize(file.get_path())
+            self.reload()
+            self._set_detail_game(game)
+
+        chooser.open(self, None, on_selected)
 
     # -- source login / refresh / reset (generic via SyncService) ---------------
 
@@ -581,7 +629,14 @@ class VitrineWindow(Adw.ApplicationWindow):
     # -- download state ---------------------------------------------------------
 
     def _start_download(
-        self, game: Game, command: list[str], *, log: bool = True, timeout: float | None = None, cwd: str | None = None
+        self,
+        game: Game,
+        command: list[str],
+        *,
+        log: bool = True,
+        timeout: float | None = None,
+        cwd: str | None = None,
+        env: dict | None = None,
     ) -> object:
         """Run ``command`` as a tracked download job, optionally streamed to a log."""
         from vitrine.services.downloads import run_download
@@ -602,6 +657,7 @@ class VitrineWindow(Adw.ApplicationWindow):
 
         job = run_download(
             command,
+            env=env,
             progress=_on_progress,
             done=_on_done,
             on_line=window.append_line if window is not None else None,
@@ -694,9 +750,17 @@ class VitrineWindow(Adw.ApplicationWindow):
     def gogdl_timeout(self) -> float:
         return GOGDL_DOWNLOAD_TIMEOUT
 
-    def start_install_command(self, game: Game, command: list[str], *, timeout: float | None = None) -> None:
+    def start_install_command(
+        self,
+        game: Game,
+        command: list[str],
+        *,
+        timeout: float | None = None,
+        env: dict | None = None,
+        cwd: str | None = None,
+    ) -> None:
         """Start a tracked install download for ``game`` (controller primitive)."""
-        self._start_download(game, command, timeout=timeout)
+        self._start_download(game, command, timeout=timeout, env=env, cwd=cwd)
         GLib.idle_add(self._set_downloading_ui, game, True)
 
     def run_owned_launch(
@@ -1009,6 +1073,7 @@ class VitrineWindow(Adw.ApplicationWindow):
             on_open_install=self._open_install_dir,
             on_open_prefix=self._open_prefix_dir,
             on_recreate_prefix=self._recreate_prefix,
+            on_run_on_prefix=self.run_executable_on_prefix,
             on_wine_config=self.open_wine_config,
             parent=self,
         ).present()
@@ -1357,6 +1422,77 @@ class VitrineWindow(Adw.ApplicationWindow):
             daemon=True,
         ).start()
 
+    def run_executable_on_prefix(self, game: Game) -> None:
+        """Ask for an executable and run it inside the game's Wine/Proton prefix.
+
+        Useful for installing patches or add-ons: the chosen ``.exe`` runs under
+        the same runner/prefix the game uses.
+        """
+        from gi.repository import Gio
+
+        chooser = Gtk.FileDialog(title="Choose an executable to run on the prefix")
+        exe_filter = Gtk.FileFilter()
+        exe_filter.set_name("Windows executables")
+        exe_filter.add_pattern("*.exe")
+        chooser.set_default_filter(exe_filter)
+        default_dir = game.working_dir or (os.path.dirname(game.executable) if game.executable else None)
+        if default_dir and os.path.isdir(default_dir):
+            try:
+                chooser.set_initial_folder(Gio.File.new_for_path(default_dir))
+            except Exception:  # noqa: BLE001
+                pass
+
+        def on_selected(dialog: Gtk.FileDialog, result: object) -> None:
+            try:
+                file = dialog.open_finish(result)
+            except (GLib.Error, TypeError):
+                return
+            if file is not None and file.get_path():
+                self._run_executable_on_prefix(game, file.get_path())
+
+        chooser.open(self, None, on_selected)
+
+    def _run_executable_on_prefix(self, game: Game, executable: str) -> None:
+        from vitrine.infra.prefix import prepare_prefix
+        from vitrine.services.launch import build_installer_plan, wine_prefix_for
+        from vitrine.services.runners import load_runners_store, resolve_game_runner
+
+        config = game.merged_config(self.library.global_config())
+        try:
+            store = load_runners_store(self.library)
+            runner, wine_bin = resolve_game_runner(game, config, store, library=self.library)
+        except Exception:  # noqa: BLE001
+            logger.exception("could not resolve a runner for %s", game.name)
+            self.toasts.add_toast(Adw.Toast(title="Could not resolve a Wine/Proton runner"))
+            return
+
+        prefix = str(wine_prefix_for(game))
+        try:
+            prepare_prefix(
+                wine_bin or config.get("wine_binary") or "wine",
+                prefix,
+                steam_run=bool(runner and runner.is_proton),
+            )
+        except ValueError as exc:
+            self.toasts.add_toast(Adw.Toast(title=str(exc)))
+            return
+        except Exception:  # noqa: BLE001
+            logger.exception("could not prepare the prefix for %s", game.name)
+            self.toasts.add_toast(Adw.Toast(title=f"Could not prepare the prefix for {game.name}"))
+            return
+
+        try:
+            plan = build_installer_plan(game, executable, config, store)
+        except Exception:  # noqa: BLE001
+            logger.exception("could not build the executable command for %s", game.name)
+            self.toasts.add_toast(Adw.Toast(title=f"Could not run {os.path.basename(executable)}"))
+            return
+
+        self.toasts.add_toast(
+            Adw.Toast(title=f"Running {os.path.basename(executable)} on {game.name}'s prefix")
+        )
+        self.start_install_command(game, plan.command, env=plan.env, cwd=plan.working_dir)
+
     def _recreate_prefix(self, game: Game) -> None:
         """Open an independent confirmation window for rebuilding the prefix."""
         from vitrine.infra.prefix import recreate_prefix_for_game
@@ -1522,9 +1658,14 @@ class VitrineWindow(Adw.ApplicationWindow):
             items.insert(1, ("Stop download", lambda: self.cancel_install(game)))
         if entry.store_url() is not None:
             items.append(("Open store page", lambda: self.open_store_page(game)))
-        if game.source == "local" or game.installed:
-            label = "Remove from library" if game.source == "local" else "Uninstall…"
-            items.append((label, lambda: self.on_game_removed(game)))
+        if game.source == "local":
+            # Local games can be uninstalled (files [+ prefix]) like store games,
+            # or just dropped from the library without touching the files.
+            if game.installed:
+                items.append(("Uninstall…", lambda: self.on_game_removed(game)))
+            items.append(("Remove from library", lambda: self.remove_local(game)))
+        elif game.installed:
+            items.append(("Uninstall…", lambda: self.on_game_removed(game)))
         return items
 
     def _open_directory(self, path: str) -> None:

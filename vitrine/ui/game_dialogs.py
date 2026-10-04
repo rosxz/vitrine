@@ -8,21 +8,27 @@ independently of the main window.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 
-from gi.repository import Adw, GLib, Gtk
+from gi.repository import Adw, Gio, GLib, Gtk
 
+from vitrine.infra.util import expand
 from vitrine.services.library import Game, Library
 from vitrine.ui.game_form import GameForm, _LabeledEntry
 
 _BROWSE_TITLES: dict[str, str] = {
     "executable": "Choose the game executable",
+    "working_dir": "Choose the working directory",
     "cover": "Choose the cover image",
     "banner": "Choose the banner image",
 }
 
 #: Browse kinds restricted to images (as opposed to any file for the executable).
 _IMAGE_KINDS = {"cover", "banner"}
+
+#: Browse kinds that pick a directory rather than a file.
+_FOLDER_KINDS = {"working_dir"}
 
 _FORM_WIDTH = 680
 _FORM_HEIGHT = 780
@@ -37,12 +43,34 @@ def _parent_window(widget: Gtk.Widget | None) -> Gtk.Window | None:
     return root if isinstance(root, Gtk.Window) else None
 
 
+def _start_dir_for(kind: str, value: str, form: GameForm) -> str | None:
+    """The directory a browse dialog should open at, from the current field value.
+
+    Uses the current value if it is (or points into) an existing directory; for
+    the executable it falls back to the working directory if that is set.
+    """
+    resolved = expand(value or "") or ""
+    if resolved:
+        if os.path.isdir(resolved):
+            return resolved
+        parent = os.path.dirname(resolved)
+        if parent and os.path.isdir(parent):
+            return parent
+    if kind == "executable":
+        working = expand(form.working_dir.text() or "") or ""
+        if working and os.path.isdir(working):
+            return working
+    return None
+
+
 def _open_picker(
     parent: Gtk.Widget | None,
     kind: str,
     accept: Callable[[str], None],
+    start_dir: str | None = None,
 ) -> None:
-    """Open a native file chooser and forward the selected path."""
+    """Open a native file/folder chooser and forward the selected path."""
+    folder = kind in _FOLDER_KINDS
     chooser = Gtk.FileDialog(title=_BROWSE_TITLES[kind])
     if kind in _IMAGE_KINDS:
         image_filter = Gtk.FileFilter()
@@ -50,16 +78,24 @@ def _open_picker(
         for mime in ("image/png", "image/jpeg", "image/webp", "image/avif", "image/bmp"):
             image_filter.add_mime_type(mime)
         chooser.set_default_filter(image_filter)
+    if start_dir and os.path.isdir(start_dir):
+        try:
+            chooser.set_initial_folder(Gio.File.new_for_path(start_dir))
+        except Exception:  # noqa: BLE001 - a bad folder must not break Browse
+            pass
 
     def on_selected(dialog: Gtk.FileDialog, result: object) -> None:
         try:
-            file = dialog.open_finish(result)
+            file = dialog.select_folder_finish(result) if folder else dialog.open_finish(result)
         except (GLib.Error, TypeError):  # cancelled
             return
         if file is not None and file.get_path():
             accept(file.get_path())
 
-    chooser.open(_parent_window(parent), None, on_selected)
+    if folder:
+        chooser.select_folder(_parent_window(parent), None, on_selected)
+    else:
+        chooser.open(_parent_window(parent), None, on_selected)
 
 
 class _GameWindow(Gtk.Window):
@@ -215,7 +251,8 @@ class _GameWindow(Gtk.Window):
             self._form.set_browse_result(kind, path)
 
         def open_chooser(entry: _LabeledEntry) -> None:
-            _open_picker(self, kind, accept)
+            start_dir = _start_dir_for(kind, entry.text(), self._form)
+            _open_picker(self, kind, accept, start_dir=start_dir)
 
         return open_chooser
 
@@ -339,6 +376,7 @@ class GameSettingsWindow(_GameWindow):
         on_open_install: Callable[[Game], None] | None = None,
         on_open_prefix: Callable[[Game], None] | None = None,
         on_recreate_prefix: Callable[[Game], None] | None = None,
+        on_run_on_prefix: Callable[[Game], None] | None = None,
         on_wine_config: Callable[[Game], None] | None = None,
         parent: Gtk.Widget | None = None,
     ) -> None:
@@ -349,6 +387,7 @@ class GameSettingsWindow(_GameWindow):
             on_open_install=(lambda: on_open_install(game)) if on_open_install else None,
             on_open_prefix=(lambda: on_open_prefix(game)) if on_open_prefix else None,
             on_recreate_prefix=(lambda: on_recreate_prefix(game)) if on_recreate_prefix else None,
+            on_run_on_prefix=(lambda: on_run_on_prefix(game)) if on_run_on_prefix else None,
         )
         form.connect_source_changed(self._on_source_changed)
         form.populate(game)
@@ -387,6 +426,153 @@ class GameSettingsWindow(_GameWindow):
 # windows even when they were dialogs).
 AddGameDialog = AddGameWindow
 GameSettingsDialog = GameSettingsWindow
+
+
+def choose_add_mode(parent: Gtk.Widget | None, on_choice: Callable[[str], None]) -> None:
+    """Ask whether to point at an installed game or install from an installer.
+
+    ``on_choice`` is called with ``"installed"`` or ``"install"`` (never for
+    cancel/close).
+    """
+    dialog = Adw.AlertDialog(
+        heading="Add a game",
+        body=(
+            "Point Vitrine at a game that is already installed on this machine, "
+            "or install one from a Windows installer into a new Wine/Proton prefix."
+        ),
+    )
+    dialog.add_response("installed", "Point to an installed game")
+    dialog.add_response("install", "Install from an executable")
+    dialog.add_response("cancel", "Cancel")
+    dialog.set_response_appearance("install", Adw.ResponseAppearance.SUGGESTED)
+    dialog.set_default_response("installed")
+    dialog.set_close_response("cancel")
+
+    def _respond(_dialog, response: str) -> None:
+        if response in ("installed", "install"):
+            on_choice(response)
+
+    dialog.connect("response", _respond)
+    dialog.present(_parent_window(parent))
+
+
+class InstallLocalGameWindow(Gtk.Window):
+    """Create a local game by installing it from a Windows installer executable.
+
+    Collects a name, the installer ``.exe`` and the Wine/Proton runner; the
+    controller then adds the game and runs the installer in the game's prefix.
+    """
+
+    def __init__(
+        self,
+        library: Library,
+        on_install: Callable[[Game], None],
+        parent: Gtk.Widget | None = None,
+    ) -> None:
+        super().__init__(title="Install a game")
+        self.library = library
+        self._on_install = on_install
+        self.add_css_class("vitrine-window")
+        self.set_default_size(560, 320)
+        parent_window = _parent_window(parent)
+        if parent_window is not None:
+            self.set_transient_for(parent_window)
+
+        self._name = Gtk.Entry(placeholder_text="Game name")
+        self._installer = Gtk.Entry(placeholder_text="Windows installer (.exe)")
+
+        install_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        install_row.append(self._installer)
+        self._installer.set_hexpand(True)
+        browse = Gtk.Button(label="Browse…")
+        browse.connect("clicked", lambda _b: self._choose_installer())
+        install_row.append(browse)
+
+        # Runner: default + installed Wine/Proton builds (no "native" -- an
+        # installer is always a Windows program).
+        self._runner_ids = ["__default__"]
+        runner_names = ["Use default"]
+        for rid, rname in _runner_form_args(library)["runner_list"]:
+            self._runner_ids.append(rid)
+            runner_names.append(rname)
+        self._runner_row = Gtk.DropDown()
+        self._runner_row.set_model(Gtk.StringList.new(runner_names))
+        self._runner_row.set_selected(0)
+
+        form = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        form.set_margin_top(16)
+        form.set_margin_bottom(16)
+        form.set_margin_start(16)
+        form.set_margin_end(16)
+        form.append(_labelled("Name", self._name))
+        form.append(_labelled("Installer", install_row))
+        form.append(_labelled("Wine / Proton", self._runner_row))
+
+        install = Gtk.Button(label="Install", css_classes=["suggested-action"])
+        install.connect("clicked", self._on_install_clicked)
+        header = Adw.HeaderBar()
+        header.set_title_widget(Adw.WindowTitle(title="Install a game", subtitle=""))
+        header.set_show_end_title_buttons(True)
+        cancel = Gtk.Button(label="Cancel")
+        cancel.add_css_class("flat")
+        cancel.connect("clicked", lambda _b: self.close())
+        header.pack_start(cancel)
+        header.pack_end(install)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        content.append(form)
+        self.set_titlebar(header)
+        self.set_child(content)
+
+    def _choose_installer(self) -> None:
+        chooser = Gtk.FileDialog(title="Choose the game's installer")
+        installer_filter = Gtk.FileFilter()
+        installer_filter.set_name("Windows installers")
+        installer_filter.add_pattern("*.exe")
+        chooser.set_default_filter(installer_filter)
+
+        def on_selected(dialog: Gtk.FileDialog, result: object) -> None:
+            try:
+                file = dialog.open_finish(result)
+            except (GLib.Error, TypeError):
+                return
+            if file is not None and file.get_path():
+                self._installer.set_text(file.get_path())
+
+        chooser.open(self, None, on_selected)
+
+    def _on_install_clicked(self, _button: Gtk.Button) -> None:
+        name = self._name.get_text().strip()
+        installer = self._installer.get_text().strip()
+        if not name or not installer:
+            return
+        runner_id = self._runner_ids[self._runner_row.get_selected()]
+        config: dict = {"installer": installer}
+        if runner_id not in ("__default__", "native"):
+            config["runner"] = runner_id
+        game = Game(
+            name=name,
+            runner="wine",
+            executable=None,
+            config=config,
+            source="local",
+            installed=False,
+        )
+        self._on_install(game)
+        self.close()
+
+
+LocalInstallDialog = InstallLocalGameWindow
+InstallLocalDialog = InstallLocalGameWindow
+
+
+def _labelled(label: str, widget: Gtk.Widget) -> Gtk.Widget:
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    caption = Gtk.Label(label=label, halign=Gtk.Align.START)
+    caption.add_css_class("caption")
+    box.append(caption)
+    box.append(widget)
+    return box
 
 
 def _runner_form_args(library: Library) -> dict:

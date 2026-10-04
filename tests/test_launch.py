@@ -302,3 +302,29 @@ def test_build_env_plain_wine_installs_d3d_extras(monkeypatch) -> None:
 
     assert installed == [str(launch.wine_prefix_for(game))]
     assert "d3dx9_43.dll=n" in env["WINEDLLOVERRIDES"]
+
+def test_build_installer_plan_plain_wine(tmp_path, monkeypatch) -> None:
+    """An installer runs under the game's prefix with the wine runner."""
+    from vitrine.services import launch
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    installer = tmp_path / "setup.exe"
+    installer.write_bytes(b"MZ")
+    game = Game(name="G", slug="g-slug", source="local", prefix=str(tmp_path / "pfx"))
+    plan = launch.build_installer_plan(game, str(installer), {"wine_binary": "wine", "d3d_extras": False})
+    assert plan.command == ["wine", str(installer)]
+    assert plan.env["WINEPREFIX"] == str(tmp_path / "pfx")
+    assert plan.working_dir == str(tmp_path)
+
+
+def test_build_installer_plan_proton_uses_umu(tmp_path, monkeypatch) -> None:
+    from vitrine.services import launch
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    root, wine = _fake_proton(tmp_path)
+    installer = tmp_path / "setup.exe"
+    installer.write_bytes(b"MZ")
+    game = Game(name="G", slug="g-slug", source="local", prefix=str(tmp_path / "pfx"))
+    plan = launch.build_installer_plan(game, str(installer), {"wine_binary": str(wine)})
+    assert plan.env["PROTONPATH"] == str(root)
+    assert str(installer) in plan.command

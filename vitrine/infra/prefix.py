@@ -247,6 +247,47 @@ def _create_dos_drives(root: Path) -> None:
         z_link.symlink_to("/")
 
 
+def map_drive(prefix: str | Path, target: str | Path, *, letter: str | None = None) -> str | None:
+    """Expose host ``target`` as a Windows drive letter inside ``prefix``.
+
+    Creates a ``dosdevices/<letter>:`` symlink so a Windows installer running in
+    the prefix can write into ``target`` (e.g. Vitrine's per-game games dir).
+    Picks a free letter (D..Y, avoiding C: and Z:) when ``letter`` is None.
+    Returns the upper-case letter used, or ``None`` if it could not be mapped.
+    """
+    dos = Path(prefix) / "dosdevices"
+    if not dos.is_dir():
+        return None
+    if letter is None:
+        letter = _free_drive_letter(dos)
+    if not letter:
+        return None
+    link = dos / f"{letter.lower()}:"
+    try:
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        os.symlink(str(target), link)
+    except OSError:
+        return None
+    return letter.upper()
+
+
+def _free_drive_letter(dos: Path) -> str | None:
+    used = set()
+    try:
+        for entry in dos.iterdir():
+            name = entry.name
+            if len(name) == 2 and name[1] == ":":
+                used.add(name[0].lower())
+    except OSError:
+        return None
+    for code in range(ord("d"), ord("y") + 1):
+        letter = chr(code)
+        if letter not in used:
+            return letter
+    return None
+
+
 def _copy_tree_preserving_links(src: Path, dst: Path, dist: Path) -> None:
     """Recursive copy where Wine builtin DLL symlinks are re-aimed at the dist.
 
