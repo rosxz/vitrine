@@ -25,11 +25,19 @@ def test_comet_args_include_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(comet.COMET_ENV, "/opt/comet")
     args = comet.comet_args("ACCESS", "REFRESH", "u42", "player")
     assert args[0] == "/opt/comet"
-    assert "--access-token" in args and "ACCESS" in args
-    assert "--refresh-token" in args and "REFRESH" in args
-    assert "--user-id" in args and "u42" in args
-    assert "--username" in args and "player" in args
+    # Values use --opt=value so a value beginning with '-' can't be read as a flag.
+    assert "--access-token=ACCESS" in args
+    assert "--refresh-token=REFRESH" in args
+    assert "--user-id=u42" in args
+    assert "--username=player" in args
     assert comet._QUIT_FLAG in args
+
+
+def test_comet_args_binds_dashed_username(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A username/value starting with '-' must not be parsed as a flag."""
+    monkeypatch.setenv(comet.COMET_ENV, "/opt/comet")
+    args = comet.comet_args("tok", "rtok", "1", "-zname")
+    assert "--username=-zname" in args
 
 
 def test_write_wrapper_generates_tokened_script(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

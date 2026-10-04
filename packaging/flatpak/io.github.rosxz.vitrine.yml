@@ -53,7 +53,6 @@ add-extensions:
     version: "26.08"
     subdirectories: true
     autodelete: false
-    no-autodownload: true
 
 modules:
   - name: python-requirements

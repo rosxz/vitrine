@@ -67,17 +67,19 @@ def comet_args(
     user_id: str,
     username: str,
 ) -> list[str]:
-    """Argument vector for running comet as a background GOG service."""
+    """Argument vector for running comet as a background GOG service.
+
+    Values are passed in ``--opt=value`` form: comet's CLI (clap) treats a
+    separate token beginning with ``-`` as another flag, so a username/token that
+    happens to start with a dash would otherwise be rejected (e.g. "unexpected
+    argument '-z'"). The ``=`` form binds the value unambiguously.
+    """
     args = [
         comet_binary(),
-        "--access-token",
-        access_token,
-        "--refresh-token",
-        refresh_token,
-        "--user-id",
-        user_id,
-        "--username",
-        username,
+        f"--access-token={access_token}",
+        f"--refresh-token={refresh_token}",
+        f"--user-id={user_id}",
+        f"--username={username}",
         _QUIT_FLAG,
     ]
     return args
@@ -110,7 +112,7 @@ def write_wrapper(
     user_id: str,
     username: str,
 ) -> str:
-    """Write a 0600 wrapper script that runs comet in the background then execs
+    """Write a 0700 wrapper script that runs comet in the background then execs
     the game passed as ``"$@"``, killing comet when the game exits.
 
     The script embeds the tokens (hence a restrictive mode). Returns
