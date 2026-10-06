@@ -23,6 +23,24 @@ SHOW_HIDDEN = "show_hidden"
 #: Setting key (boolean): show the game description / hero detail bar on selection.
 SHOW_DETAIL_SETTING = "show_detail_bar"
 
+#: Setting key (boolean): draw the selected game's blurred artwork behind the
+#: library grid. Independent of :data:`SHOW_DETAIL_SETTING`.
+BACKGROUND_IMAGE_SETTING = "background_image"
+#: Setting key (int): backdrop blur radius in logical pixels (0-100).
+BACKGROUND_BLUR_SETTING = "background_blur"
+#: Default backdrop blur radius (px).
+DEFAULT_BACKGROUND_BLUR = 40
+#: Largest allowed backdrop blur radius (px).
+MAX_BACKGROUND_BLUR = 100
+
+#: Setting key (int): width of a game tile in the grid, in logical pixels.
+TILE_SIZE_SETTING = "tile_size"
+#: Default / minimum / maximum game-tile width (px). Must stay in sync with the
+#: aspect ratio used by :mod:`vitrine.ui.library_view`.
+DEFAULT_TILE_SIZE = 180
+MIN_TILE_SIZE = 120
+MAX_TILE_SIZE = 280
+
 #: Setting key (boolean): write the exact Proton launch command + environment to
 #: ``$XDG_CACHE_HOME/vitrine/proton-launch.env`` on every launch, for debugging
 #: window-presentation issues. Off by default -- it's a diagnostics aid only.

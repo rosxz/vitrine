@@ -139,29 +139,6 @@ window.vitrine-window {
     color: #a269ff;
 }
 
-/* Collapse toggle: sits on the hero, invisible until hovered. */
-.vitrine-detail-toggle {
-    background-color: transparent;
-    border: none;
-    border-radius: 0;
-    min-height: 16px;
-    padding: 0 8px;
-}
-
-.vitrine-detail-toggle-icon {
-    color: #8a83a0;
-    opacity: 0;
-}
-
-.vitrine-detail:hover .vitrine-detail-toggle-icon,
-.vitrine-detail-toggle:hover .vitrine-detail-toggle-icon {
-    opacity: 1;
-}
-
-.vitrine-detail-toggle:hover .vitrine-detail-toggle-icon {
-    color: #efeaf8;
-}
-
 /* Prominent play button ---------------------------------------------------- */
 .vitrine-play {
     background-color: #a269ff;
@@ -236,4 +213,14 @@ window.vitrine-window {
    with the panel rather than showing the theme's default list surface. */
 .achievement-list {
     background-color: #0c0b0d;
+}
+
+/* Blurred, full-bleed banner backdrop behind the library grid -------------- */
+.vitrine-bg {
+    filter: blur(40px);
+    transform: scale(1.15);
+}
+
+.vitrine-bg-scrim {
+    background-color: rgba(12, 11, 13, 0.62);
 }

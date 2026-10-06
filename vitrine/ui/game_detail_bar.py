@@ -2,13 +2,8 @@
 
 It mirrors the wide-backdrop treatment of Steam/Galaxy hero rows: the selected
 game's banner (falling back to its cover behind a scrim, then initials) fills a
-panel with the title, a prominent rectangular play button, playtime and
-last-played.
-
-The collapse toggle is an overlay on top of the hero (transparent until
-hovered), so it occupies no layout space when idle. Clicking it collapses the
-panel down to a thin strip that keeps the chevron visible so it can be
-reopened.
+fixed-height panel with the title, a prominent rectangular play button, playtime
+and last-played.
 """
 
 from __future__ import annotations
@@ -21,10 +16,9 @@ from gi.repository import Gtk
 from vitrine.infra.util import format_lastplayed, human_playtime, initials
 from vitrine.services.library import Game
 
-#: Fixed hero height. Kept deliberately compact so the panel leaves room for the
-#: game list.
-DEFAULT_HEIGHT = 200
-COLLAPSED_HEIGHT = 26
+#: Fixed hero height in logical pixels. Deliberately small so the panel stays
+#: compact; the height never grows when the window is enlarged.
+DEFAULT_HEIGHT = 160
 
 #: Side of the square icon buttons in the hero control cluster (settings, store,
 #: favorite, achievements). Keeps their widths uniform so the equal spacing looks
@@ -38,7 +32,7 @@ def _brand_icon_path(name: str) -> str:
 
 
 class GameDetailBar(Gtk.Box):
-    """Collapsible hero detail panel for the currently-selected game."""
+    """Fixed-height hero detail panel for the currently-selected game."""
 
     def __init__(
         self,
@@ -57,15 +51,14 @@ class GameDetailBar(Gtk.Box):
         self._on_store = on_store
         self._on_achievements = on_achievements
         self._game: Game | None = None
-        self._expanded = True
         self._downloading = False
 
         self.set_css_classes(["vitrine-detail"])
 
         self._body = self._build_body()
+        self._body.set_size_request(-1, DEFAULT_HEIGHT)
         self.append(self._body)
 
-        self._set_expanded(self._expanded)
         self.set_visible(False)
 
     def _build_body(self) -> Gtk.Widget:
@@ -183,51 +176,25 @@ class GameDetailBar(Gtk.Box):
         text.append(self._title)
         text.append(self._meta)
 
-        # The collapse chevron sits on top of the hero (top-center), floating
-        # over the artwork and invisible until hovered.
-        self._chevron_icon = Gtk.Image.new_from_icon_name("pan-down-symbolic")
-        self._chevron_icon.add_css_class("vitrine-detail-toggle-icon")
-
-        self._toggle = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        self._toggle.add_css_class("vitrine-detail-toggle")
-        self._toggle.set_halign(Gtk.Align.CENTER)
-        self._toggle.set_valign(Gtk.Align.START)
-        self._toggle.set_vexpand(False)
-        self._toggle.append(self._chevron_icon)
-        self._toggle.set_margin_top(6)
-
-        click = Gtk.GestureClick()
-        click.connect("released", self._on_toggle_released)
-        self._toggle.add_controller(click)
-
         # A semi-translucent dark panel behind the title/playtime/play controls
         # so text keeps contrast regardless of what the banner shows underneath.
         # It spans the full width and reaches the bottom edge of the hero.
         shade = Gtk.Box()
         shade.set_hexpand(True)
         shade.set_valign(Gtk.Align.END)
-        shade.set_size_request(-1, 96)
+        shade.set_size_request(-1, 98) # GAME_HEIGHT/2 + 18 (MARGIN)
         shade.add_css_class("vitrine-detail-shade")
         self._shade = shade
 
-        # Overlays that describe the game; hidden while collapsed so only the
-        # toggle chevron remains in the thin strip.
-        self._content_overlays = [
-            self._backdrop,
-            self._placeholder,
-            scrim,
-            shade,
-            text,
-            controls,
-        ]
-
         overlay = Gtk.Overlay()
         overlay.set_child(scrim)  # dictates the fixed height
-        overlay.add_overlay(self._backdrop)  # cover-crops to fill the scrim
-        overlay.add_overlay(self._shade)  # full-bleed dark panel over the art
-        for widget in (self._placeholder, text, controls):
+        # Only the scrim (the main child) and the fixed size request may dictate
+        # the hero height. The overlay children are excluded from measurement so
+        # the banner picture's natural size can't inflate the bar when the app
+        # window is enlarged.
+        for widget in (self._backdrop, self._shade, self._placeholder, text, controls):
             overlay.add_overlay(widget)
-        overlay.add_overlay(self._toggle)
+            overlay.set_measure_overlay(widget, False)
         self._backdrop_overlay = overlay
         return overlay
 
@@ -238,11 +205,7 @@ class GameDetailBar(Gtk.Box):
         return self._game
 
     def set_game(self, game: Game | None) -> None:
-        """Show the given game's details, keeping the current collapse state.
-
-        Collapsing is sticky: cycling between games will not re-expand a panel
-        the user has toggled closed.
-        """
+        """Show the given game's details."""
         self._game = game
         if game is None:
             self.set_visible(False)
@@ -356,17 +319,3 @@ class GameDetailBar(Gtk.Box):
             return
         self._playtime_label.set_text(human_playtime(self._game.playtime) or "Not played")
         self._lastplayed_label.set_text(format_lastplayed(self._game.lastplayed))
-
-    def _on_toggle_released(self, _gesture: Gtk.GestureClick, n_press: int, x: float, y: float) -> None:
-        self._set_expanded(not self._expanded)
-
-    def _set_expanded(self, expanded: bool) -> None:
-        self._expanded = expanded
-        self._chevron_icon.set_from_icon_name(
-            "pan-up-symbolic" if expanded else "pan-down-symbolic"
-        )
-        for widget in self._content_overlays:
-            widget.set_visible(expanded)
-        self._body.set_size_request(
-            -1, DEFAULT_HEIGHT if expanded else COLLAPSED_HEIGHT
-        )

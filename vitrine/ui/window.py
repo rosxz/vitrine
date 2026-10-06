@@ -10,11 +10,24 @@ from collections.abc import Callable, Sequence
 from importlib import resources
 from typing import TYPE_CHECKING
 
-from gi.repository import Adw, GLib, Gtk
+from gi.repository import Adw, Gdk, GLib, Gtk
 
 from vitrine.infra.gpu import apply_gpu_env
 from vitrine.infra.running import GameAlreadyRunning, Runtime
-from vitrine.services.library import SHOW_DETAIL_SETTING, SHOW_HIDDEN, Game, Library
+from vitrine.services.library import (
+    BACKGROUND_BLUR_SETTING,
+    BACKGROUND_IMAGE_SETTING,
+    DEFAULT_BACKGROUND_BLUR,
+    DEFAULT_TILE_SIZE,
+    MAX_BACKGROUND_BLUR,
+    MAX_TILE_SIZE,
+    MIN_TILE_SIZE,
+    SHOW_DETAIL_SETTING,
+    SHOW_HIDDEN,
+    TILE_SIZE_SETTING,
+    Game,
+    Library,
+)
 from vitrine.sources import registry
 from vitrine.sources.steam_source import SteamSource
 from vitrine.ui.game_detail_bar import GameDetailBar
@@ -108,6 +121,12 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.current_source: str | None = None
         # Whether the per-game description/hero bar is shown at all (Settings).
         self.show_detail_bar = bool(library.setting(SHOW_DETAIL_SETTING, True))
+        # Blurred artwork behind the grid (independent of the description bar).
+        self.background_image = bool(library.setting(BACKGROUND_IMAGE_SETTING, True))
+        self.background_blur = self._read_background_blur()
+        self._blur_provider: Gtk.CssProvider | None = None
+        # Grid tile width (user-adjustable).
+        self.tile_size = self._read_tile_size()
 
         self.set_default_size(1100, 760)
         self.add_css_class("vitrine-window")
@@ -116,7 +135,11 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.runtime.on_start = self._on_game_started
         self.runtime.on_exit = self._on_game_exited
 
-        self.library_view = LibraryView(on_activate=self.on_game_activated, on_context=self.on_tile_context)
+        self.library_view = LibraryView(
+            on_activate=self.on_game_activated,
+            on_context=self.on_tile_context,
+            tile_width=self.tile_size,
+        )
         self.library_view.connect("selection-changed", self._on_selection_changed)
 
         self.detail_bar = GameDetailBar(
@@ -129,11 +152,42 @@ class VitrineWindow(Adw.ApplicationWindow):
         )
 
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        content_box.set_hexpand(True)
+        content_box.set_vexpand(True)
+        # The grid absorbs all spare vertical space; the hero keeps its fixed
+        # height and must never grow when the window is enlarged.
+        self.library_view.set_vexpand(True)
+        self.detail_bar.set_vexpand(False)
         content_box.append(self.library_view)
         content_box.append(self.detail_bar)
 
+        # Full-bleed, blurred backdrop of the selected game's banner (falling
+        # back to its cover) behind the grid. The scrim keeps the tiles legible;
+        # both are hidden when no game is selected or it has no artwork.
+        self.backdrop = Gtk.Picture()
+        self.backdrop.set_content_fit(Gtk.ContentFit.COVER)
+        self.backdrop.set_can_shrink(True)
+        self.backdrop.set_halign(Gtk.Align.FILL)
+        self.backdrop.set_valign(Gtk.Align.FILL)
+        self.backdrop.set_hexpand(True)
+        self.backdrop.set_vexpand(True)
+        self.backdrop.add_css_class("vitrine-bg")
+        self.backdrop_scrim = Gtk.Box()
+        self.backdrop_scrim.set_halign(Gtk.Align.FILL)
+        self.backdrop_scrim.set_valign(Gtk.Align.FILL)
+        self.backdrop_scrim.set_hexpand(True)
+        self.backdrop_scrim.set_vexpand(True)
+        self.backdrop_scrim.add_css_class("vitrine-bg-scrim")
+        self.backdrop_scrim.set_visible(False)
+        self.backdrop.set_visible(False)
+
+        content_overlay = Gtk.Overlay()
+        content_overlay.set_child(self.backdrop)
+        content_overlay.add_overlay(self.backdrop_scrim)
+        content_overlay.add_overlay(content_box)
+
         self.toasts = Adw.ToastOverlay()
-        self.toasts.set_child(content_box)
+        self.toasts.set_child(content_overlay)
         self.toasts.set_hexpand(True)
 
         header = Adw.HeaderBar()
@@ -331,6 +385,13 @@ class VitrineWindow(Adw.ApplicationWindow):
         self.show_detail_bar = bool(self.library.setting(SHOW_DETAIL_SETTING, True))
         if not self.show_detail_bar:
             self.detail_bar.set_visible(False)
+        # The backdrop has its own enable/blur settings and stays put when the
+        # description bar is hidden.
+        self.background_image = bool(self.library.setting(BACKGROUND_IMAGE_SETTING, True))
+        self.background_blur = self._read_background_blur()
+        self._apply_backdrop_blur()
+        self.tile_size = self._read_tile_size()
+        self.library_view.set_tile_size(self.tile_size)
         if self.current_source == FAVORITES:
             games = self.library.favorite_games()
         else:
@@ -436,6 +497,8 @@ class VitrineWindow(Adw.ApplicationWindow):
             on_epic_login=lambda: self.on_source_login("epic"),
             on_epic_refresh=lambda: self._run_sync("epic"),
             on_epic_reset=lambda: self.on_source_reset("epic"),
+            on_background=self.on_background_settings_changed,
+            on_tile_size=self.on_tile_size_settings_changed,
             parent=self,
         )
         # Settings can change library-wide flags (e.g. "show hidden games"), so
@@ -1595,6 +1658,81 @@ class VitrineWindow(Adw.ApplicationWindow):
             )
             if self.installing(game):
                 self.detail_bar.set_downloading(True)
+        self._update_backdrop(game)
+
+    def _update_backdrop(self, game: Game | None) -> None:
+        """Point the blurred grid backdrop at the selected game's art.
+
+        Controlled solely by the background-image setting; the description-bar
+        setting must not affect it.
+        """
+        art = (game.banner or game.cover) if game is not None else None
+        if art and self.background_image:
+            self.backdrop.set_filename(art)
+            self.backdrop.set_visible(True)
+            self.backdrop_scrim.set_visible(True)
+        else:
+            self.backdrop.set_paintable(None)
+            self.backdrop.set_visible(False)
+            self.backdrop_scrim.set_visible(False)
+
+    def _read_background_blur(self) -> int:
+        """The persisted backdrop blur radius, clamped to the allowed range."""
+        stored = self.library.setting(BACKGROUND_BLUR_SETTING, DEFAULT_BACKGROUND_BLUR)
+        try:
+            value = int(stored)
+        except (TypeError, ValueError):
+            value = DEFAULT_BACKGROUND_BLUR
+        return max(0, min(value, MAX_BACKGROUND_BLUR))
+
+    def _read_tile_size(self) -> int:
+        """The persisted grid tile width, clamped to the allowed range."""
+        stored = self.library.setting(TILE_SIZE_SETTING, DEFAULT_TILE_SIZE)
+        try:
+            value = int(stored)
+        except (TypeError, ValueError):
+            value = DEFAULT_TILE_SIZE
+        return max(MIN_TILE_SIZE, min(value, MAX_TILE_SIZE))
+
+    def on_tile_size_settings_changed(self) -> None:
+        """Rebuild the grid at the newly-chosen tile size (live from Settings)."""
+        size = self._read_tile_size()
+        if size == self.tile_size:
+            return
+        self.tile_size = size
+        self.reload()
+
+    def _apply_backdrop_blur(self) -> None:
+        """Push the current blur radius into a high-priority CSS provider.
+
+        The provider uses USER priority so it keeps winning over the theme's
+        ``.vitrine-bg`` rule even after the theme is re-applied. The scale factor
+        grows with the blur so the feathered edges never reveal the window.
+        """
+        blur = self.background_blur
+        if self._blur_provider is not None and getattr(self, "_applied_blur", None) == blur:
+            return
+        self._applied_blur = blur
+        scale = 1.0 + (blur / MAX_BACKGROUND_BLUR) * 0.3
+        css = f".vitrine-bg {{ filter: blur({blur}px); transform: scale({scale:.3f}); }}"
+        if self._blur_provider is None:
+            self._blur_provider = Gtk.CssProvider()
+            display = Gdk.Display.get_default()
+            if display is not None:
+                Gtk.StyleContext.add_provider_for_display(
+                    display,
+                    self._blur_provider,
+                    Gtk.STYLE_PROVIDER_PRIORITY_USER,
+                )
+        self._blur_provider.load_from_string(css)
+
+    def on_background_settings_changed(self) -> None:
+        """Re-apply the backdrop settings after the Settings window changes them."""
+        self.background_image = bool(self.library.setting(BACKGROUND_IMAGE_SETTING, True))
+        self.background_blur = self._read_background_blur()
+        self._apply_backdrop_blur()
+        self._update_backdrop(self.detail_bar.game())
+
 
     @staticmethod
     def _is_same_game(a: Game, b: Game) -> bool:

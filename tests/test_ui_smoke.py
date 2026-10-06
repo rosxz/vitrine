@@ -287,6 +287,59 @@ def test_settings_about_page_builds() -> None:
     assert APP_ID
 
 
+def test_settings_background_controls() -> None:
+    """The background switch persists, and greys out the blur slider when off."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct windows")
+    from vitrine.infra import db
+    from vitrine.services.library import BACKGROUND_IMAGE_SETTING, Library
+    from vitrine.ui.settings_dialog import SettingsWindow
+    from vitrine.ui.theme import ThemeManager
+
+    conn = db.connect(":memory:")
+    db.initialize(conn)
+    library = Library(conn)
+    window = SettingsWindow(library, ThemeManager())
+
+    assert window._blur_scale.is_sensitive() is True
+    window._background_row.set_active(False)
+    assert library.setting(BACKGROUND_IMAGE_SETTING, True) is False
+    assert window._blur_scale.is_sensitive() is False
+    window._background_row.set_active(True)
+    assert window._blur_scale.is_sensitive() is True
+
+
+def test_settings_tile_size_control() -> None:
+    """The tile-size slider persists the chosen grid tile width."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct windows")
+    from vitrine.infra import db
+    from vitrine.services.library import TILE_SIZE_SETTING, Library
+    from vitrine.ui.settings_dialog import SettingsWindow
+    from vitrine.ui.theme import ThemeManager
+
+    conn = db.connect(":memory:")
+    db.initialize(conn)
+    library = Library(conn)
+    window = SettingsWindow(library, ThemeManager())
+
+    assert window._tile_scale.get_value() == 180
+    window._tile_scale.set_value(240)
+    assert library.setting(TILE_SIZE_SETTING) == 240
+
+
+def test_game_tile_respects_cover_width() -> None:
+    """A tile built with a custom width reports that fixed size."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct widgets")
+    from vitrine.services.library import Game
+    from vitrine.ui.library_view import GameTile, tile_height_for
+
+    tile = GameTile(Game(name="Sized", source="local", id=1), cover_width=240)
+    assert tile.get_size_request()[0] == 240
+    assert tile.get_size_request()[1] == tile_height_for(240)
+
+
 def test_achievements_window_constructs() -> None:
     """The achievements viewer builds with a game and shows a summary."""
     if not Gtk.init_check():

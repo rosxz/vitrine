@@ -90,6 +90,17 @@ def check_shell(application: VitrineApplication) -> None:
     assert len(reqs) == 1 and 0 not in reqs, f"tiles are not uniform width: {reqs}"
     print(f"all tiles request the same fixed width: {reqs}")
 
+    # The tile-size setting resizes the grid tiles.
+    from vitrine.services.library import TILE_SIZE_SETTING
+
+    library.set_setting(TILE_SIZE_SETTING, 240)
+    window.reload()
+    resized = window.library_view.flow.get_child_at_index(0).get_size_request()[0]
+    assert resized == 240, f"tile size setting should resize tiles, got {resized}"
+    print(f"tile size setting resizes tiles to {resized}px")
+    library.set_setting(TILE_SIZE_SETTING, 180)
+    window.reload()
+
     # The eye button toggles the hide-not-installed setting.
     window.on_toggle_hidden(window.eye_button)
     assert window.hide_not_installed is True, "eye toggle should enable hiding"
@@ -120,14 +131,62 @@ def check_shell(application: VitrineApplication) -> None:
     assert window.library_view.selected_game() is None, "background click should deselect"
     assert not window.detail_bar.get_visible(), "detail bar should hide after background click"
 
-    # Collapsing the detail bar is sticky when switching games.
+    # The hero banner has a fixed height and no collapse control.
     window.library_view.flow.select_child(window.library_view.flow.get_child_at_index(0))
     assert window.detail_bar.get_visible(), "detail bar should reappear on selection"
-    window.detail_bar._set_expanded(False)
-    assert not window.detail_bar._expanded, "detail bar should be collapsed"
+    from importlib import resources as _resources
+
+    from gi.repository import Gtk
+
+    from vitrine.ui.game_detail_bar import DEFAULT_HEIGHT
+
+    assert window.detail_bar._body.get_size_request()[1] == DEFAULT_HEIGHT
+    assert not hasattr(window.detail_bar, "_toggle"), "the collapse control was removed"
+    # The grid must absorb spare height; otherwise GtkBox splits it with the hero
+    # and the banner grows as the window is enlarged.
+    assert window.library_view.get_vexpand() and not window.detail_bar.get_vexpand(), (
+        "the grid must be the sole vertical expander so the hero height is fixed"
+    )
+
+    # The banner picture must not inflate the bar: even with artwork loaded and
+    # given a tall allocation, the natural height stays pinned to DEFAULT_HEIGHT.
+    art = str(_resources.files("vitrine.ui.style").joinpath("brand", "favorite.svg"))
+    window.detail_bar._backdrop.set_filename(art)
+    measured = window.detail_bar._body.measure(Gtk.Orientation.VERTICAL, 800)
+    natural = measured[1]
+    assert natural == DEFAULT_HEIGHT, f"hero height must stay fixed, got {natural}"
+
     window.library_view.flow.select_child(window.library_view.flow.get_child_at_index(1))
     assert window.detail_bar.game() is window.library_view.selected_game()
-    assert not window.detail_bar._expanded, "collapsed state must persist across game switches"
+
+    # The blurred backdrop follows the selection's artwork: hidden without any,
+    # shown once the selected game has a cover.
+    assert not window.backdrop.get_visible(), "backdrop stays hidden without artwork"
+    game = window.library_view.selected_game()
+    game.cover = art
+    window._update_backdrop(game)
+    assert window.backdrop.get_visible(), "backdrop should show when the game has art"
+    assert window.backdrop_scrim.get_visible(), "backdrop scrim should show with art"
+
+    # Hiding the description bar must NOT remove the background image; only the
+    # background-image setting controls it.
+    window.show_detail_bar = False
+    window._update_backdrop(game)
+    assert window.backdrop.get_visible(), "background must survive hiding the description bar"
+    window.show_detail_bar = True
+    window.background_image = False
+    window._update_backdrop(game)
+    assert not window.backdrop.get_visible(), "background image setting must hide the backdrop"
+    window.background_image = True
+
+    # The adjustable blur stays within range and never crashes.
+    window.background_blur = 0
+    window._apply_backdrop_blur()
+    window.background_blur = 100
+    window._apply_backdrop_blur()
+
+    window._update_backdrop(None)
+    assert not window.backdrop.get_visible(), "backdrop should hide when nothing is selected"
 
     # Right-click (secondary-click) opens per-game settings; build the window.
     # Pass on_remove so the footer (removal UI) is also constructed.

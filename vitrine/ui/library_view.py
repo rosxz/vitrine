@@ -14,7 +14,12 @@ from collections.abc import Callable, Iterable
 from gi.repository import Adw, GLib, GObject, Gtk
 
 from vitrine.infra.util import human_playtime, initials
-from vitrine.services.library import Game
+from vitrine.services.library import (
+    DEFAULT_TILE_SIZE,
+    MAX_TILE_SIZE,
+    MIN_TILE_SIZE,
+    Game,
+)
 
 #: Max lines a game name spans before it is truncated with an ellipsis.
 NAME_MAX_LINES = 2
@@ -24,14 +29,25 @@ NAME_LINE_HEIGHT = 20
 
 #: Portrait cover ratio (width / height), matching Steam's library capsules.
 COVER_RATIO = 2 / 3
-COVER_WIDTH = 180
-#: Fixed tile height = cover (COVER_WIDTH / ratio) + a name area sized for up to
+#: Default tile width; the live width is a user setting (see LibraryView).
+COVER_WIDTH = DEFAULT_TILE_SIZE
+#: Fixed tile height = cover (width / ratio) + a name area sized for up to
 #: NAME_MAX_LINES lines, so every tile -- whatever the source, title length or
 #: how few games are shown -- keeps the same dimensions instead of the grid
 #: stretching a lone tile to fill the pane or a long title stretching the tile.
 TILE_HEIGHT = int(COVER_WIDTH / COVER_RATIO) + NAME_MAX_LINES * NAME_LINE_HEIGHT
 MIN_COLUMNS = 2
 MAX_COLUMNS = 9
+
+
+def tile_height_for(cover_width: int) -> int:
+    """Tile height for a given cover width (cover + reserved name lines)."""
+    return int(cover_width / COVER_RATIO) + NAME_MAX_LINES * NAME_LINE_HEIGHT
+
+
+def clamp_tile_size(width: int) -> int:
+    """Clamp a requested tile width to the supported range."""
+    return max(MIN_TILE_SIZE, min(int(width), MAX_TILE_SIZE))
 
 #: Tiles materialised synchronously when a view is built. Kept modest so
 #: switching to a huge source (e.g. "All games" / Steam) doesn't stall the UI
@@ -65,9 +81,12 @@ def _same_game(a: Game, b: Game) -> bool:
 class GameTile(Gtk.FlowBoxChild):
     """A single game: cover box, source badge, name."""
 
-    def __init__(self, game: Game) -> None:
+    def __init__(self, game: Game, cover_width: int = COVER_WIDTH) -> None:
         super().__init__()
         self.game = game
+        cover_width = clamp_tile_size(cover_width)
+        tile_height = tile_height_for(cover_width)
+        self.cover_width = cover_width
         self.add_css_class("vitrine-tile")
         # Store-owned titles that aren't installed locally render translucent.
         if _is_not_installed(game):
@@ -107,7 +126,7 @@ class GameTile(Gtk.FlowBoxChild):
         frame = Gtk.AspectFrame(ratio=COVER_RATIO, xalign=0.5, yalign=0.5, obey_child=False)
         frame.set_obey_child(False)
         frame.set_child(overlay)
-        frame.set_size_request(COVER_WIDTH, int(COVER_WIDTH / COVER_RATIO))
+        frame.set_size_request(cover_width, int(cover_width / COVER_RATIO))
 
         self.running_dot = Gtk.Image.new_from_icon_name("media-playback-start-symbolic")
         self.running_label = Gtk.Label(label="")
@@ -126,7 +145,7 @@ class GameTile(Gtk.FlowBoxChild):
         name.set_ellipsize(3)  # Pango.EllipsizeMode.END (truncates with '…')
         # Cap the wrap width so a long name wraps within the cover instead of
         # widening the tile (which used to unbalance the cross-source grid).
-        name.set_max_width_chars(COVER_WIDTH // 8)
+        name.set_max_width_chars(cover_width // 8)
         name.add_css_class("vitrine-tile-name")
         if not (game.cover or game.banner):
             name.add_css_class("dim")
@@ -138,7 +157,7 @@ class GameTile(Gtk.FlowBoxChild):
         # changes; longer titles still render NAME_MAX_LINES lines (clipped,
         # ellipsized with '…') without stretching the row.
         name_bg = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        name_bg.set_size_request(COVER_WIDTH, NAME_MAX_LINES * NAME_LINE_HEIGHT)
+        name_bg.set_size_request(cover_width, NAME_MAX_LINES * NAME_LINE_HEIGHT)
         name_bg.set_valign(Gtk.Align.FILL)
         name_bg.set_vexpand(False)
         name_area = Gtk.Overlay()
@@ -156,13 +175,13 @@ class GameTile(Gtk.FlowBoxChild):
         box.append(name_area)
         # Rigid width + height so content can never stretch the tile; the name
         # stays uniform across sources and title lengths.
-        box.set_size_request(COVER_WIDTH, TILE_HEIGHT)
+        box.set_size_request(cover_width, tile_height)
         self.set_child(box)
 
         # Fix the tile's total size and stop it expanding, so the grid never
         # stretches a lone tile to fill the pane (which made Local look huge
         # versus populated Steam/All views).
-        self.set_size_request(COVER_WIDTH, TILE_HEIGHT)
+        self.set_size_request(cover_width, tile_height)
         self.set_hexpand(False)
         self.set_vexpand(False)
         # Covers are loaded lazily (see LibraryView): the constructor shows the
@@ -244,10 +263,12 @@ class LibraryView(Gtk.Stack):
         self,
         on_activate: Callable[[Game], None],
         on_context: Callable[[Game, float, float], None] | None = None,
+        tile_width: int = COVER_WIDTH,
     ) -> None:
         super().__init__()
         self._on_activate = on_activate
         self._on_context = on_context or (lambda _game, _x, _y: None)
+        self._tile_width = clamp_tile_size(tile_width)
 
         self.flow = Gtk.FlowBox()
         # Tiles keep their own fixed pixel width (hence not homogeneous), so
@@ -369,7 +390,7 @@ class LibraryView(Gtk.Stack):
         """
         added = 0
         for game in self._all_games[self._materialized:]:
-            tile = GameTile(game)
+            tile = GameTile(game, cover_width=self._tile_width)
             tile.set_context_callback(self._on_context)
             self.flow.append(tile)
             self._pending_reveal.add(id(tile))
@@ -382,6 +403,14 @@ class LibraryView(Gtk.Stack):
     def total_count(self) -> int:
         """Total number of games in the current view (materialised or not)."""
         return len(self._all_games)
+
+    def tile_width(self) -> int:
+        """The current tile width in logical pixels."""
+        return self._tile_width
+
+    def set_tile_size(self, width: int) -> None:
+        """Set the tile width; callers rebuild the view (``set_games``) to apply."""
+        self._tile_width = clamp_tile_size(width)
 
     def _maybe_fill(self) -> None:
         """Queue the next batch of tiles when the user nears the list's end."""
@@ -544,8 +573,9 @@ class LibraryView(Gtk.Stack):
         # The visible band spans the scroller height, padded above/below so
         # tiles approaching the viewport are already loaded when they arrive.
         viewport_h = self.scroller.get_allocation().height or self.get_allocated_height()
-        top = value - TILE_HEIGHT
-        bottom = value + viewport_h + TILE_HEIGHT
+        pad = tile_height_for(self._tile_width)
+        top = value - pad
+        bottom = value + viewport_h + pad
 
         still_pending: set[int] = set()
         for child in _children(self.flow):

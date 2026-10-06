@@ -19,10 +19,18 @@ from vitrine.services import artwork
 from vitrine.services.artwork_providers import PROVIDER_IDS
 from vitrine.services.artwork_providers.base import provider_label
 from vitrine.services.library import (
+    BACKGROUND_BLUR_SETTING,
+    BACKGROUND_IMAGE_SETTING,
     DEBUG_LOG_SETTING,
+    DEFAULT_BACKGROUND_BLUR,
+    DEFAULT_TILE_SIZE,
     DUMP_LAUNCH_ENV_SETTING,
+    MAX_BACKGROUND_BLUR,
+    MAX_TILE_SIZE,
+    MIN_TILE_SIZE,
     SHOW_DETAIL_SETTING,
     SHOW_HIDDEN,
+    TILE_SIZE_SETTING,
     Library,
 )
 from vitrine.sources.steam_source import FAMILY_SETTING
@@ -44,6 +52,8 @@ class SettingsWindow(Gtk.Window):
         on_epic_login: Callable[[], None] | None = None,
         on_epic_refresh: Callable[[], None] | None = None,
         on_epic_reset: Callable[[], None] | None = None,
+        on_background: Callable[[], None] | None = None,
+        on_tile_size: Callable[[], None] | None = None,
         parent: Gtk.Window | None = None,
     ) -> None:
         super().__init__(title="Settings")
@@ -59,6 +69,8 @@ class SettingsWindow(Gtk.Window):
         self._on_epic_login = on_epic_login or (lambda: None)
         self._on_epic_refresh = on_epic_refresh or (lambda: None)
         self._on_epic_reset = on_epic_reset or (lambda: None)
+        self._on_background = on_background or (lambda: None)
+        self._on_tile_size = on_tile_size or (lambda: None)
         self._secret_rows: list[tuple[Adw.PasswordEntryRow, str]] = []
         self.add_css_class("vitrine-window")
         self.set_default_size(460, 460)
@@ -149,6 +161,9 @@ class SettingsWindow(Gtk.Window):
         appearance_group.add(theme_row)
         page.add(appearance_group)
 
+        page.add(self._build_background_group())
+        page.add(self._build_library_group())
+
         page.add(self._build_artwork_group())
 
         refresh_group = Adw.PreferencesGroup(title="Artwork refresh")
@@ -166,6 +181,92 @@ class SettingsWindow(Gtk.Window):
 
     def _on_force_refresh_toggled(self, row: Adw.SwitchRow, _pspec: object) -> None:
         self.library.set_setting(artwork.FORCE_REFRESH_SETTING, row.get_active())
+
+    def _build_background_group(self) -> Adw.PreferencesGroup:
+        group = Adw.PreferencesGroup(title="Background")
+
+        image_row = Adw.SwitchRow(title="Background image")
+        image_row.set_subtitle(
+            "Show the selected game's artwork, blurred, behind the grid. "
+            "Independent of the game description bar."
+        )
+        image_row.set_active(bool(self.library.setting(BACKGROUND_IMAGE_SETTING, True)))
+        group.add(image_row)
+
+        blur_row = Adw.ActionRow(title="Blur intensity")
+        blur_row.set_subtitle("How strongly the backdrop artwork is blurred")
+        self._blur_scale = Gtk.Scale.new_with_range(
+            Gtk.Orientation.HORIZONTAL, 0, MAX_BACKGROUND_BLUR, 1
+        )
+        self._blur_scale.set_value(self._stored_blur())
+        self._blur_scale.set_draw_value(True)
+        self._blur_scale.set_digits(0)
+        self._blur_scale.set_size_request(180, -1)
+        self._blur_scale.set_valign(Gtk.Align.CENTER)
+        self._blur_scale.set_tooltip_text("Backdrop blur radius in pixels")
+        # Connect only after seeding the value so building the window doesn't
+        # trigger a spurious write/callback.
+        self._blur_scale.connect("value-changed", self._on_blur_changed)
+        blur_row.add_suffix(self._blur_scale)
+        blur_row.add_suffix(Gtk.Label(label="px"))
+        self._blur_scale.set_sensitive(image_row.get_active())
+        group.add(blur_row)
+
+        image_row.connect("notify::active", self._on_background_image_toggled)
+        self._background_row = image_row
+        return group
+
+    def _stored_blur(self) -> int:
+        stored = self.library.setting(BACKGROUND_BLUR_SETTING, DEFAULT_BACKGROUND_BLUR)
+        try:
+            value = int(stored)
+        except (TypeError, ValueError):
+            value = DEFAULT_BACKGROUND_BLUR
+        return max(0, min(value, MAX_BACKGROUND_BLUR))
+
+    def _on_background_image_toggled(self, row: Adw.SwitchRow, _pspec: object) -> None:
+        active = row.get_active()
+        self.library.set_setting(BACKGROUND_IMAGE_SETTING, active)
+        # The blur slider is meaningless without the image, so grey it out.
+        self._blur_scale.set_sensitive(active)
+        self._on_background()
+
+    def _on_blur_changed(self, scale: Gtk.Scale) -> None:
+        self.library.set_setting(BACKGROUND_BLUR_SETTING, int(scale.get_value()))
+        self._on_background()
+
+    def _build_library_group(self) -> Adw.PreferencesGroup:
+        group = Adw.PreferencesGroup(title="Library")
+
+        row = Adw.ActionRow(title="Tile size")
+        row.set_subtitle("Size of the game covers in the grid")
+        self._tile_scale = Gtk.Scale.new_with_range(
+            Gtk.Orientation.HORIZONTAL, MIN_TILE_SIZE, MAX_TILE_SIZE, 4
+        )
+        self._tile_scale.set_value(self._stored_tile_size())
+        self._tile_scale.set_draw_value(True)
+        self._tile_scale.set_digits(0)
+        self._tile_scale.set_size_request(180, -1)
+        self._tile_scale.set_valign(Gtk.Align.CENTER)
+        self._tile_scale.set_tooltip_text("Game tile width in pixels")
+        # Connect only after seeding the value to avoid a spurious write.
+        self._tile_scale.connect("value-changed", self._on_tile_size_changed)
+        row.add_suffix(self._tile_scale)
+        row.add_suffix(Gtk.Label(label="px"))
+        group.add(row)
+        return group
+
+    def _stored_tile_size(self) -> int:
+        stored = self.library.setting(TILE_SIZE_SETTING, DEFAULT_TILE_SIZE)
+        try:
+            value = int(stored)
+        except (TypeError, ValueError):
+            value = DEFAULT_TILE_SIZE
+        return max(MIN_TILE_SIZE, min(value, MAX_TILE_SIZE))
+
+    def _on_tile_size_changed(self, scale: Gtk.Scale) -> None:
+        self.library.set_setting(TILE_SIZE_SETTING, int(scale.get_value()))
+        self._on_tile_size()
 
     def _build_providers_page(self) -> Adw.PreferencesPage:
         page = Adw.PreferencesPage()
