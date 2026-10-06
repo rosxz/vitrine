@@ -76,6 +76,15 @@ def check_shell(application: VitrineApplication) -> None:
     window = windows[0]
     assert isinstance(window, VitrineWindow), f"unexpected window type {type(window).__name__}"
 
+    # The tray icon is created with the window and its menu is well-formed even
+    # when no tray host is present.
+    assert application.window is window, "the application keeps a stable window ref"
+    assert application.tray is not None, "the tray icon should be created"
+    root_id, _props, entries = application.tray._layout()
+    assert root_id == 0 and len(entries) == 5, "tray menu should have five entries"
+    assert entries[0].unpack()[1]["label"] == "Open Vitrine", "first entry opens the window"
+    print("tray icon created with a well-formed menu")
+
     library.add(Game(name="Smoke Test Game", runner="linux", executable=TRUE, source="local"))
     library.add(Game(name="Another One", executable="/bin/true", source="steam", source_id="1"))
 
@@ -100,6 +109,38 @@ def check_shell(application: VitrineApplication) -> None:
     print(f"tile size setting resizes tiles to {resized}px")
     library.set_setting(TILE_SIZE_SETTING, 180)
     window.reload()
+
+    # Minimize-to-tray: the window hides while a game runs and returns on exit,
+    # but only when a tray is actually available.
+    from vitrine.services.library import MINIMIZE_TO_TRAY_SETTING
+
+    window._tray_available = lambda: True
+    library.set_setting(MINIMIZE_TO_TRAY_SETTING, True)
+    running = window.library_view.selected_game()
+    assert running is not None, "a game should be selected for the minimize test"
+    window.sessions.begin(running)
+    window._apply_tray_minimize()
+    assert not window.get_visible(), "window should hide while a game runs"
+    window.sessions.end()
+    window._apply_tray_minimize()
+    assert window.get_visible(), "window should reappear when the game exits"
+    library.set_setting(MINIMIZE_TO_TRAY_SETTING, False)
+    del window._tray_available
+    print("minimize-to-tray hides and restores the window around a session")
+
+    # Closing the window hides to the tray (when available) instead of quitting,
+    # unless an explicit quit is in progress.
+    window._tray_available = lambda: True
+    window.present()
+    assert window._on_close_request() is True, "close should be intercepted for the tray"
+    assert not window.get_visible(), "closing should hide rather than destroy the window"
+    window.prepare_quit()
+    assert window._on_close_request() is False, "an explicit quit must be allowed to close"
+    window._allow_close = False
+    del window._tray_available
+    window.present()
+    print("closing the window hides to the tray; explicit quit closes")
+
 
     # The eye button toggles the hide-not-installed setting.
     window.on_toggle_hidden(window.eye_button)

@@ -79,6 +79,7 @@ vitrine/
     window.py      `VitrineWindow`: sidebar, grid, detail bar; calls `entry_for(...)`.
     library_view.py / game_detail_bar.py / game_form.py / game_dialogs.py  widgets.
     settings_dialog.py / proton_window.py / artwork_picker.py / log_window.py / theme.py
+    tray.py        StatusNotifierItem + DBusMenu system-tray icon (pure Gio).
     login_base.py  `WebKitLoginDialog` base (embedded browser chrome).
     login_registry.py    source_id -> login-dialog mapping.
     steam/gog/epic_login_dialog.py  per-store WebKit sign-in; *control.py (unused).

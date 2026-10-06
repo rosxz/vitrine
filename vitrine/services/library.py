@@ -23,6 +23,9 @@ SHOW_HIDDEN = "show_hidden"
 #: Setting key (boolean): show the game description / hero detail bar on selection.
 SHOW_DETAIL_SETTING = "show_detail_bar"
 
+#: Setting key (boolean): hide the window while a game runs and restore it on exit.
+MINIMIZE_TO_TRAY_SETTING = "minimize_to_tray"
+
 #: Setting key (boolean): draw the selected game's blurred artwork behind the
 #: library grid. Independent of :data:`SHOW_DETAIL_SETTING`.
 BACKGROUND_IMAGE_SETTING = "background_image"

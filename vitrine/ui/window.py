@@ -22,6 +22,7 @@ from vitrine.services.library import (
     MAX_BACKGROUND_BLUR,
     MAX_TILE_SIZE,
     MIN_TILE_SIZE,
+    MINIMIZE_TO_TRAY_SETTING,
     SHOW_DETAIL_SETTING,
     SHOW_HIDDEN,
     TILE_SIZE_SETTING,
@@ -127,9 +128,18 @@ class VitrineWindow(Adw.ApplicationWindow):
         self._blur_provider: Gtk.CssProvider | None = None
         # Grid tile width (user-adjustable).
         self.tile_size = self._read_tile_size()
+        # Most recently launched game (drives the tray's "Play …" entry).
+        self._last_played: Game | None = None
+        # Whether the window is currently hidden because a game is running.
+        self._tray_hidden = False
+        # Set while an explicit quit is in progress, so closing is allowed.
+        self._allow_close = False
 
         self.set_default_size(1100, 760)
         self.add_css_class("vitrine-window")
+        # The window's X button hides to the tray instead of quitting (when a
+        # tray host is present); the tray's Quit entry sets ``_allow_close``.
+        self.connect("close-request", self._on_close_request)
 
         self.runtime = Runtime()
         self.runtime.on_start = self._on_game_started
@@ -1988,6 +1998,10 @@ class VitrineWindow(Adw.ApplicationWindow):
             tile.set_running(elapsed if tile.game is game else None)
         if self.detail_bar.game() is game or game is None:
             self.detail_bar.set_running(elapsed)
+        if game is not None and game is not self._last_played:
+            self._last_played = game
+            self._notify_tray()
+        self._apply_tray_minimize()
 
     def _all_tiles(self):
         tiles = []
@@ -1996,3 +2010,65 @@ class VitrineWindow(Adw.ApplicationWindow):
             tiles.append(child)
             child = child.get_next_sibling()
         return tiles
+
+    # -- system tray -----------------------------------------------------------
+
+    def _on_close_request(self, *_args) -> bool:
+        """Hide to the tray instead of quitting, unless a real quit is running.
+
+        Returns ``True`` (stop the close) when a tray host is present, so the app
+        keeps running in the background; ``False`` lets the window close normally
+        when there is no tray or an explicit quit was requested.
+        """
+        if self._allow_close or not self._tray_available():
+            return False
+        self._tray_hidden = False
+        self.set_visible(False)
+        return True
+
+    def prepare_quit(self) -> None:
+        """Allow the window to close for an explicit application quit."""
+        self._allow_close = True
+
+    def _tray_available(self) -> bool:
+        app = self.get_application()
+        tray = getattr(app, "tray", None)
+        return bool(tray is not None and getattr(tray, "available", False))
+
+    def _notify_tray(self) -> None:
+        app = self.get_application()
+        refresh = getattr(app, "refresh_tray_menu", None)
+        if callable(refresh):
+            refresh()
+
+    def last_played_game(self) -> Game | None:
+        """The most recently launched game (or the newest by its play date)."""
+        if self._last_played is not None:
+            return self._last_played
+        played = [g for g in self.library.games() if g.lastplayed]
+        if not played:
+            return None
+        return max(played, key=lambda g: g.lastplayed)
+
+    def play_last_game(self, game: Game | None = None) -> None:
+        """Launch the last-played game (the tray menu's first entry)."""
+        target = game or self.last_played_game()
+        if target is None:
+            return
+        self.present()
+        self.on_game_activated(target)
+
+    def _apply_tray_minimize(self) -> None:
+        """Hide the window while a game runs (when enabled), restore it on exit.
+
+        Only acts when a tray is actually present, so the window can never be
+        stranded hidden with no way back.
+        """
+        enabled = bool(self.library.setting(MINIMIZE_TO_TRAY_SETTING, False)) and self._tray_available()
+        running = self.sessions.running_game is not None
+        if enabled and running and not self._tray_hidden:
+            self._tray_hidden = True
+            self.set_visible(False)
+        elif self._tray_hidden and (not running or not enabled):
+            self._tray_hidden = False
+            self.present()

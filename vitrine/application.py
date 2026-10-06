@@ -34,6 +34,10 @@ class VitrineApplication(Adw.Application):
         self.connection: sqlite3.Connection | None = None
         self.library: Library | None = None
         self.theme_manager = ThemeManager()
+        #: The single main window (kept even while hidden to the tray).
+        self.window: VitrineWindow | None = None
+        #: System-tray icon (StatusNotifierItem), created with the first window.
+        self.tray = None
 
     def do_startup(self) -> None:
         Adw.Application.do_startup(self)
@@ -53,12 +57,61 @@ class VitrineApplication(Adw.Application):
         if self.library is None:
             raise RuntimeError("Application activated before startup completed")
 
-        window = self.props.active_window
-        if window is None:
-            window = VitrineWindow(application=self, library=self.library)
-        window.present()
+        if self.window is None:
+            self.window = VitrineWindow(application=self, library=self.library)
+        self.window.present()
+        if self.tray is None:
+            self._create_tray()
+
+    # -- system tray -----------------------------------------------------------
+
+    def _create_tray(self) -> None:
+        from vitrine.ui.tray import TrayIcon
+
+        self.tray = TrayIcon(
+            on_open=self.present_window,
+            on_settings=self._open_settings,
+            on_quit=self.quit,
+            last_game_provider=self._last_game,
+            on_play_last=self._play_last,
+        )
+
+    def present_window(self) -> None:
+        """Show and focus the window (tray activation / double-click)."""
+        if self.window is None:
+            self.activate()
+        else:
+            self.window.present()
+
+    def _open_settings(self) -> None:
+        if self.window is not None:
+            self.window.on_settings_clicked(None)
+
+    def _last_game(self):
+        return self.window.last_played_game() if self.window is not None else None
+
+    def _play_last(self, game) -> None:
+        if self.window is None:
+            self.activate()
+        if self.window is not None:
+            self.window.play_last_game(game)
+
+    def refresh_tray_menu(self) -> None:
+        """Refresh the tray's menu (e.g. after the last-played game changes)."""
+        if self.tray is not None:
+            self.tray.notify_changed()
+
+    def quit(self) -> None:
+        """Quit for real: let the window close instead of hiding to the tray."""
+        if self.window is not None:
+            self.window.prepare_quit()
+        super().quit()
+
 
     def do_shutdown(self) -> None:
+        if self.tray is not None:
+            self.tray.close()
+            self.tray = None
         if self.connection is not None:
             self.connection.close()
             self.connection = None

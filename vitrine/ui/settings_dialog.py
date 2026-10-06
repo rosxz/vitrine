@@ -28,6 +28,7 @@ from vitrine.services.library import (
     MAX_BACKGROUND_BLUR,
     MAX_TILE_SIZE,
     MIN_TILE_SIZE,
+    MINIMIZE_TO_TRAY_SETTING,
     SHOW_DETAIL_SETTING,
     SHOW_HIDDEN,
     TILE_SIZE_SETTING,
@@ -138,6 +139,16 @@ class SettingsWindow(Gtk.Window):
         detail_row.set_active(bool(self.library.setting(SHOW_DETAIL_SETTING, True)))
         detail_row.connect("notify::active", self._on_show_detail_toggled)
         group.add(detail_row)
+
+        tray_row = Adw.SwitchRow(title="Minimize to system tray while playing")
+        tray_row.set_subtitle(
+            "Hide the window when a game launches and restore it when the game "
+            "exits. Requires a system-tray host; click the tray icon to reopen."
+        )
+        tray_row.set_active(bool(self.library.setting(MINIMIZE_TO_TRAY_SETTING, False)))
+        tray_row.connect("notify::active", self._on_minimize_to_tray_toggled)
+        group.add(tray_row)
+        self._tray_row = tray_row
         page.add(group)
         return page
 
@@ -146,6 +157,9 @@ class SettingsWindow(Gtk.Window):
 
     def _on_show_detail_toggled(self, row: Adw.SwitchRow, _pspec: object) -> None:
         self.library.set_setting(SHOW_DETAIL_SETTING, row.get_active())
+
+    def _on_minimize_to_tray_toggled(self, row: Adw.SwitchRow, _pspec: object) -> None:
+        self.library.set_setting(MINIMIZE_TO_TRAY_SETTING, row.get_active())
 
     def _build_appearance_page(self) -> Adw.PreferencesPage:
         page = Adw.PreferencesPage()

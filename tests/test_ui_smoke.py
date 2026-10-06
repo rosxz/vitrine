@@ -340,6 +340,59 @@ def test_game_tile_respects_cover_width() -> None:
     assert tile.get_size_request()[1] == tile_height_for(240)
 
 
+def test_settings_minimize_to_tray_control() -> None:
+    """The minimize-to-tray switch persists its value."""
+    if not Gtk.init_check():
+        pytest.skip("requires a display to construct windows")
+    from vitrine.infra import db
+    from vitrine.services.library import MINIMIZE_TO_TRAY_SETTING, Library
+    from vitrine.ui.settings_dialog import SettingsWindow
+    from vitrine.ui.theme import ThemeManager
+
+    conn = db.connect(":memory:")
+    db.initialize(conn)
+    library = Library(conn)
+    window = SettingsWindow(library, ThemeManager())
+
+    assert window._tray_row.get_active() is False
+    window._tray_row.set_active(True)
+    assert library.setting(MINIMIZE_TO_TRAY_SETTING, False) is True
+
+
+def test_tray_menu_layout_and_actions() -> None:
+    """The tray menu lists last game / settings / quit and routes clicks."""
+    from vitrine.services.library import Game
+    from vitrine.ui.tray import TrayIcon
+
+    last = Game(name="Hades", source="steam", source_id="1", id=1)
+    played: list[str] = []
+    actions: list[str] = []
+    tray = TrayIcon(
+        on_open=lambda: actions.append("open"),
+        on_settings=lambda: actions.append("settings"),
+        on_quit=lambda: actions.append("quit"),
+        last_game_provider=lambda: last,
+        on_play_last=lambda game: played.append(game.name),
+    )
+
+    root_id, _props, children = tray._layout()
+    assert root_id == 0
+    unpacked = [child.unpack() for child in children]
+    labels = [item[1].get("label") for item in unpacked]
+    assert labels[0] == "Open Vitrine"
+    assert labels[1] == "Play Hades"
+    assert labels[2] is None, "third entry is a separator"
+    assert "Settings" in labels
+    assert "Quit Vitrine" in labels
+
+    tray._activate(1)  # Open Vitrine
+    tray._activate(2)  # Play Hades
+    tray._activate(4)  # Settings
+    tray._activate(5)  # Quit
+    assert played == ["Hades"]
+    assert actions == ["open", "settings", "quit"]
+
+
 def test_achievements_window_constructs() -> None:
     """The achievements viewer builds with a game and shows a summary."""
     if not Gtk.init_check():
